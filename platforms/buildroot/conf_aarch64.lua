@@ -47,6 +47,7 @@ local APOLLO_HEXAGON_CTRL = 0x1C220000
 local APOLLO_HEXAGON_CTRL_SIZE = 0x000E0000
 local APOLLO_HEXAGON_QTIMER = APOLLO_HEXAGON_CTRL + 0x00020000
 local APOLLO_HEXAGON_L2VIC = APOLLO_HEXAGON_CTRL + 0x00040000
+local APOLLO_HEXAGON_STREAM_ID = 0x1
 
 local ARM_NUM_CPUS = 4;
 local NUM_GPUS = 0;
@@ -168,6 +169,8 @@ platform = {
         moduletype = "apollo_hexagon_dma";
         regs = {address=APOLLO_HEXAGON_CTRL, size=0x1000, bind = "&router.initiator_socket", relative_addresses=true};
         dma = {bind = "&router.target_socket"};
+        stream_id = APOLLO_HEXAGON_STREAM_ID;
+        smmu_translated = false;
     };
 
     hexagon_globalreg_0 = {

@@ -12,6 +12,7 @@
 #include <iostream>
 #include <vector>
 
+#include <cci_configuration>
 #include <systemc>
 #include <tlm>
 #include <tlm_utils/simple_initiator_socket.h>
@@ -26,13 +27,22 @@ class apollo_hexagon_dma : public sc_core::sc_module
     SCP_LOGGER();
 
 public:
+    cci::cci_param<uint32_t> p_stream_id;
+    cci::cci_param<bool> p_smmu_translated;
+
     tlm_utils::simple_target_socket<apollo_hexagon_dma, DEFAULT_TLM_BUSWIDTH> regs;
     tlm_utils::simple_initiator_socket<apollo_hexagon_dma, DEFAULT_TLM_BUSWIDTH> dma;
+    tlm_utils::simple_initiator_socket_b<apollo_hexagon_dma, DEFAULT_TLM_BUSWIDTH, tlm::tlm_base_protocol_types,
+                                         sc_core::SC_ZERO_OR_MORE_BOUND>
+        translated_dma;
 
     explicit apollo_hexagon_dma(sc_core::sc_module_name name)
         : sc_core::sc_module(name)
+        , p_stream_id("stream_id", 1, "Linux-visible SMMU StreamID for this DMA master")
+        , p_smmu_translated("smmu_translated", false, "DMA transactions traverse an SMMU translated path")
         , regs("regs")
         , dma("dma")
+        , translated_dma("translated_dma")
     {
         regs.register_b_transport(this, &apollo_hexagon_dma::b_transport);
         regs.register_transport_dbg(this, &apollo_hexagon_dma::transport_dbg);
@@ -47,6 +57,9 @@ private:
         REG_STATUS = 0x10,
         REG_RESULT = 0x14,
         REG_FW_DONE = 0x18,
+        REG_CAPS = 0x1c,
+        REG_PATH = 0x20,
+        REG_STREAM_ID = 0x24,
     };
 
     enum : uint32_t {
@@ -56,6 +69,11 @@ private:
         STATUS_ERROR = 2,
         RESULT_OK = 0x444d414f,    // "DMAO"
         RESULT_BAD_LEN = 0xbad00001,
+        CAP_COPY_ENGINE = 1u << 0,
+        CAP_DIRECT_TLM = 1u << 1,
+        CAP_SMMU_TRANSLATED = 1u << 2,
+        PATH_DIRECT_TLM = 1,
+        PATH_SMMU_TRANSLATED = 2,
     };
 
     uint32_t m_src = 0;
@@ -112,9 +130,28 @@ private:
             return m_result;
         case REG_FW_DONE:
             return m_fw_done;
+        case REG_CAPS:
+            return dma_caps();
+        case REG_PATH:
+            return p_smmu_translated.get_value() ? PATH_SMMU_TRANSLATED : PATH_DIRECT_TLM;
+        case REG_STREAM_ID:
+            return p_stream_id.get_value();
         default:
             return 0;
         }
+    }
+
+    uint32_t dma_caps() const
+    {
+        uint32_t caps = CAP_COPY_ENGINE;
+
+        if (p_smmu_translated.get_value()) {
+            caps |= CAP_SMMU_TRANSLATED;
+        } else {
+            caps |= CAP_DIRECT_TLM;
+        }
+
+        return caps;
     }
 
     void write_reg(uint64_t addr, uint32_t value, sc_core::sc_time& delay)
@@ -162,6 +199,12 @@ private:
                      << m_dst << " len=0x" << m_len;
         std::cerr << "APOLLO_HEXAGON_DMA: firmware requested DMA src=0x" << std::hex << m_src << " dst=0x" << m_dst
                   << " len=0x" << m_len << std::dec << std::endl;
+        SCP_INFO(()) << "APOLLO_HEXAGON_DMA: path="
+                     << (p_smmu_translated.get_value() ? "smmu-translated" : "direct-tlm")
+                     << " stream-id=0x" << std::hex << p_stream_id.get_value() << " caps=0x" << dma_caps();
+        std::cerr << "APOLLO_HEXAGON_DMA: path="
+                  << (p_smmu_translated.get_value() ? "smmu-translated" : "direct-tlm") << " stream-id=0x"
+                  << std::hex << p_stream_id.get_value() << " caps=0x" << dma_caps() << std::dec << std::endl;
 
         std::vector<uint8_t> buffer(m_len);
         do_dma(tlm::TLM_READ_COMMAND, m_src, buffer.data(), m_len, delay);
@@ -190,7 +233,11 @@ private:
         trans.set_dmi_allowed(false);
         trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
 
-        dma->b_transport(trans, delay);
+        if (p_smmu_translated.get_value()) {
+            translated_dma->b_transport(trans, delay);
+        } else {
+            dma->b_transport(trans, delay);
+        }
         if (!trans.is_response_ok()) {
             m_status = STATUS_ERROR;
             SCP_FATAL(()) << "APOLLO_HEXAGON_DMA: DMA transaction failed at addr=0x" << std::hex << addr;
