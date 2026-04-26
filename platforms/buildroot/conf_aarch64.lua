@@ -13,7 +13,7 @@ function top()
 dofile(top().."../fw/utils.lua");
 print ("Lua config running. . . ");
 
--- Buildroot M1 hardware contract:
+-- Apollo SoC hardware contract:
 -- - 4 x Cortex-A710 CPUs arranged as 2 clusters x 2 cores via mp_affinity.
 -- - 4 GiB DRAM at INITIAL_DDR_SPACE.
 -- - PL011 UART0 console at 0x10000000.
@@ -115,7 +115,7 @@ platform = {
         irq_out = {bind = "&gic_0.spi_in_18"},
         netdev_str="type=user,hostfwd=tcp::2222-:22,hostfwd=tcp::2221-:21,hostfwd=tcp::56283-:56283,hostfwd=tcp::55534-:65534,hostfwd=tcp::55535-:65535"};
 
-    -- M1 boots from rootfs.cpio initramfs. Keep virtio block out of the
+    -- Apollo SoC boots from rootfs.cpio initramfs. Keep virtio block out of the
     -- initial platform so a missing rootfs.ext4 cannot stop early UART boot.
 
     charbackend_stdio_0 = {
@@ -155,7 +155,7 @@ platform = {
         moduletype = "loader",
         initiator_socket = {bind = "&router.target_socket"};
         { bin_file=top().."fw/Artifacts/Image.bin", address=_KERNEL64_LOAD_ADDR };
-        { bin_file=top().."fw/Artifacts/qbox_a710_soc.dtb", address=_DTB_LOAD_ADDR };
+        { bin_file=top().."fw/Artifacts/apollo_soc.dtb", address=_DTB_LOAD_ADDR };
         { bin_file=top().."fw/Artifacts/rootfs.cpio", address= _INITRD_LOAD_ADDR };
         { data=_bootloader_aarch64, address = INITIAL_DDR_SPACE};    
     };
