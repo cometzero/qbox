@@ -123,6 +123,13 @@ platform = {
         read_write = true;
     };
 
+    -- Keep the SystemC simulation alive while Linux advances toward userspace.
+    -- Without a suspending async event source, cold post-rebuild runs can
+    -- finish around the early timer/cpuidle phase before the initramfs starts.
+    keep_alive_0 = {
+        moduletype = "keep_alive";
+    };
+
     pl011_uart_0 = {
         moduletype = "Pl011",
         dylib_path = "uart-pl011",
