@@ -32,12 +32,48 @@ find_program(LLVM_MC llvm-mc)
 find_program(LLD ld.lld)
 find_program(LLVM_OBJCOPY llvm-objcopy)
 
-# Check if LLVM tools are available for building Hexagon firmware
-if(LLVM_MC AND LLD AND LLVM_OBJCOPY AND APPLE)
+set(HEXAGON_SMMU_MCPU "hexagonv68" CACHE STRING
+    "Hexagon CPU model used to assemble the SMMU firmware")
+set(HEXAGON_SMMU_FIRMWARE_SUPPORTED OFF)
+if(LLVM_MC AND LLD AND LLVM_OBJCOPY)
+    set(HEXAGON_SMMU_PROBE_OBJ
+        ${CMAKE_CURRENT_BINARY_DIR}/hexagon_smmu_firmware_probe.o)
+    execute_process(
+        COMMAND ${LLVM_MC} -arch=hexagon -mcpu=${HEXAGON_SMMU_MCPU}
+                -filetype=obj
+                ${CMAKE_CURRENT_SOURCE_DIR}/hexagon_smmu_firmware.s
+                -o ${HEXAGON_SMMU_PROBE_OBJ}
+        RESULT_VARIABLE HEXAGON_SMMU_PROBE_RESULT
+        OUTPUT_VARIABLE HEXAGON_SMMU_PROBE_OUTPUT
+        ERROR_VARIABLE HEXAGON_SMMU_PROBE_ERROR)
+    if(HEXAGON_SMMU_PROBE_RESULT EQUAL 0)
+        set(HEXAGON_SMMU_FIRMWARE_SUPPORTED ON)
+        file(REMOVE ${HEXAGON_SMMU_PROBE_OBJ})
+    else()
+        string(REPLACE "\n" "\n  " HEXAGON_SMMU_PROBE_ERROR
+               "${HEXAGON_SMMU_PROBE_ERROR}")
+        message(WARNING
+            "Skipping hexagon-smmu-stress-test-v2: llvm-mc is present but "
+            "cannot assemble hexagon_smmu_firmware.s for "
+            "${HEXAGON_SMMU_MCPU}. The firmware uses Hexagon system/DMA "
+            "instructions such as tlbw, dmwait, and dmlink that require a "
+            "compatible Hexagon v68+ assembler or updated LLVM syntax "
+            "support.\n"
+            "  ${HEXAGON_SMMU_PROBE_ERROR}")
+    endif()
+else()
+    message(WARNING
+        "Skipping hexagon-smmu-stress-test-v2: llvm-mc, ld.lld, and "
+        "llvm-objcopy are required to build hexagon_smmu_firmware.s")
+endif()
+
+# Check if LLVM tools can build the Hexagon SMMU firmware.
+if(HEXAGON_SMMU_FIRMWARE_SUPPORTED)
     # Assemble the Hexagon assembly file
     add_custom_command(
         OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/hexagon_smmu_firmware.o
-        COMMAND ${LLVM_MC} -arch=hexagon -filetype=obj
+        COMMAND ${LLVM_MC} -arch=hexagon -mcpu=${HEXAGON_SMMU_MCPU}
+                -filetype=obj
                 ${CMAKE_CURRENT_SOURCE_DIR}/hexagon_smmu_firmware.s
                 -o ${CMAKE_CURRENT_BINARY_DIR}/hexagon_smmu_firmware.o
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/hexagon_smmu_firmware.s
@@ -79,5 +115,5 @@ if(LLVM_MC AND LLD AND LLVM_OBJCOPY AND APPLE)
     target_compile_definitions(hexagon-smmu-stress-test-v2 PRIVATE
         FIRMWARE_BIN_PATH="${CMAKE_CURRENT_BINARY_DIR}/hexagon_smmu_firmware.bin")
 else()
-    message(WARNING "LLVM tools not found - skipping hexagon-smmu-stress-test-v2")
+    message(STATUS "hexagon-smmu-stress-test-v2 target not added")
 endif()

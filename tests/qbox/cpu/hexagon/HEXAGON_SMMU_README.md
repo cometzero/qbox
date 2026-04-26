@@ -72,14 +72,24 @@ You need the Hexagon SDK installed with the following tools:
 - `hexagon-objcopy` - Object file converter
 - `hexagon-objdump` - Object file disassembler (for verification)
 
+The CMake test target also probes the open-source LLVM tools (`llvm-mc`,
+`ld.lld`, and `llvm-objcopy`) and assembles this firmware with
+`-mcpu=hexagonv68` by default. The firmware uses Hexagon system/DMA
+instructions (`tlbw`, `dmwait`, `dmlink`) that require v68+ assembler support.
+If the probe fails, `hexagon-smmu-stress-test-v2` is skipped at configure time
+with the assembler diagnostics. In that case, use a compatible Hexagon SDK
+assembler or update the firmware syntax/encoding before enabling the stress
+test.
+
 ### Step 1: Assemble the Firmware
 
 ```bash
 # Assemble the .s file to object file
-hexagon-clang -march=hexagon -c hexagon_smmu_firmware.s -o hexagon_smmu_firmware.o
+hexagon-clang -march=hexagonv68 -c hexagon_smmu_firmware.s -o hexagon_smmu_firmware.o
 
-# Or use the assembler directly:
-hexagon-as -march=hexagon hexagon_smmu_firmware.s -o hexagon_smmu_firmware.o
+# Or use LLVM's assembler directly:
+llvm-mc -arch=hexagon -mcpu=hexagonv68 -filetype=obj \
+  hexagon_smmu_firmware.s -o hexagon_smmu_firmware.o
 ```
 
 ### Step 2: Extract Binary
@@ -240,7 +250,7 @@ You may need to:
 
 ## Notes
 
-- This firmware is designed for Hexagon v67 or later
+- This firmware is designed for Hexagon v68 or later
 - Some instructions may need adjustment for different Hexagon versions
 - The SMMU configuration is CPU-agnostic and doesn't need changes
 - Extended immediates (##) are used for 32-bit values
