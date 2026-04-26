@@ -53,6 +53,8 @@ local ARM_NUM_CPUS = 4;
 local NUM_GPUS = 0;
 
 local IS_SHARED_MEM = false
+local DEFAULT_NETDEV_STR="type=user,hostfwd=tcp::2222-:22,hostfwd=tcp::2221-:21,hostfwd=tcp::56283-:56283,hostfwd=tcp::55534-:65534,hostfwd=tcp::55535-:65535"
+local APOLLO_NETDEV_STR = os.getenv("QBOX_BOOT_NETDEV_STR") or DEFAULT_NETDEV_STR
 
 if ACCEL == nil then
     ACCEL = "tcg"
@@ -133,7 +135,7 @@ platform = {
         args = {"&platform.qemu_inst"};
         mem    =   {address=0x1c120000, size=0x10000, bind = "&router.initiator_socket"},
         irq_out = {bind = "&gic_0.spi_in_18"},
-        netdev_str="type=user,hostfwd=tcp::2222-:22,hostfwd=tcp::2221-:21,hostfwd=tcp::56283-:56283,hostfwd=tcp::55534-:65534,hostfwd=tcp::55535-:65535"};
+        netdev_str=APOLLO_NETDEV_STR};
 
     smmuv3_0 = {
         moduletype = "arm_smmuv3";
