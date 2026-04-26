@@ -1,4 +1,5 @@
 add_subdirectory(arm_smmu)
+add_subdirectory(arm_smmuv3)
 add_subdirectory(cpu_arm)
 add_subdirectory(cpu_riscv)
 add_subdirectory(cpu_hexagon)

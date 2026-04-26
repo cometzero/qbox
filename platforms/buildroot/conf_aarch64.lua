@@ -36,6 +36,14 @@ local APSS_GIC600_GICD_APSS = 0x17A00000
 local OFFSET_APSS_ALIAS0_GICR_CTLR = 0x60000
 
 local UART0 = 0x10000000
+local APOLLO_SMMUV3 = 0x1C200000
+local APOLLO_SMMUV3_SIZE = 0x00020000
+local APOLLO_HEXAGON_SRAM = 0x00C00000
+local APOLLO_HEXAGON_SRAM_SIZE = 0x00400000
+local APOLLO_HEXAGON_CTRL = 0x1C220000
+local APOLLO_HEXAGON_CTRL_SIZE = 0x000E0000
+local APOLLO_HEXAGON_QTIMER = APOLLO_HEXAGON_CTRL + 0x00020000
+local APOLLO_HEXAGON_L2VIC = APOLLO_HEXAGON_CTRL + 0x00040000
 
 local ARM_NUM_CPUS = 4;
 local NUM_GPUS = 0;
@@ -84,6 +92,14 @@ platform = {
         sync_policy = "multithread-unconstrained"
     },
 
+    qemu_inst_hex= {
+        moduletype="QemuInstance";
+        args = {"&platform.qemu_inst_mgr", "HEXAGON"};
+        accel = "tcg",
+        tcg_mode="SINGLE",
+        sync_policy = "multithread-unconstrained"
+    },
+
     gpex_0 ={
         moduletype = "qemu_gpex";
         args = {"&platform.qemu_inst"};
@@ -114,6 +130,70 @@ platform = {
         mem    =   {address=0x1c120000, size=0x10000, bind = "&router.initiator_socket"},
         irq_out = {bind = "&gic_0.spi_in_18"},
         netdev_str="type=user,hostfwd=tcp::2222-:22,hostfwd=tcp::2221-:21,hostfwd=tcp::56283-:56283,hostfwd=tcp::55534-:65534,hostfwd=tcp::55535-:65535"};
+
+    smmuv3_0 = {
+        moduletype = "arm_smmuv3";
+        args = {"&platform.qemu_inst", "&platform.gpex_0"};
+        mem = {address=APOLLO_SMMUV3, size=APOLLO_SMMUV3_SIZE, bind = "&router.initiator_socket"};
+        irq_out_0 = {bind = "&gic_0.spi_in_560"}; -- eventq
+        irq_out_1 = {bind = "&gic_0.spi_in_563"}; -- priq
+        irq_out_2 = {bind = "&gic_0.spi_in_562"}; -- cmdq-sync
+        irq_out_3 = {bind = "&gic_0.spi_in_561"}; -- gerror
+        stage = "1";
+    };
+
+    hexagon_sram_0 = {
+        moduletype="gs_memory";
+        target_socket = {address = APOLLO_HEXAGON_SRAM; size = APOLLO_HEXAGON_SRAM_SIZE, bind= "&router.initiator_socket"},
+        dmi_allow=false,
+        log_level=0,
+        shared_memory=IS_SHARED_MEM};
+
+    hexagon_globalreg_0 = {
+        moduletype = "hexagon_globalreg";
+        args = {"&platform.qemu_inst_hex"};
+        config_table_addr = APOLLO_HEXAGON_SRAM;
+        qtimer_base_addr = APOLLO_HEXAGON_QTIMER;
+        hexagon_start_addr = APOLLO_HEXAGON_SRAM;
+        dsp_arch = "v68";
+    };
+
+    hexagon_l2vic_0 = {
+        moduletype = "hexagon_l2vic";
+        args = {"&platform.qemu_inst_hex"};
+        mem = {address=APOLLO_HEXAGON_L2VIC, size=0x10000, bind = "&router.initiator_socket"};
+        fastmem = {address=APOLLO_HEXAGON_L2VIC + 0x10000, size=0x10000, bind = "&router.initiator_socket"};
+        irq_out_0 = {bind = "&hexagon_cpu_0.irq_in_0"};
+        irq_out_1 = {bind = "&hexagon_cpu_0.irq_in_1"};
+        irq_out_2 = {bind = "&hexagon_cpu_0.irq_in_2"};
+        irq_out_3 = {bind = "&hexagon_cpu_0.irq_in_3"};
+        irq_out_4 = {bind = "&hexagon_cpu_0.irq_in_4"};
+        irq_out_5 = {bind = "&hexagon_cpu_0.irq_in_5"};
+        irq_out_6 = {bind = "&hexagon_cpu_0.irq_in_6"};
+        irq_out_7 = {bind = "&hexagon_cpu_0.irq_in_7"};
+    };
+
+    hexagon_qtimer_0 = {
+        moduletype = "qemu_hexagon_qtimer";
+        args = {"&platform.qemu_inst_hex"};
+        mem = {address=APOLLO_HEXAGON_QTIMER, size=0x10000, bind = "&router.initiator_socket"};
+        mem_view = {address=APOLLO_HEXAGON_QTIMER + 0x10000, size=0x10000, bind = "&router.initiator_socket"};
+        irq_0 = {bind = "&hexagon_l2vic_0.irq_in_0"};
+        irq_1 = {bind = "&hexagon_l2vic_0.irq_in_1"};
+    };
+
+    hexagon_cpu_0 = {
+        moduletype = "qemu_cpu_hexagon";
+        args = {"&platform.qemu_inst_hex", "&platform.hexagon_globalreg_0"};
+        mem = {bind = "&router.target_socket"};
+        start_powered_off = true;
+        dsp_arch = "v68";
+        config_table_addr = APOLLO_HEXAGON_SRAM;
+        l2vic_base_addr = APOLLO_HEXAGON_L2VIC;
+        qtimer_base_addr = APOLLO_HEXAGON_QTIMER;
+        vtcm_base_addr = APOLLO_HEXAGON_SRAM;
+        vtcm_size_kb = APOLLO_HEXAGON_SRAM_SIZE / 1024;
+    };
 
     -- Apollo SoC boots from rootfs.cpio initramfs. Keep virtio block out of the
     -- initial platform so a missing rootfs.ext4 cannot stop early UART boot.
