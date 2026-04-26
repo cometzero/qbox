@@ -1,0 +1,1 @@
+gs_create_dymod(apollo_hexagon_dma)

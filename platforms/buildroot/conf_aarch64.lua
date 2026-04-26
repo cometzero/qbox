@@ -38,8 +38,11 @@ local OFFSET_APSS_ALIAS0_GICR_CTLR = 0x60000
 local UART0 = 0x10000000
 local APOLLO_SMMUV3 = 0x1C200000
 local APOLLO_SMMUV3_SIZE = 0x00020000
+local APOLLO_SHARED_SRAM = 0x00A00000
+local APOLLO_SHARED_SRAM_SIZE = 0x00200000
 local APOLLO_HEXAGON_SRAM = 0x00C00000
 local APOLLO_HEXAGON_SRAM_SIZE = 0x00400000
+local APOLLO_HEXAGON_BOOT_ALIAS = 0x00000000
 local APOLLO_HEXAGON_CTRL = 0x1C220000
 local APOLLO_HEXAGON_CTRL_SIZE = 0x000E0000
 local APOLLO_HEXAGON_QTIMER = APOLLO_HEXAGON_CTRL + 0x00020000
@@ -96,7 +99,7 @@ platform = {
         moduletype="QemuInstance";
         args = {"&platform.qemu_inst_mgr", "HEXAGON"};
         accel = "tcg",
-        tcg_mode="SINGLE",
+        tcg_mode="MULTI",
         sync_policy = "multithread-unconstrained"
     },
 
@@ -142,19 +145,40 @@ platform = {
         stage = "1";
     };
 
-    hexagon_sram_0 = {
+    shared_sram_0 = {
         moduletype="gs_memory";
-        target_socket = {address = APOLLO_HEXAGON_SRAM; size = APOLLO_HEXAGON_SRAM_SIZE, bind= "&router.initiator_socket"},
+        target_socket = {address = APOLLO_SHARED_SRAM; size = APOLLO_SHARED_SRAM_SIZE, bind= "&router.initiator_socket"},
         dmi_allow=false,
         log_level=0,
         shared_memory=IS_SHARED_MEM};
+
+    hexagon_sram_0 = {
+        moduletype="gs_memory";
+        target_socket = {
+            address = APOLLO_HEXAGON_SRAM;
+            size = APOLLO_HEXAGON_SRAM_SIZE,
+            bind= "&router.initiator_socket",
+            aliases={{address=APOLLO_HEXAGON_BOOT_ALIAS, size=APOLLO_HEXAGON_SRAM_SIZE}}
+        },
+        dmi_allow=false,
+        log_level=0,
+        shared_memory=IS_SHARED_MEM};
+
+    hexagon_dma_0 = {
+        moduletype = "apollo_hexagon_dma";
+        regs = {address=APOLLO_HEXAGON_CTRL, size=0x1000, bind = "&router.initiator_socket", relative_addresses=true};
+        dma = {bind = "&router.target_socket"};
+    };
 
     hexagon_globalreg_0 = {
         moduletype = "hexagon_globalreg";
         args = {"&platform.qemu_inst_hex"};
         config_table_addr = APOLLO_HEXAGON_SRAM;
         qtimer_base_addr = APOLLO_HEXAGON_QTIMER;
-        hexagon_start_addr = APOLLO_HEXAGON_SRAM;
+        -- QEMU Hexagon test board boots from local EVB address zero. The
+        -- router aliases that zero window onto Apollo Hexagon SRAM while the
+        -- SoC-visible physical address remains APOLLO_HEXAGON_SRAM.
+        hexagon_start_addr = APOLLO_HEXAGON_BOOT_ALIAS;
         dsp_arch = "v68";
     };
 
@@ -186,8 +210,12 @@ platform = {
         moduletype = "qemu_cpu_hexagon";
         args = {"&platform.qemu_inst_hex", "&platform.hexagon_globalreg_0"};
         mem = {bind = "&router.target_socket"};
-        start_powered_off = true;
+        -- Construct after the loader so apollo_hexagon_dma.bin is present in
+        -- Hexagon SRAM before QEMU releases the CPU from reset.
+        construction_priority = 1;
+        start_powered_off = false;
         dsp_arch = "v68";
+        hexagon_num_threads = 1;
         config_table_addr = APOLLO_HEXAGON_SRAM;
         l2vic_base_addr = APOLLO_HEXAGON_L2VIC;
         qtimer_base_addr = APOLLO_HEXAGON_QTIMER;
@@ -237,6 +265,7 @@ platform = {
         { bin_file=top().."fw/Artifacts/Image.bin", address=_KERNEL64_LOAD_ADDR };
         { bin_file=top().."fw/Artifacts/apollo_soc.dtb", address=_DTB_LOAD_ADDR };
         { bin_file=top().."fw/Artifacts/rootfs.cpio", address= _INITRD_LOAD_ADDR };
+        { bin_file=top().."fw/Artifacts/apollo_hexagon_dma.bin", address=APOLLO_HEXAGON_SRAM };
         { data=_bootloader_aarch64, address = INITIAL_DDR_SPACE};    
     };
 };

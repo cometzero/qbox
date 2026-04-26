@@ -1,4 +1,5 @@
 add_subdirectory(addrtr)
+add_subdirectory(apollo_hexagon_dma)
 add_subdirectory(backends)
 add_subdirectory(exclusive_monitor)
 add_subdirectory(keep_alive)
