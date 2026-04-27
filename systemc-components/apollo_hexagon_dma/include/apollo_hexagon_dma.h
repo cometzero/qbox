@@ -31,7 +31,9 @@ public:
     cci::cci_param<bool> p_smmu_translated;
 
     tlm_utils::simple_target_socket<apollo_hexagon_dma, DEFAULT_TLM_BUSWIDTH> regs;
-    tlm_utils::simple_initiator_socket<apollo_hexagon_dma, DEFAULT_TLM_BUSWIDTH> dma;
+    tlm_utils::simple_initiator_socket_b<apollo_hexagon_dma, DEFAULT_TLM_BUSWIDTH, tlm::tlm_base_protocol_types,
+                                         sc_core::SC_ZERO_OR_MORE_BOUND>
+        dma;
     tlm_utils::simple_initiator_socket_b<apollo_hexagon_dma, DEFAULT_TLM_BUSWIDTH, tlm::tlm_base_protocol_types,
                                          sc_core::SC_ZERO_OR_MORE_BOUND>
         translated_dma;
@@ -69,6 +71,7 @@ private:
         STATUS_ERROR = 2,
         RESULT_OK = 0x444d414f,    // "DMAO"
         RESULT_BAD_LEN = 0xbad00001,
+        RESULT_TLM_ERROR = 0xbad00002,
         CAP_COPY_ENGINE = 1u << 0,
         CAP_DIRECT_TLM = 1u << 1,
         CAP_SMMU_TRANSLATED = 1u << 2,
@@ -207,8 +210,12 @@ private:
                   << std::hex << p_stream_id.get_value() << " caps=0x" << dma_caps() << std::dec << std::endl;
 
         std::vector<uint8_t> buffer(m_len);
-        do_dma(tlm::TLM_READ_COMMAND, m_src, buffer.data(), m_len, delay);
-        do_dma(tlm::TLM_WRITE_COMMAND, m_dst, buffer.data(), m_len, delay);
+        if (!do_dma(tlm::TLM_READ_COMMAND, m_src, buffer.data(), m_len, delay)) {
+            return;
+        }
+        if (!do_dma(tlm::TLM_WRITE_COMMAND, m_dst, buffer.data(), m_len, delay)) {
+            return;
+        }
 
         uint32_t first_word = 0;
         std::memcpy(&first_word, buffer.data(), std::min(sizeof(first_word), buffer.size()));
@@ -221,7 +228,7 @@ private:
                   << " len=0x" << m_len << " first=0x" << first_word << std::dec << std::endl;
     }
 
-    void do_dma(tlm::tlm_command command, uint64_t addr, uint8_t* data, uint32_t len, sc_core::sc_time& delay)
+    bool do_dma(tlm::tlm_command command, uint64_t addr, uint8_t* data, uint32_t len, sc_core::sc_time& delay)
     {
         tlm::tlm_generic_payload trans;
         trans.set_command(command);
@@ -240,8 +247,17 @@ private:
         }
         if (!trans.is_response_ok()) {
             m_status = STATUS_ERROR;
-            SCP_FATAL(()) << "APOLLO_HEXAGON_DMA: DMA transaction failed at addr=0x" << std::hex << addr;
+            m_result = RESULT_TLM_ERROR;
+            SCP_ERR(()) << "APOLLO_HEXAGON_DMA: DMA transaction failed command="
+                         << (command == tlm::TLM_READ_COMMAND ? "read" : "write") << " addr=0x" << std::hex
+                         << addr << " response=" << trans.get_response_string();
+            std::cerr << "APOLLO_HEXAGON_DMA: DMA transaction failed command="
+                      << (command == tlm::TLM_READ_COMMAND ? "read" : "write") << " addr=0x" << std::hex << addr
+                      << " response=" << trans.get_response_string() << std::dec << std::endl;
+            return false;
         }
+
+        return true;
     }
 };
 

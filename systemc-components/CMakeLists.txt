@@ -1,5 +1,6 @@
 add_subdirectory(addrtr)
 add_subdirectory(apollo_hexagon_dma)
+add_subdirectory(apollo_smmu_tbu)
 add_subdirectory(backends)
 add_subdirectory(exclusive_monitor)
 add_subdirectory(keep_alive)
@@ -27,4 +28,3 @@ if(NOT WIN32)
     add_subdirectory(macs)
     add_subdirectory(component_constructor)
 endif()
-

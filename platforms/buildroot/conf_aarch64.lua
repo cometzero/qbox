@@ -48,6 +48,8 @@ local APOLLO_HEXAGON_CTRL_SIZE = 0x000E0000
 local APOLLO_HEXAGON_QTIMER = APOLLO_HEXAGON_CTRL + 0x00020000
 local APOLLO_HEXAGON_L2VIC = APOLLO_HEXAGON_CTRL + 0x00040000
 local APOLLO_HEXAGON_STREAM_ID = 0x1
+local APOLLO_HEXAGON_DMA_IOVA = 0x10000000
+local APOLLO_HEXAGON_DMA_WINDOW_SIZE = 0x00600000
 
 local ARM_NUM_CPUS = 4;
 local NUM_GPUS = 0;
@@ -167,12 +169,21 @@ platform = {
         log_level=0,
         shared_memory=IS_SHARED_MEM};
 
+    hexagon_smmu_tbu_0 = {
+        moduletype = "apollo_smmu_tbu";
+        downstream = {bind = "&router.target_socket"};
+        stream_id = APOLLO_HEXAGON_STREAM_ID;
+        iova_base = APOLLO_HEXAGON_DMA_IOVA;
+        pa_base = APOLLO_SHARED_SRAM;
+        window_size = APOLLO_HEXAGON_DMA_WINDOW_SIZE;
+    };
+
     hexagon_dma_0 = {
         moduletype = "apollo_hexagon_dma";
         regs = {address=APOLLO_HEXAGON_CTRL, size=0x1000, bind = "&router.initiator_socket", relative_addresses=true};
-        dma = {bind = "&router.target_socket"};
+        translated_dma = {bind = "&hexagon_smmu_tbu_0.upstream"};
         stream_id = APOLLO_HEXAGON_STREAM_ID;
-        smmu_translated = false;
+        smmu_translated = true;
     };
 
     hexagon_globalreg_0 = {
