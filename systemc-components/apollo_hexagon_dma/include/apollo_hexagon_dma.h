@@ -62,14 +62,26 @@ private:
         REG_CAPS = 0x1c,
         REG_PATH = 0x20,
         REG_STREAM_ID = 0x24,
+        REG_JOB_INPUT = 0x40,
+        REG_JOB_OUTPUT = 0x44,
+        REG_JOB_INPUT_BYTES = 0x48,
+        REG_JOB_OUTPUT_BYTES = 0x4c,
+        REG_JOB_CTRL = 0x50,
+        REG_JOB_STATUS = 0x54,
+        REG_JOB_RESULT = 0x58,
     };
 
     enum : uint32_t {
         CTRL_START = 1,
+        JOB_CTRL_START = 1,
+        JOB_STATUS_IDLE = 0,
+        JOB_STATUS_DONE = 1,
+        JOB_STATUS_ERROR = 2,
         STATUS_IDLE = 0,
         STATUS_DONE = 1,
         STATUS_ERROR = 2,
         RESULT_OK = 0x444d414f,    // "DMAO"
+        JOB_RESULT_OK = 0x434e4e4f, // "CNNO"
         RESULT_BAD_LEN = 0xbad00001,
         RESULT_TLM_ERROR = 0xbad00002,
         CAP_COPY_ENGINE = 1u << 0,
@@ -85,6 +97,13 @@ private:
     uint32_t m_status = STATUS_IDLE;
     uint32_t m_result = 0;
     uint32_t m_fw_done = 0;
+    uint32_t m_job_input = 0;
+    uint32_t m_job_output = 0;
+    uint32_t m_job_input_bytes = 0;
+    uint32_t m_job_output_bytes = 0;
+    uint32_t m_job_ctrl = 0;
+    uint32_t m_job_status = JOB_STATUS_IDLE;
+    uint32_t m_job_result = 0;
 
     void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)
     {
@@ -139,6 +158,20 @@ private:
             return p_smmu_translated.get_value() ? PATH_SMMU_TRANSLATED : PATH_DIRECT_TLM;
         case REG_STREAM_ID:
             return p_stream_id.get_value();
+        case REG_JOB_INPUT:
+            return m_job_input;
+        case REG_JOB_OUTPUT:
+            return m_job_output;
+        case REG_JOB_INPUT_BYTES:
+            return m_job_input_bytes;
+        case REG_JOB_OUTPUT_BYTES:
+            return m_job_output_bytes;
+        case REG_JOB_CTRL:
+            return m_job_ctrl;
+        case REG_JOB_STATUS:
+            return m_job_status;
+        case REG_JOB_RESULT:
+            return m_job_result;
         default:
             return 0;
         }
@@ -179,6 +212,37 @@ private:
             SCP_INFO(()) << "APOLLO_HEXAGON_DMA: firmware done magic=0x" << std::hex << m_fw_done;
             std::cerr << "APOLLO_HEXAGON_DMA: firmware done magic=0x" << std::hex << m_fw_done << std::dec
                       << std::endl;
+            break;
+        case REG_JOB_INPUT:
+            m_job_input = value;
+            break;
+        case REG_JOB_OUTPUT:
+            m_job_output = value;
+            break;
+        case REG_JOB_INPUT_BYTES:
+            m_job_input_bytes = value;
+            break;
+        case REG_JOB_OUTPUT_BYTES:
+            m_job_output_bytes = value;
+            break;
+        case REG_JOB_CTRL:
+            m_job_ctrl = value;
+            SCP_INFO(()) << "APOLLO_HEXAGON_DMA: job ctrl=0x" << std::hex << m_job_ctrl << " input=0x"
+                         << m_job_input << " output=0x" << m_job_output << " input-bytes=0x"
+                         << m_job_input_bytes << " output-bytes=0x" << m_job_output_bytes;
+            std::cerr << "APOLLO_HEXAGON_DMA: job ctrl=0x" << std::hex << m_job_ctrl << " input=0x"
+                      << m_job_input << " output=0x" << m_job_output << " input-bytes=0x" << m_job_input_bytes
+                      << " output-bytes=0x" << m_job_output_bytes << std::dec << std::endl;
+            break;
+        case REG_JOB_STATUS:
+            m_job_status = value;
+            SCP_INFO(()) << "APOLLO_HEXAGON_DMA: job status=0x" << std::hex << m_job_status;
+            std::cerr << "APOLLO_HEXAGON_DMA: job status=0x" << std::hex << m_job_status << std::dec << std::endl;
+            break;
+        case REG_JOB_RESULT:
+            m_job_result = value;
+            SCP_INFO(()) << "APOLLO_HEXAGON_DMA: job result=0x" << std::hex << m_job_result;
+            std::cerr << "APOLLO_HEXAGON_DMA: job result=0x" << std::hex << m_job_result << std::dec << std::endl;
             break;
         default:
             SCP_WARN(()) << "APOLLO_HEXAGON_DMA: ignored write offset=0x" << std::hex << addr << " value=0x" << value;

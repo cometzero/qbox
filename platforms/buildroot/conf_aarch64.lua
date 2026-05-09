@@ -171,6 +171,7 @@ platform = {
 
     hexagon_smmu_tbu_0 = {
         moduletype = "apollo_smmu_tbu";
+        regs = {address=APOLLO_HEXAGON_CTRL + 0x1000, size=0x1000, bind = "&router.initiator_socket", relative_addresses=true};
         downstream = {bind = "&router.target_socket"};
         stream_id = APOLLO_HEXAGON_STREAM_ID;
         iova_base = APOLLO_HEXAGON_DMA_IOVA;
