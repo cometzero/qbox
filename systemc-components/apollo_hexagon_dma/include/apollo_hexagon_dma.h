@@ -69,6 +69,11 @@ private:
         REG_JOB_CTRL = 0x50,
         REG_JOB_STATUS = 0x54,
         REG_JOB_RESULT = 0x58,
+        REG_JOB_QUEUE = 0x5c,
+        REG_JOB_FENCE = 0x60,
+        REG_IRQ_STATUS = 0x64,
+        REG_IRQ_ACK = 0x68,
+        REG_QUEUE_CAPS = 0x6c,
     };
 
     enum : uint32_t {
@@ -84,9 +89,14 @@ private:
         JOB_RESULT_OK = 0x434e4e4f, // "CNNO"
         RESULT_BAD_LEN = 0xbad00001,
         RESULT_TLM_ERROR = 0xbad00002,
+        MAX_DMA_LEN = 256 * 1024,
         CAP_COPY_ENGINE = 1u << 0,
         CAP_DIRECT_TLM = 1u << 1,
         CAP_SMMU_TRANSLATED = 1u << 2,
+        CAP_LARGE_TENSOR = 1u << 3,
+        CAP_MULTI_QUEUE = 1u << 4,
+        CAP_ASYNC_FENCE = 1u << 5,
+        QUEUE_COUNT = 2,
         PATH_DIRECT_TLM = 1,
         PATH_SMMU_TRANSLATED = 2,
     };
@@ -104,6 +114,10 @@ private:
     uint32_t m_job_ctrl = 0;
     uint32_t m_job_status = JOB_STATUS_IDLE;
     uint32_t m_job_result = 0;
+    uint32_t m_job_queue = 0;
+    uint32_t m_job_fence = 0;
+    uint32_t m_irq_status = 0;
+    uint32_t m_next_fence = 1;
 
     void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)
     {
@@ -172,6 +186,14 @@ private:
             return m_job_status;
         case REG_JOB_RESULT:
             return m_job_result;
+        case REG_JOB_QUEUE:
+            return m_job_queue;
+        case REG_JOB_FENCE:
+            return m_job_fence;
+        case REG_IRQ_STATUS:
+            return m_irq_status;
+        case REG_QUEUE_CAPS:
+            return QUEUE_COUNT;
         default:
             return 0;
         }
@@ -179,7 +201,7 @@ private:
 
     uint32_t dma_caps() const
     {
-        uint32_t caps = CAP_COPY_ENGINE;
+        uint32_t caps = CAP_COPY_ENGINE | CAP_LARGE_TENSOR | CAP_MULTI_QUEUE | CAP_ASYNC_FENCE;
 
         if (p_smmu_translated.get_value()) {
             caps |= CAP_SMMU_TRANSLATED;
@@ -229,20 +251,37 @@ private:
             m_job_ctrl = value;
             SCP_INFO(()) << "APOLLO_HEXAGON_DMA: job ctrl=0x" << std::hex << m_job_ctrl << " input=0x"
                          << m_job_input << " output=0x" << m_job_output << " input-bytes=0x"
-                         << m_job_input_bytes << " output-bytes=0x" << m_job_output_bytes;
+                         << m_job_input_bytes << " output-bytes=0x" << m_job_output_bytes << " queue="
+                         << std::dec << m_job_queue;
             std::cerr << "APOLLO_HEXAGON_DMA: job ctrl=0x" << std::hex << m_job_ctrl << " input=0x"
                       << m_job_input << " output=0x" << m_job_output << " input-bytes=0x" << m_job_input_bytes
-                      << " output-bytes=0x" << m_job_output_bytes << std::dec << std::endl;
+                      << " output-bytes=0x" << m_job_output_bytes << " queue=" << std::dec << m_job_queue
+                      << std::endl;
             break;
         case REG_JOB_STATUS:
             m_job_status = value;
             SCP_INFO(()) << "APOLLO_HEXAGON_DMA: job status=0x" << std::hex << m_job_status;
             std::cerr << "APOLLO_HEXAGON_DMA: job status=0x" << std::hex << m_job_status << std::dec << std::endl;
+            if (m_job_status == JOB_STATUS_DONE || m_job_status == JOB_STATUS_ERROR) {
+                complete_async_event();
+            }
             break;
         case REG_JOB_RESULT:
             m_job_result = value;
             SCP_INFO(()) << "APOLLO_HEXAGON_DMA: job result=0x" << std::hex << m_job_result;
             std::cerr << "APOLLO_HEXAGON_DMA: job result=0x" << std::hex << m_job_result << std::dec << std::endl;
+            break;
+        case REG_JOB_QUEUE:
+            m_job_queue = value % QUEUE_COUNT;
+            SCP_INFO(()) << "APOLLO_HEXAGON_DMA: job queue=" << std::dec << m_job_queue;
+            std::cerr << "APOLLO_HEXAGON_DMA: job queue=" << std::dec << m_job_queue << std::endl;
+            break;
+        case REG_IRQ_ACK:
+            m_irq_status &= ~value;
+            SCP_INFO(()) << "APOLLO_HEXAGON_DMA: async irq ack mask=0x" << std::hex << value
+                         << " pending=0x" << m_irq_status;
+            std::cerr << "APOLLO_HEXAGON_DMA: async irq ack mask=0x" << std::hex << value << " pending=0x"
+                      << m_irq_status << std::dec << std::endl;
             break;
         default:
             SCP_WARN(()) << "APOLLO_HEXAGON_DMA: ignored write offset=0x" << std::hex << addr << " value=0x" << value;
@@ -250,15 +289,29 @@ private:
         }
     }
 
+    void complete_async_event()
+    {
+        const uint32_t irq_bit = 1u << (m_job_queue % QUEUE_COUNT);
+
+        m_job_fence = m_next_fence++;
+        m_irq_status |= irq_bit;
+        SCP_INFO(()) << "APOLLO_HEXAGON_DMA: async irq pending queue=" << std::dec << m_job_queue
+                     << " fence=" << m_job_fence << " irq=0x" << std::hex << m_irq_status;
+        std::cerr << "APOLLO_HEXAGON_DMA: async irq pending queue=" << std::dec << m_job_queue
+                  << " fence=" << m_job_fence << " irq=0x" << std::hex << m_irq_status << std::dec
+                  << std::endl;
+    }
+
     void run_dma(sc_core::sc_time& delay)
     {
         m_status = STATUS_IDLE;
         m_result = 0;
 
-        if (m_len == 0 || m_len > 4096) {
+        if (m_len == 0 || m_len > MAX_DMA_LEN) {
             m_status = STATUS_ERROR;
             m_result = RESULT_BAD_LEN;
             SCP_ERR(()) << "APOLLO_HEXAGON_DMA: invalid length " << std::dec << m_len;
+            std::cerr << "APOLLO_HEXAGON_DMA: invalid length " << std::dec << m_len << std::endl;
             return;
         }
 

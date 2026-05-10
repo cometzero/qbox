@@ -55,10 +55,10 @@ job_loop:
     memw(r0 + #88) = r1
 
     r4 = memw(r0 + #72)
+    r5 = memw(r0 + #76)
     p0 = cmp.eq(r4, #64)
-    if (!p0) jump job_error
-    r4 = memw(r0 + #76)
-    p0 = cmp.eq(r4, #16)
+    if (!p0) jump dma_copy_job
+    p0 = cmp.eq(r5, #16)
     if (!p0) jump job_error
 
     r10 = memw(r0 + #64)
@@ -185,6 +185,34 @@ poll_output_dma_done:
     if (!p0) jump poll_output_dma_done
 
     r1 = ##0x434e4e4f
+    memw(r0 + #88) = r1
+    r1 = #1
+    memw(r0 + #84) = r1
+    r1 = #0
+    memw(r0 + #80) = r1
+    jump job_loop
+
+dma_copy_job:
+    p0 = cmp.eq(r4, r5)
+    if (!p0) jump job_error
+    r10 = memw(r0 + #64)
+    r11 = memw(r0 + #68)
+
+    r1 = r10
+    memw(r0 + #0) = r1
+    r1 = r11
+    memw(r0 + #4) = r1
+    r1 = r4
+    memw(r0 + #8) = r1
+    r1 = #1
+    memw(r0 + #12) = r1
+
+poll_copy_dma_done:
+    r2 = memw(r0 + #16)
+    p0 = cmp.eq(r2, #1)
+    if (!p0) jump poll_copy_dma_done
+
+    r1 = ##0x53474f4b
     memw(r0 + #88) = r1
     r1 = #1
     memw(r0 + #84) = r1
