@@ -19,6 +19,8 @@
 #include <tlm_utils/simple_target_socket.h>
 
 #include <module_factory_registery.h>
+#include <ports/initiator-signal-socket.h>
+#include <tlm-extensions/apollo-smmu-stream-id.h>
 #include <scp/report.h>
 #include <tlm_sockets_buswidth.h>
 
@@ -28,6 +30,8 @@ class apollo_hexagon_dma : public sc_core::sc_module
 
 public:
     cci::cci_param<uint32_t> p_stream_id;
+    cci::cci_param<uint32_t> p_substream_id;
+    cci::cci_param<bool> p_substream_id_valid;
     cci::cci_param<bool> p_smmu_translated;
 
     tlm_utils::simple_target_socket<apollo_hexagon_dma, DEFAULT_TLM_BUSWIDTH> regs;
@@ -37,14 +41,18 @@ public:
     tlm_utils::simple_initiator_socket_b<apollo_hexagon_dma, DEFAULT_TLM_BUSWIDTH, tlm::tlm_base_protocol_types,
                                          sc_core::SC_ZERO_OR_MORE_BOUND>
         translated_dma;
+    InitiatorSignalSocket<bool> irq_out;
 
     explicit apollo_hexagon_dma(sc_core::sc_module_name name)
         : sc_core::sc_module(name)
         , p_stream_id("stream_id", 1, "Linux-visible SMMU StreamID for this DMA master")
+        , p_substream_id("substream_id", 0, "Endpoint PASID/SubstreamID presented to the SMMU")
+        , p_substream_id_valid("substream_id_valid", false, "Whether endpoint PASID/SubstreamID is valid")
         , p_smmu_translated("smmu_translated", false, "DMA transactions traverse an SMMU translated path")
         , regs("regs")
         , dma("dma")
         , translated_dma("translated_dma")
+        , irq_out("irq_out")
     {
         regs.register_b_transport(this, &apollo_hexagon_dma::b_transport);
         regs.register_transport_dbg(this, &apollo_hexagon_dma::transport_dbg);
@@ -74,6 +82,7 @@ private:
         REG_IRQ_STATUS = 0x64,
         REG_IRQ_ACK = 0x68,
         REG_QUEUE_CAPS = 0x6c,
+        REG_PASID = 0x70,
     };
 
     enum : uint32_t {
@@ -96,9 +105,11 @@ private:
         CAP_LARGE_TENSOR = 1u << 3,
         CAP_MULTI_QUEUE = 1u << 4,
         CAP_ASYNC_FENCE = 1u << 5,
+        CAP_ENDPOINT_PASID = 1u << 6,
         QUEUE_COUNT = 2,
         PATH_DIRECT_TLM = 1,
         PATH_SMMU_TRANSLATED = 2,
+        PASID_VALID = 1u << 31,
     };
 
     uint32_t m_src = 0;
@@ -194,6 +205,9 @@ private:
             return m_irq_status;
         case REG_QUEUE_CAPS:
             return QUEUE_COUNT;
+        case REG_PASID:
+            return (p_substream_id.get_value() & 0x000fffffu) |
+                   (p_substream_id_valid.get_value() ? PASID_VALID : 0u);
         default:
             return 0;
         }
@@ -201,7 +215,8 @@ private:
 
     uint32_t dma_caps() const
     {
-        uint32_t caps = CAP_COPY_ENGINE | CAP_LARGE_TENSOR | CAP_MULTI_QUEUE | CAP_ASYNC_FENCE;
+        uint32_t caps = CAP_COPY_ENGINE | CAP_LARGE_TENSOR | CAP_MULTI_QUEUE |
+                        CAP_ASYNC_FENCE | CAP_ENDPOINT_PASID;
 
         if (p_smmu_translated.get_value()) {
             caps |= CAP_SMMU_TRANSLATED;
@@ -278,14 +293,33 @@ private:
             break;
         case REG_IRQ_ACK:
             m_irq_status &= ~value;
+            update_irq_output();
             SCP_INFO(()) << "APOLLO_HEXAGON_DMA: async irq ack mask=0x" << std::hex << value
                          << " pending=0x" << m_irq_status;
             std::cerr << "APOLLO_HEXAGON_DMA: async irq ack mask=0x" << std::hex << value << " pending=0x"
                       << m_irq_status << std::dec << std::endl;
             break;
+        case REG_PASID:
+            p_substream_id.set_value(value & 0x000fffffu);
+            p_substream_id_valid.set_value((value & PASID_VALID) != 0);
+            SCP_INFO(()) << "APOLLO_HEXAGON_DMA: endpoint PASID update valid="
+                         << (p_substream_id_valid.get_value() ? 1 : 0)
+                         << " pasid=0x" << std::hex << p_substream_id.get_value();
+            std::cerr << "APOLLO_HEXAGON_DMA: endpoint PASID update valid="
+                      << (p_substream_id_valid.get_value() ? 1 : 0)
+                      << " pasid=0x" << std::hex << p_substream_id.get_value()
+                      << std::dec << std::endl;
+            break;
         default:
             SCP_WARN(()) << "APOLLO_HEXAGON_DMA: ignored write offset=0x" << std::hex << addr << " value=0x" << value;
             break;
+        }
+    }
+
+    void update_irq_output()
+    {
+        if (irq_out.size() > 0) {
+            irq_out->write(m_irq_status != 0);
         }
     }
 
@@ -295,6 +329,7 @@ private:
 
         m_job_fence = m_next_fence++;
         m_irq_status |= irq_bit;
+        update_irq_output();
         SCP_INFO(()) << "APOLLO_HEXAGON_DMA: async irq pending queue=" << std::dec << m_job_queue
                      << " fence=" << m_job_fence << " irq=0x" << std::hex << m_irq_status;
         std::cerr << "APOLLO_HEXAGON_DMA: async irq pending queue=" << std::dec << m_job_queue
@@ -321,10 +356,16 @@ private:
                   << " len=0x" << m_len << std::dec << std::endl;
         SCP_INFO(()) << "APOLLO_HEXAGON_DMA: path="
                      << (p_smmu_translated.get_value() ? "smmu-translated" : "direct-tlm")
-                     << " stream-id=0x" << std::hex << p_stream_id.get_value() << " caps=0x" << dma_caps();
+                     << " stream-id=0x" << std::hex << p_stream_id.get_value()
+                     << " pasid-valid=" << (p_substream_id_valid.get_value() ? 1 : 0)
+                     << " pasid=0x" << p_substream_id.get_value()
+                     << " caps=0x" << dma_caps();
         std::cerr << "APOLLO_HEXAGON_DMA: path="
                   << (p_smmu_translated.get_value() ? "smmu-translated" : "direct-tlm") << " stream-id=0x"
-                  << std::hex << p_stream_id.get_value() << " caps=0x" << dma_caps() << std::dec << std::endl;
+                  << std::hex << p_stream_id.get_value()
+                  << " pasid-valid=" << (p_substream_id_valid.get_value() ? 1 : 0)
+                  << " pasid=0x" << p_substream_id.get_value()
+                  << " caps=0x" << dma_caps() << std::dec << std::endl;
 
         std::vector<uint8_t> buffer(m_len);
         if (!do_dma(tlm::TLM_READ_COMMAND, m_src, buffer.data(), m_len, delay)) {
@@ -358,7 +399,12 @@ private:
         trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
 
         if (p_smmu_translated.get_value()) {
+            gs::ApolloSmmuStreamIdExtension stream_id_ext(
+                p_stream_id.get_value(), p_substream_id.get_value(),
+                p_substream_id_valid.get_value());
+            trans.set_extension(&stream_id_ext);
             translated_dma->b_transport(trans, delay);
+            trans.clear_extension(&stream_id_ext);
         } else {
             dma->b_transport(trans, delay);
         }

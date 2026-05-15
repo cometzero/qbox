@@ -56,6 +56,12 @@ job_loop:
 
     r4 = memw(r0 + #72)
     r5 = memw(r0 + #76)
+    p0 = cmp.eq(r4, #32)
+    if (!p0) jump check_cnn_job
+    p0 = cmp.eq(r5, #16)
+    if (p0) jump vector_add_job
+
+check_cnn_job:
     p0 = cmp.eq(r4, #64)
     if (!p0) jump dma_copy_job
     p0 = cmp.eq(r5, #16)
@@ -185,6 +191,81 @@ poll_output_dma_done:
     if (!p0) jump poll_output_dma_done
 
     r1 = ##0x434e4e4f
+    memw(r0 + #88) = r1
+    r1 = #1
+    memw(r0 + #84) = r1
+    r1 = #0
+    memw(r0 + #80) = r1
+    jump job_loop
+
+vector_add_job:
+    r10 = memw(r0 + #64)
+    r11 = memw(r0 + #68)
+
+    r1 = r10
+    memw(r0 + #0) = r1
+    r1 = ##0x10202000
+    memw(r0 + #4) = r1
+    r1 = #32
+    memw(r0 + #8) = r1
+    r1 = #1
+    memw(r0 + #12) = r1
+
+poll_vadd_input_dma_done:
+    r2 = memw(r0 + #16)
+    p0 = cmp.eq(r2, #1)
+    if (!p0) jump poll_vadd_input_dma_done
+
+    r10 = ##0x00c02000
+    r12 = ##0x00c03000
+    r2 = memw(r10 + #0)
+    r3 = memw(r10 + #16)
+    r2 = add(r2, r3)
+    p0 = cmp.eq(r2, #11)
+    if (!p0) jump job_error
+    r1 = ##0x41300000
+    memw(r12 + #0) = r1
+
+    r2 = memw(r10 + #4)
+    r3 = memw(r10 + #20)
+    r2 = add(r2, r3)
+    p0 = cmp.eq(r2, #22)
+    if (!p0) jump job_error
+    r1 = ##0x41b00000
+    memw(r12 + #4) = r1
+
+    r2 = memw(r10 + #8)
+    r3 = memw(r10 + #24)
+    r2 = add(r2, r3)
+    p0 = cmp.eq(r2, #33)
+    if (!p0) jump job_error
+    r1 = ##0x42040000
+    memw(r12 + #8) = r1
+
+    r2 = memw(r10 + #12)
+    r3 = memw(r10 + #28)
+    r2 = add(r2, r3)
+    p0 = cmp.eq(r2, #44)
+    if (!p0) jump job_error
+    r1 = ##0x42300000
+    memw(r12 + #12) = r1
+
+    r0 = ##0x1c220000
+    r1 = ##0x10203000
+    memw(r0 + #0) = r1
+    r1 = r11
+    memw(r0 + #4) = r1
+    r1 = #16
+    memw(r0 + #8) = r1
+    r1 = #1
+    memw(r0 + #12) = r1
+
+poll_vadd_output_dma_done:
+    r2 = memw(r0 + #16)
+    p0 = cmp.eq(r2, #1)
+    if (!p0) jump poll_vadd_output_dma_done
+
+    r1 = ##0x56414444
     memw(r0 + #88) = r1
     r1 = #1
     memw(r0 + #84) = r1
