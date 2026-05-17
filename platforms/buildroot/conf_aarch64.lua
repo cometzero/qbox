@@ -47,10 +47,13 @@ local APOLLO_HEXAGON_CTRL = 0x1C220000
 local APOLLO_HEXAGON_CTRL_SIZE = 0x000E0000
 local APOLLO_HEXAGON_AUX_CTRL = 0x1C300000
 local APOLLO_HEXAGON_AUX_CTRL_SIZE = 0x00003000
+local IOMMU_TEST_CTRL = 0x1C320000
+local IOMMU_TEST_CTRL_SIZE = 0x00003000
 local APOLLO_HEXAGON_QTIMER = APOLLO_HEXAGON_CTRL + 0x00020000
 local APOLLO_HEXAGON_L2VIC = APOLLO_HEXAGON_CTRL + 0x00040000
 local APOLLO_HEXAGON_STREAM_ID = 0x1
 local APOLLO_HEXAGON_AUX_STREAM_ID = 0x2
+local IOMMU_TEST_STREAM_ID = 0x3
 local APOLLO_HEXAGON_DMA_IOVA = 0x10000000
 local APOLLO_HEXAGON_DMA_WINDOW_SIZE = 0x00600000
 
@@ -213,6 +216,26 @@ platform = {
         irq_out = {bind = "&gic_0.spi_in_566"}; -- auxiliary doorbell
         stream_id = APOLLO_HEXAGON_AUX_STREAM_ID;
         substream_id = 0x4;
+        substream_id_valid = true;
+        smmu_translated = true;
+    };
+
+    iommu_test_smmu_tbu_0 = {
+        moduletype = "apollo_smmu_tbu";
+        regs = {address=IOMMU_TEST_CTRL + 0x1000, size=0x10000, bind = "&router.initiator_socket", relative_addresses=true};
+        downstream = {bind = "&router.target_socket"};
+        stream_id = IOMMU_TEST_STREAM_ID;
+        iova_base = APOLLO_HEXAGON_DMA_IOVA;
+        pa_base = APOLLO_SHARED_SRAM;
+        window_size = APOLLO_HEXAGON_DMA_WINDOW_SIZE;
+    };
+
+    iommu_test_dma_0 = {
+        moduletype = "apollo_hexagon_dma";
+        regs = {address=IOMMU_TEST_CTRL, size=0x1000, bind = "&router.initiator_socket", relative_addresses=true};
+        translated_dma = {bind = "&iommu_test_smmu_tbu_0.upstream"};
+        stream_id = IOMMU_TEST_STREAM_ID;
+        substream_id = 0x5;
         substream_id_valid = true;
         smmu_translated = true;
     };
