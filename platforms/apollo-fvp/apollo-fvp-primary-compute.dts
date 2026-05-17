@@ -1,0 +1,251 @@
+/dts-v1/;
+
+/ {
+	model = "Apollo FVP QBox Primary Compute";
+	compatible = "qbox,apollo-fvp-primary-compute", "arm,rdaspen";
+	interrupt-parent = <&gic>;
+	#address-cells = <2>;
+	#size-cells = <2>;
+
+	aliases {
+		serial0 = &soc_serial0;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+		bootargs = "console=ttyAMA0,115200 earlycon=pl011,mmio32,0x1a400000 root=/dev/vda2 rw rootwait maxcpus=4";
+	};
+
+	cpus {
+		#address-cells = <2>;
+		#size-cells = <0>;
+
+		cpu-map {
+			cluster0 {
+				core0 {
+					cpu = <&CPU0>;
+				};
+				core1 {
+					cpu = <&CPU1>;
+				};
+				core2 {
+					cpu = <&CPU2>;
+				};
+				core3 {
+					cpu = <&CPU3>;
+				};
+			};
+		};
+
+		CPU0: cpu@0 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a720ae";
+			reg = <0x0 0x0>;
+			enable-method = "psci";
+		};
+
+		CPU1: cpu@100 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a720ae";
+			reg = <0x0 0x100>;
+			enable-method = "psci";
+		};
+
+		CPU2: cpu@200 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a720ae";
+			reg = <0x0 0x200>;
+			enable-method = "psci";
+		};
+
+		CPU3: cpu@300 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a720ae";
+			reg = <0x0 0x300>;
+			enable-method = "psci";
+		};
+	};
+
+	memory@80000000 {
+		device_type = "memory";
+		reg = <0x0 0x80000000 0x0 0x7f000000>,
+		      <0x2 0x00000000 0x0 0x80000000>;
+	};
+
+	timer {
+		compatible = "arm,armv8-timer";
+		interrupts = <1 13 8>,
+			     <1 14 8>,
+			     <1 11 8>,
+			     <1 10 8>,
+			     <1 12 8>;
+	};
+
+	psci {
+		compatible = "arm,psci-1.0", "arm,psci-0.2", "arm,psci";
+		method = "smc";
+		cpu_suspend = <0xc4000001>;
+		cpu_off = <0x84000002>;
+		cpu_on = <0xc4000003>;
+	};
+
+	soc_clk24mhz: clk24mhz {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <24000000>;
+		clock-output-names = "refclk24mhz";
+	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		ras_buffer: cper@ffa00000 {
+			reg = <0x0 0xffa00000 0x0 0x00100000>;
+			no-map;
+		};
+
+		si_cl1_rproc_rsctbl: rsctbl@100000 {
+			compatible = "shared-dma-pool";
+			reg = <0x0 0x00100000 0x0 0x20000>;
+			no-map;
+			status = "disabled";
+		};
+
+		si_cl1_vdev0vring0: vdev0vring0@120000 {
+			compatible = "shared-dma-pool";
+			reg = <0x0 0x00120000 0x0 0x20000>;
+			no-map;
+			status = "disabled";
+		};
+
+		si_cl1_vdev0vring1: vdev0vring1@140000 {
+			compatible = "shared-dma-pool";
+			reg = <0x0 0x00140000 0x0 0x20000>;
+			no-map;
+			status = "disabled";
+		};
+
+		si_cl1_vdev0buffer: vdev0buffer@160000 {
+			compatible = "shared-dma-pool";
+			reg = <0x0 0x00160000 0x0 0x20000>;
+			no-map;
+			status = "disabled";
+		};
+	};
+
+	sram: sram@180000 {
+		compatible = "mmio-sram";
+		reg = <0x0 0x00180000 0x0 0x00001000>;
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges = <0x0 0x0 0x00180000 0x00001000>;
+
+		scmi_shmem_tx: scpshmem-sram-section@0 {
+			compatible = "arm,scmi-shmem";
+			reg = <0x0 0x100>;
+		};
+
+		scmi_shmem_rx: scpshmem-sram-section@100 {
+			compatible = "arm,scmi-shmem";
+			reg = <0x100 0x100>;
+		};
+	};
+
+	soc {
+		compatible = "simple-bus";
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		gic: interrupt-controller@20800000 {
+			compatible = "arm,gic-v3";
+			#redistributor-regions = <4>;
+			reg = <0x0 0x20800000 0x0 0x10000>,
+			      <0x0 0x20880000 0x0 0x40000>,
+			      <0x0 0x208c0000 0x0 0x40000>,
+			      <0x0 0x20900000 0x0 0x40000>,
+			      <0x0 0x20940000 0x0 0x40000>;
+			#interrupt-cells = <3>;
+			#address-cells = <2>;
+			#size-cells = <2>;
+			ranges;
+			interrupt-controller;
+			interrupts = <1 9 4>;
+
+			its1: msi-controller@20840000 {
+				compatible = "arm,gic-v3-its";
+				reg = <0x0 0x20840000 0x0 0x40000>;
+				msi-controller;
+				#msi-cells = <1>;
+			};
+		};
+
+		soc_serial0: serial@1a400000 {
+			compatible = "arm,pl011", "arm,primecell";
+			reg = <0x0 0x1a400000 0x0 0x1000>;
+			interrupts = <0 52 4>;
+			clocks = <&soc_clk24mhz>, <&soc_clk24mhz>;
+			clock-names = "uartclk", "apb_pclk";
+		};
+
+		watchdog@1a420000 {
+			compatible = "arm,sbsa-gwdt";
+			reg = <0x0 0x1a420000 0x0 0x1000>,
+			      <0x0 0x1a430000 0x0 0x1000>;
+			interrupts = <0 50 4>;
+			clocks = <&soc_clk24mhz>;
+		};
+
+		virtio-block@30020000 {
+			compatible = "virtio,mmio";
+			reg = <0x0 0x30020000 0x0 0x10000>;
+			interrupts = <0 257 4>;
+			dma-coherent;
+		};
+
+		virtio-block@30030000 {
+			compatible = "virtio,mmio";
+			reg = <0x0 0x30030000 0x0 0x10000>;
+			interrupts = <0 258 4>;
+			dma-coherent;
+		};
+
+		virtio-block@30040000 {
+			compatible = "virtio,mmio";
+			reg = <0x0 0x30040000 0x0 0x10000>;
+			interrupts = <0 259 4>;
+			dma-coherent;
+		};
+
+		virtio-block@30050000 {
+			compatible = "virtio,mmio";
+			reg = <0x0 0x30050000 0x0 0x10000>;
+			interrupts = <0 260 4>;
+			dma-coherent;
+		};
+
+		virtio-net@30060000 {
+			compatible = "virtio,mmio";
+			reg = <0x0 0x30060000 0x0 0x10000>;
+			interrupts = <0 261 4>;
+			dma-coherent;
+		};
+
+		virtio-rng@30080000 {
+			compatible = "virtio,mmio";
+			reg = <0x0 0x30080000 0x0 0x10000>;
+			interrupts = <0 263 4>;
+			dma-coherent;
+		};
+
+		rtc@300d0000 {
+			compatible = "arm,pl031", "arm,primecell";
+			reg = <0x0 0x300d0000 0x0 0x1000>;
+			interrupts = <0 268 4>;
+			clocks = <&soc_clk24mhz>;
+			clock-names = "apb_pclk";
+		};
+	};
+};
