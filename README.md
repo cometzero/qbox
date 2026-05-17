@@ -19,7 +19,7 @@ project consists of:
 
 ### Supported Architectures
 
-- **ARM:** Cortex-A53/A55/A76/A710, Cortex-M7/M55,
+- **ARM:** Cortex-A53/A55/A76/A710/A720AE, Cortex-M7/M55,
   Cortex-R5/R52, Neoverse-N1/N2
 - **RISC-V:** riscv32, riscv64, SiFive X280
 - **Hexagon:** Hexagon DSP
