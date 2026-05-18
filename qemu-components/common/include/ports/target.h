@@ -98,10 +98,22 @@ public:
         switch (trans.get_command()) {
         case tlm::TLM_READ_COMMAND:
             res = m_as->read(addr, data, size, attrs);
+            if (res == qemu::MemoryRegionOps::MemTxDecodeError && addr >= 0x1000) {
+                /*
+                 * Some FVP device-tree windows are larger than the underlying
+                 * QEMU PrimeCell sysbus region.  Mirror the first 4 KiB so
+                 * AMBA peripheral-ID reads at the end of a 64 KiB window still
+                 * reach the QEMU device model.
+                 */
+                res = m_as->read(addr & 0xfff, data, size, attrs);
+            }
             break;
 
         case tlm::TLM_WRITE_COMMAND:
             res = m_as->write(addr, data, size, attrs);
+            if (res == qemu::MemoryRegionOps::MemTxDecodeError && addr >= 0x1000) {
+                res = m_as->write(addr & 0xfff, data, size, attrs);
+            }
             break;
 
         default:

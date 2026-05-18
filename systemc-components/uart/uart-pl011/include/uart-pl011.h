@@ -250,8 +250,9 @@ public:
             r = s->dmacr;
             break;
         default:
-            if ((offset >> 2) >= 0x3f8 && (offset >> 2) <= 0x400) {
-                r = s->id[(offset - 0xfe0) >> 2];
+            uint64_t id_offset = offset & 0xfff;
+            if ((id_offset >> 2) >= 0x3f8 && (id_offset >> 2) <= 0x400) {
+                r = s->id[(id_offset - 0xfe0) >> 2];
                 break;
             }
             r = 0;
