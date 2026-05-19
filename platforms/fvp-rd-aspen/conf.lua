@@ -187,6 +187,20 @@ platform = {
         sync_policy = "multithread-unconstrained"
     },
 
+    gpex_0 = {
+        moduletype = "qemu_gpex";
+        args = {"&platform.qemu_inst"};
+        bus_master = {bind = "&router.target_socket"};
+        pio_iface = {address = 0x60200000, size = 0x00100000, bind = "&router.initiator_socket"};
+        mmio_iface = {address = 0x60300000, size = 0x1fd00000, bind = "&router.initiator_socket"};
+        ecam_iface = {address = 0x43b50000, size = 0x10000000, bind = "&router.initiator_socket"};
+        mmio_iface_high = {address = 0x400000000, size = 0x200000000, bind = "&router.initiator_socket"};
+        irq_out_0 = {bind = "&gic_0.spi_in_300"};
+        irq_out_1 = {bind = "&gic_0.spi_in_301"};
+        irq_out_2 = {bind = "&gic_0.spi_in_302"};
+        irq_out_3 = {bind = "&gic_0.spi_in_303"};
+    },
+
     gic_0 = {
         moduletype = "arm_gicv3",
         args = {"&platform.qemu_inst"},
@@ -341,13 +355,15 @@ platform = {
     };
 
     smmu_0 = {
-        moduletype = "smmuv3_stub";
-        target_socket = {
+        moduletype = "arm_smmuv3";
+        args = {"&platform.qemu_inst", "&platform.gpex_0"};
+        mem = {
             address = 0x1c0000000,
             size = 0x8000000,
             bind = "&router.initiator_socket"
         };
-        irq = {bind = "&gic_0.spi_in_65"};
+        irq_out_0 = {bind = "&gic_0.spi_in_65"};
+        stage = "1";
     };
 
     mhuv3_db_tx_0 = {

@@ -33,6 +33,11 @@ DRAM, GICv3, ITS, PL011, SBSA watchdog, PL031 RTC, SMMUv3, armv7
 memory-mapped timer, RAS FFH, DSU PMU, SCMI MHUv3, SI remoteproc MHUv3,
 and virtio-mmio block/net/rng.
 
+The SMMUv3 node uses the libqemu-backed `arm_smmuv3` component, not the
+minimal register-only stub. QEMU's SMMUv3 model requires a primary PCI bus, so
+the platform instantiates `qemu_gpex` only as the backing bus host. The
+RD-Aspen device tree still exposes the FVP-compatible combined SMMUv3 SPI.
+
 The RD-Aspen DT exposes 16 GIC redistributor windows. The configured primary
 compute build uses 4 CPUs, so QBox instantiates 4 active GIC CPU interfaces and
 keeps the remaining redistributor windows decoded as reserved memory.
