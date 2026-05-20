@@ -145,6 +145,10 @@ private:
         CMDQ_DISPATCH_KIND_CNN = 1,
         CMDQ_DISPATCH_KIND_VADD = 2,
         CMDQ_DISPATCH_KIND_MNIST = 3,
+        APKO_PAYLOAD_MAGIC = 0x5041594c, // "PAYL"
+        APKO_PAYLOAD_OPCODE_CNN = CMDQ_DISPATCH_KIND_CNN,
+        APKO_PAYLOAD_OPCODE_VADD = CMDQ_DISPATCH_KIND_VADD,
+        APKO_PAYLOAD_OPCODE_MNIST = CMDQ_DISPATCH_KIND_MNIST,
         VADD_WORDS = 4,
         VADD_INPUT_WORDS = VADD_WORDS * 2,
         VADD_OUTPUT_WORDS = VADD_WORDS,
@@ -163,6 +167,8 @@ private:
         uint32_t entry_kind = 0;
         uint32_t input_bytes = 0;
         uint32_t output_bytes = 0;
+        uint32_t payload_magic = 0;
+        uint32_t payload_opcode = 0;
     };
 
     uint32_t m_src = 0;
@@ -674,6 +680,20 @@ private:
         return true;
     }
 
+    static uint32_t payload_opcode_for_entry_kind(uint32_t entry_kind)
+    {
+        switch (entry_kind) {
+        case CMDQ_DISPATCH_KIND_VADD:
+            return APKO_PAYLOAD_OPCODE_VADD;
+        case CMDQ_DISPATCH_KIND_CNN:
+            return APKO_PAYLOAD_OPCODE_CNN;
+        case CMDQ_DISPATCH_KIND_MNIST:
+            return APKO_PAYLOAD_OPCODE_MNIST;
+        default:
+            return 0;
+        }
+    }
+
     bool execute_load_executable_packet(const std::array<uint32_t, CMDQ_PACKET_WORDS>& packet,
                                         uint64_t packet_addr)
     {
@@ -684,15 +704,13 @@ private:
         const uint32_t entry_kind = packet[5];
         const uint32_t input_bytes = packet[6];
         const uint32_t output_bytes = packet[7];
-        const bool entry_kind_supported =
-            (entry_kind == CMDQ_DISPATCH_KIND_VADD || entry_kind == CMDQ_DISPATCH_KIND_CNN ||
-             entry_kind == CMDQ_DISPATCH_KIND_MNIST);
+        const uint32_t payload_opcode = payload_opcode_for_entry_kind(entry_kind);
 
         if (slot == 0 || slot >= m_loaded_executables.size() ||
             magic != APKO_MAGIC ||
             abi_version != APKO_ABI_VERSION ||
             executable_format != EXEC_FORMAT_APKO_V0 ||
-            !entry_kind_supported ||
+            payload_opcode == 0 ||
             input_bytes == 0 ||
             output_bytes == 0 ||
             input_bytes > MAX_DMA_LEN ||
@@ -708,6 +726,8 @@ private:
             entry_kind,
             input_bytes,
             output_bytes,
+            APKO_PAYLOAD_MAGIC,
+            payload_opcode,
         };
         SCP_INFO(()) << "APOLLO_HEXAGON_DMA: command load executable slot=" << std::dec << slot
                      << " kind=" << entry_kind << " input-bytes=" << input_bytes
@@ -718,6 +738,37 @@ private:
                   << " output-bytes=" << output_bytes << " format=0x" << std::hex
                   << executable_format << std::dec << std::endl;
         return true;
+    }
+
+    bool execute_apko_payload_program(const LoadedExecutable& executable, uint64_t input_addr,
+                                      uint64_t output_addr, uint32_t input_bytes, uint32_t output_bytes,
+                                      uint64_t packet_addr)
+    {
+        if (executable.payload_magic != APKO_PAYLOAD_MAGIC ||
+            executable.payload_opcode == 0) {
+            set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, packet_addr);
+            return false;
+        }
+
+        SCP_INFO(()) << "APOLLO_HEXAGON_DMA: APKO payload execute opcode=" << std::dec
+                     << executable.payload_opcode;
+        std::cerr << "APOLLO_HEXAGON_DMA: APKO payload execute opcode=" << std::dec
+                  << executable.payload_opcode << std::endl;
+
+        switch (executable.payload_opcode) {
+        case APKO_PAYLOAD_OPCODE_VADD:
+            return execute_vadd_dispatch_packet(input_addr, output_addr, input_bytes, output_bytes,
+                                                packet_addr);
+        case APKO_PAYLOAD_OPCODE_CNN:
+            return execute_cnn_dispatch_packet(input_addr, output_addr, input_bytes, output_bytes,
+                                               packet_addr);
+        case APKO_PAYLOAD_OPCODE_MNIST:
+            return execute_mnist_dispatch_packet(input_addr, output_addr, input_bytes, output_bytes,
+                                                 packet_addr);
+        default:
+            set_command_queue_fault(CMDQ_FAULT_UNSUPPORTED_PACKET, packet_addr);
+            return false;
+        }
     }
 
     bool execute_loaded_dispatch_packet(const std::array<uint32_t, CMDQ_PACKET_WORDS>& packet,
@@ -744,20 +795,8 @@ private:
         std::cerr << "APOLLO_HEXAGON_DMA: command dispatch executable slot=" << std::dec << slot
                   << " kind=" << executable.entry_kind << std::endl;
 
-        switch (executable.entry_kind) {
-        case CMDQ_DISPATCH_KIND_VADD:
-            return execute_vadd_dispatch_packet(input_addr, output_addr, input_bytes, output_bytes,
-                                                packet_addr);
-        case CMDQ_DISPATCH_KIND_CNN:
-            return execute_cnn_dispatch_packet(input_addr, output_addr, input_bytes, output_bytes,
-                                              packet_addr);
-        case CMDQ_DISPATCH_KIND_MNIST:
-            return execute_mnist_dispatch_packet(input_addr, output_addr, input_bytes, output_bytes,
-                                                packet_addr);
-        default:
-            set_command_queue_fault(CMDQ_FAULT_UNSUPPORTED_PACKET, packet_addr);
-            return false;
-        }
+        return execute_apko_payload_program(executable, input_addr, output_addr, input_bytes,
+                                            output_bytes, packet_addr);
     }
 
     bool execute_dispatch_packet(const std::array<uint32_t, CMDQ_PACKET_WORDS>& packet, uint64_t packet_addr)
