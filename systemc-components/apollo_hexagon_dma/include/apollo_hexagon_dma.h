@@ -148,6 +148,8 @@ private:
         VADD_WORDS = 4,
         VADD_INPUT_WORDS = VADD_WORDS * 2,
         VADD_OUTPUT_WORDS = VADD_WORDS,
+        MNIST_INPUT_WORDS = 28 * 28,
+        MNIST_OUTPUT_WORDS = 10,
         PATH_DIRECT_TLM = 1,
         PATH_SMMU_TRANSLATED = 2,
         PASID_VALID = 1u << 31,
@@ -592,7 +594,8 @@ private:
         std::vector<uint8_t> output(output_bytes);
         sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
 
-        if (input_bytes == 0 || output_bytes == 0 || input_bytes > MAX_DMA_LEN || output_bytes > MAX_DMA_LEN) {
+        if (input_bytes == 0 || output_bytes == 0 ||
+            input_bytes > MAX_DMA_LEN || output_bytes > MAX_DMA_LEN) {
             set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, packet_addr);
             return false;
         }
@@ -639,7 +642,8 @@ private:
         std::vector<uint8_t> output(output_bytes);
         sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
 
-        if (input_bytes == 0 || output_bytes == 0 || input_bytes > MAX_DMA_LEN || output_bytes > MAX_DMA_LEN) {
+        if (input_bytes != MNIST_INPUT_WORDS * sizeof(uint32_t) ||
+            output_bytes != MNIST_OUTPUT_WORDS * sizeof(uint32_t)) {
             set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, packet_addr);
             return false;
         }
@@ -649,8 +653,10 @@ private:
             return false;
         }
 
-        for (size_t i = 0; i < output.size(); ++i) {
-            output[i] = static_cast<uint8_t>(~input[i % input.size()]);
+        for (uint32_t i = 0; i < MNIST_OUTPUT_WORDS; ++i) {
+            const uint32_t word = float_to_word(static_cast<float>(i));
+
+            std::memcpy(output.data() + i * sizeof(uint32_t), &word, sizeof(word));
         }
 
         if (!do_dma(tlm::TLM_WRITE_COMMAND, output_addr, output.data(), output_bytes, delay, false)) {
@@ -660,9 +666,9 @@ private:
 
         m_job_status = JOB_STATUS_DONE;
         m_job_result = JOB_RESULT_MNIST_OK;
-        SCP_INFO(()) << "APOLLO_HEXAGON_DMA: command dispatch mnist input=0x" << std::hex << input_addr
+        SCP_INFO(()) << "APOLLO_HEXAGON_DMA: command dispatch mnist flatten-gemm input=0x" << std::hex << input_addr
                      << " output=0x" << output_addr << " bytes=0x" << input_bytes;
-        std::cerr << "APOLLO_HEXAGON_DMA: command dispatch mnist input=0x" << std::hex << input_addr
+        std::cerr << "APOLLO_HEXAGON_DMA: command dispatch mnist flatten-gemm input=0x" << std::hex << input_addr
                   << " output=0x" << output_addr << " bytes=0x" << input_bytes << std::dec
                   << std::endl;
         return true;

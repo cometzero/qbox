@@ -49,7 +49,7 @@ public:
     }
 
 private:
-    std::array<uint8_t, 4096> m_memory {};
+    std::array<uint8_t, 8192> m_memory {};
 
     void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)
     {
@@ -131,6 +131,8 @@ protected:
         CMDQ_DISPATCH_KIND_MNIST = 3,
         JOB_RESULT_CNN_OK = 0x434e4e53,   // "CNNS"
         JOB_RESULT_MNIST_OK = 0x4d4e4953, // "MNIS"
+        MNIST_INPUT_WORDS = 28 * 28,
+        MNIST_OUTPUT_WORDS = 10,
     };
 
     apollo_hexagon_dma m_dma;
@@ -278,7 +280,7 @@ TEST_BENCH(ApolloHexagonDmaTestBench, CommandQueueDoorbellRejectsMalformedGeomet
 TEST_BENCH(ApolloHexagonDmaTestBench, CommandQueueCopyReportsDmaFault)
 {
     constexpr uint32_t cmdq_base = 0x100;
-    constexpr uint32_t bad_src = 0xf00;
+    constexpr uint32_t bad_src = 0x1f10;
     constexpr uint32_t dst = 0x340;
     constexpr uint32_t bytes = 0x200;
 
@@ -365,7 +367,8 @@ TEST_BENCH(ApolloHexagonDmaTestBench, CommandQueueDispatchesCnn)
     };
     std::array<uint8_t, output_bytes> output {};
 
-    m_memory.write_bytes(input_addr, reinterpret_cast<const uint8_t*>(input.data()), input.size());
+    m_memory.write_bytes(input_addr, reinterpret_cast<const uint8_t*>(input.data()),
+                         input.size() * sizeof(uint8_t));
     write_packet(cmdq_base, { CMDQ_OPCODE_DISPATCH, CMDQ_DISPATCH_KIND_CNN,
                               input_addr, 0, output_addr, 0, input_bytes, output_bytes });
 
@@ -385,28 +388,22 @@ TEST_BENCH(ApolloHexagonDmaTestBench, CommandQueueDispatchesCnn)
     EXPECT_EQ(1u << QUEUE_DMA, read32(REG_IRQ_STATUS));
 }
 
-TEST_BENCH(ApolloHexagonDmaTestBench, CommandQueueDispatchesMnistLikeTransform)
+TEST_BENCH(ApolloHexagonDmaTestBench, CommandQueueDispatchesMnistFlattenGemm)
 {
     constexpr uint32_t cmdq_base = 0x100;
     constexpr uint32_t input_addr = 0x300;
-    constexpr uint32_t output_addr = 0x380;
-    constexpr uint32_t input_bytes = 4 * sizeof(uint32_t);
-    constexpr uint32_t output_bytes = 4 * sizeof(uint32_t);
-    const std::array<uint8_t, input_bytes> input {
-        0x00, 0x11, 0x22, 0x33,
-        0x44, 0x55, 0x66, 0x77,
-        0x88, 0x99, 0xaa, 0xbb,
-        0xcc, 0xdd, 0xee, 0xff,
+    constexpr uint32_t output_addr = 0x1200;
+    constexpr uint32_t input_bytes = MNIST_INPUT_WORDS * sizeof(uint32_t);
+    constexpr uint32_t output_bytes = MNIST_OUTPUT_WORDS * sizeof(uint32_t);
+    const std::array<uint32_t, MNIST_INPUT_WORDS> input {};
+    const std::array<uint32_t, MNIST_OUTPUT_WORDS> expected = {
+        0x00000000, 0x3f800000, 0x40000000, 0x40400000, 0x40800000,
+        0x40a00000, 0x40c00000, 0x40e00000, 0x41000000, 0x41100000,
     };
-    const std::array<uint8_t, output_bytes> expected = {
-        0xff, 0xee, 0xdd, 0xcc,
-        0xbb, 0xaa, 0x99, 0x88,
-        0x77, 0x66, 0x55, 0x44,
-        0x33, 0x22, 0x11, 0x00,
-    };
-    std::array<uint8_t, output_bytes> output {};
+    std::array<uint32_t, MNIST_OUTPUT_WORDS> output {};
 
-    m_memory.write_bytes(input_addr, reinterpret_cast<const uint8_t*>(input.data()), input.size());
+    m_memory.write_bytes(input_addr, reinterpret_cast<const uint8_t*>(input.data()),
+                         input.size() * sizeof(uint32_t));
     write_packet(cmdq_base, { CMDQ_OPCODE_DISPATCH, CMDQ_DISPATCH_KIND_MNIST,
                               input_addr, 0, output_addr, 0, input_bytes, output_bytes });
 
@@ -418,7 +415,7 @@ TEST_BENCH(ApolloHexagonDmaTestBench, CommandQueueDispatchesMnistLikeTransform)
     write32(REG_CMDQ_DOORBELL, 1);
 
     m_memory.read_bytes(output_addr, reinterpret_cast<uint8_t*>(output.data()),
-                        output.size() * sizeof(uint8_t));
+                        output.size() * sizeof(uint32_t));
     EXPECT_EQ(expected, output);
     EXPECT_EQ(JOB_STATUS_DONE, read32(REG_CMDQ_STATUS));
     EXPECT_EQ(CMDQ_FAULT_NONE, read32(REG_CMDQ_FAULT_CODE));
@@ -518,20 +515,16 @@ TEST_BENCH(ApolloHexagonDmaTestBench, CommandQueueLoadExecutableDispatchesMnistS
 {
     constexpr uint32_t cmdq_base = 0x100;
     constexpr uint32_t input_addr = 0x300;
-    constexpr uint32_t output_addr = 0x380;
-    constexpr uint32_t input_bytes = 16 * sizeof(uint32_t);
-    constexpr uint32_t output_bytes = 4 * sizeof(uint32_t);
+    constexpr uint32_t output_addr = 0x1200;
+    constexpr uint32_t input_bytes = MNIST_INPUT_WORDS * sizeof(uint32_t);
+    constexpr uint32_t output_bytes = MNIST_OUTPUT_WORDS * sizeof(uint32_t);
     constexpr uint32_t slot = 1;
-    const std::array<uint32_t, 16> input {
-        1, 2, 3, 4,
-        5, 6, 7, 8,
-        9, 10, 11, 12,
-        13, 14, 15, 16,
+    const std::array<uint32_t, MNIST_INPUT_WORDS> input {};
+    const std::array<uint32_t, MNIST_OUTPUT_WORDS> expected {
+        0x00000000, 0x3f800000, 0x40000000, 0x40400000, 0x40800000,
+        0x40a00000, 0x40c00000, 0x40e00000, 0x41000000, 0x41100000,
     };
-    const std::array<uint32_t, 4> expected {
-        0xfffffffe, 0xfffffffd, 0xfffffffc, 0xfffffffb,
-    };
-    std::array<uint32_t, 4> output {};
+    std::array<uint32_t, MNIST_OUTPUT_WORDS> output {};
 
     m_memory.write_bytes(input_addr, reinterpret_cast<const uint8_t*>(input.data()),
                          input.size() * sizeof(uint32_t));
@@ -619,7 +612,7 @@ TEST_BENCH(ApolloHexagonDmaTestBench, CommandQueueLoadExecutableRejectsBadDispat
 TEST_BENCH(ApolloHexagonDmaTestBench, CommandQueueDispatchReportsDmaFault)
 {
     constexpr uint32_t cmdq_base = 0x100;
-    constexpr uint32_t bad_input_addr = 0xff0;
+    constexpr uint32_t bad_input_addr = 0x1ff0;
     constexpr uint32_t output_addr = 0x380;
     constexpr uint32_t input_bytes = 8 * sizeof(uint32_t);
     constexpr uint32_t output_bytes = 4 * sizeof(uint32_t);
