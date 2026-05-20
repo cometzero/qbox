@@ -38,12 +38,21 @@ local cc3xx_trace = getenv_or("QBOX_RDASPEN_CC3XX_TRACE", "false") == "true"
 local cc3xx_trace_limit = tonumber(getenv_or("QBOX_RDASPEN_CC3XX_TRACE_LIMIT", "64"))
 local dma350_trace = getenv_or("QBOX_RDASPEN_DMA350_TRACE", "false") == "true"
 local dma350_trace_limit = tonumber(getenv_or("QBOX_RDASPEN_DMA350_TRACE_LIMIT", "64"))
+local sysctrl_trace = getenv_or("QBOX_RDASPEN_SYSCTRL_TRACE", "false") == "true"
+local sysctrl_trace_limit = tonumber(getenv_or("QBOX_RDASPEN_SYSCTRL_TRACE_LIMIT", "64"))
+local lcm_trace = getenv_or("QBOX_RDASPEN_LCM_TRACE", "false") == "true"
+local lcm_trace_limit = tonumber(getenv_or("QBOX_RDASPEN_LCM_TRACE_LIMIT", "64"))
 local remote_cpu_exec = getenv_or(
     "QBOX_REMOTE_CPU_EXEC",
     root.."tools/qbox/build/remote_cpu")
 
 local RSE_ROM_BASE_S = 0x11000000
 local RSE_ROM_SIZE = 0x00020000
+local RSE_ITCM_BASE_NS = 0x00000000
+local RSE_ITCM_CPU0_BASE_NS = 0x0A000000
+local RSE_ITCM_BASE_S = 0x10000000
+local RSE_ITCM_CPU0_BASE_S = 0x1A000000
+local RSE_ITCM_SIZE = 0x00008000
 local RSE_DTCM_BASE_NS = 0x20000000
 local RSE_DTCM_CPU0_BASE_NS = 0x24000000
 local RSE_DTCM_BASE_S = 0x30000000
@@ -55,8 +64,11 @@ local RSE_VM1_BASE_S = RSE_VM0_BASE_S + RSE_VM_SIZE
 local RSE_PROVISIONING_OFFSET = 0x00020000
 local RSE_BOOT_FLASH_BASE_S = 0xB0000000
 local RSE_BOOT_FLASH_SIZE = 0x04000000
+local RSE_HOST_UART0_BASE_NS = 0x6FF00000
 local RSE_HOST_UART0_BASE_S = 0x7FF00000
+local RSE_NSACFG_BASE_NS = 0x40080000
 local RSE_DMA350_BASE_S = 0x50002000
+local RSE_SACFG_BASE_S = 0x50080000
 local RSE_KMU_BASE_S = 0x5009E000
 local RSE_ATU_BASE_S = 0x50150000
 local RSE_CC3XX_BASE_S = 0x50154000
@@ -65,6 +77,8 @@ local RSE_SYSCNTR_READ_BASE_S = 0x5015B000
 local RSE_INTEGRITY_CHECKER_BASE_S = 0x5015C000
 local RSE_TRAM_BASE_S = 0x5015D000
 local RSE_LCM_BASE_S = 0x500A0000
+local RSE_LCM_SIZE = 0x00011000
+local RSE_SYSCTRL_BASE_S = 0x58021000
 local RSE_MPC_VM0_BASE_S = 0x50083000
 local RSE_MPC_VM1_BASE_S = 0x50084000
 local RSE_OTP_WRAPPER_BASE_S = 0x58111000
@@ -104,6 +118,31 @@ platform = {
             bind = "&rse_router.initiator_socket";
         };
         load = {bin_file = rse_rom, offset = 0};
+        log_level = 0;
+    },
+
+    rse_itcm = {
+        moduletype = "gs_memory";
+        target_socket = {
+            address = RSE_ITCM_BASE_S;
+            size = RSE_ITCM_SIZE;
+            bind = "&rse_router.initiator_socket";
+            aliases = {
+                cpu0_s = {
+                    address = RSE_ITCM_CPU0_BASE_S;
+                    size = RSE_ITCM_SIZE;
+                };
+                ns = {
+                    address = RSE_ITCM_BASE_NS;
+                    size = RSE_ITCM_SIZE;
+                };
+                cpu0_ns = {
+                    address = RSE_ITCM_CPU0_BASE_NS;
+                    size = RSE_ITCM_SIZE;
+                };
+            };
+        };
+        init_mem = true;
         log_level = 0;
     },
 
@@ -177,6 +216,16 @@ platform = {
         log_level = 0;
     },
 
+    rse_nsacfg_regs = {
+        moduletype = "gs_memory";
+        target_socket = {
+            address = RSE_NSACFG_BASE_NS;
+            size = 0x00001000;
+            bind = "&rse_router.initiator_socket";
+        };
+        log_level = 0;
+    },
+
     rse_dma350 = {
         moduletype = "dma350";
         trace = dma350_trace;
@@ -184,6 +233,17 @@ platform = {
         target_socket = {
             address = RSE_DMA350_BASE_S;
             size = 0x00002000;
+            bind = "&rse_router.initiator_socket";
+        };
+        initiator_socket = {bind = "&rse_router.target_socket"};
+        log_level = 0;
+    },
+
+    rse_sacfg_regs = {
+        moduletype = "gs_memory";
+        target_socket = {
+            address = RSE_SACFG_BASE_S;
+            size = 0x00001000;
             bind = "&rse_router.initiator_socket";
         };
         log_level = 0;
@@ -200,10 +260,17 @@ platform = {
     },
 
     rse_lcm_regs = {
-        moduletype = "gs_memory";
+        moduletype = "rse_lcm";
+        trace = lcm_trace;
+        trace_limit = lcm_trace_limit;
+        otp_image = rse_otp;
+        lcs = 0xEEEEA5A5;
+        tp_mode = 0x2222AA55;
+        sp_enable = 0x00000000;
+        otp_size = 0x00010000;
         target_socket = {
             address = RSE_LCM_BASE_S;
-            size = 0x00010000;
+            size = RSE_LCM_SIZE;
             bind = "&rse_router.initiator_socket";
         };
         log_level = 0;
@@ -292,6 +359,22 @@ platform = {
         log_level = 0;
     },
 
+    rse_sysctrl = {
+        moduletype = "rse_sysctrl";
+        trace = sysctrl_trace;
+        trace_limit = sysctrl_trace_limit;
+        reset_syndrome = 0x80000000;
+        cpuwait = 0x0000000F;
+        dma_boot_en = 0x00000001;
+        dma_boot_addr = 0x00000000;
+        target_socket = {
+            address = RSE_SYSCTRL_BASE_S;
+            size = 0x00001000;
+            bind = "&rse_router.initiator_socket";
+        };
+        log_level = 0;
+    },
+
     rse_uart_file = {
         moduletype = "char_backend_file";
         read_file = rse_uart_read_file;
@@ -306,6 +389,12 @@ platform = {
             address = RSE_HOST_UART0_BASE_S;
             size = 0x00010000;
             bind = "&rse_router.initiator_socket";
+            aliases = {
+                ns_atu_logical = {
+                    address = RSE_HOST_UART0_BASE_NS;
+                    size = 0x00010000;
+                };
+            };
         };
         irq = {bind = "&rse_cpu_pass.target_signal_socket_0"};
         backend_socket = {bind = "&rse_uart_file.biflow_socket"};

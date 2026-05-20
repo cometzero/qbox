@@ -100,17 +100,24 @@ python3 scripts/run_qbox_fvp_rd_aspen_rse.py \
 
 The current skeleton starts the generated RSE ROM through the existing
 `RemoteCPU` Cortex-M55 wrapper and writes per-console logs plus `result.json`.
-As of the 2026-05-21 runs, limited CC3XX, DTCM alias, and DMA350 SystemC/TLM
-models remove the previous `rse_first_fault:0x501541c4` Data Abort and trace
-the next no-console point to BL1_1 DTCM/VM erase/fill through DMA350. The
-current expected result is still an RSE-oriented boot failure:
+As of the 2026-05-21 runs, limited CC3XX, DTCM/ITCM alias, DMA350,
+LCM/OTP, and RSE system-control SystemC/TLM models remove the previous
+`rse_first_fault:0x501541c4` Data Abort, the BL1_1 DMA erase/fill timeout, and
+the later `rse_first_fault:0x58021100` reset-syndrome fault. The LCM/OTP model
+loads the generated `rse-otp-image.img` at the TF-M-visible LCM OTP window and
+provides lifecycle/status reset values. The current expected result is still an
+RSE-oriented boot failure:
 
 ```text
 blocker: qbox_platform_timeout
 first_failing_register_access: none
+rse_lcm: otp-backed-register-model
+rse_sysctrl: touched-register-model
 ```
 
 This is not an RSE boot pass. It is evidence that the platform now progresses
-past the first CC3XX register abort, but still needs DMA350 fill/data-movement
-behavior and trace-driven modeling of later RSE hardware side effects before
-TF-M emits an RSE UART marker.
+past the first CC3XX register abort, the observed DMA350 fill writes, and the
+first RSE system-control register access. The latest trace shows
+`reset_syndrome` reads and a `reset_mask = 0x100` write, but no LCM access trace
+or TF-M RSE UART marker yet. QBox still needs the next post-system-control
+blocker identified.
