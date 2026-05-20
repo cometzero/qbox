@@ -7,9 +7,11 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <vector>
 
 #include <cci_configuration>
@@ -83,6 +85,17 @@ private:
         REG_IRQ_ACK = 0x68,
         REG_QUEUE_CAPS = 0x6c,
         REG_PASID = 0x70,
+        REG_CMDQ_BASE_LO = 0x80,
+        REG_CMDQ_BASE_HI = 0x84,
+        REG_CMDQ_SIZE = 0x88,
+        REG_CMDQ_HEAD = 0x8c,
+        REG_CMDQ_TAIL = 0x90,
+        REG_CMDQ_DOORBELL = 0x94,
+        REG_CMDQ_STATUS = 0x98,
+        REG_CMDQ_FENCE_VALUE = 0x9c,
+        REG_CMDQ_FAULT_CODE = 0xa0,
+        REG_CMDQ_FAULT_ADDR_LO = 0xa4,
+        REG_CMDQ_FAULT_ADDR_HI = 0xa8,
     };
 
     enum : uint32_t {
@@ -96,6 +109,7 @@ private:
         STATUS_ERROR = 2,
         RESULT_OK = 0x444d414f,    // "DMAO"
         JOB_RESULT_OK = 0x434e4e4f, // "CNNO"
+        JOB_RESULT_VADD_OK = 0x56414444,
         RESULT_BAD_LEN = 0xbad00001,
         RESULT_TLM_ERROR = 0xbad00002,
         MAX_DMA_LEN = 256 * 1024,
@@ -107,9 +121,43 @@ private:
         CAP_ASYNC_FENCE = 1u << 5,
         CAP_ENDPOINT_PASID = 1u << 6,
         QUEUE_COUNT = 2,
+        CMDQ_FAULT_NONE = 0,
+        CMDQ_FAULT_EMPTY = 1,
+        CMDQ_FAULT_DISABLED = 2,
+        CMDQ_FAULT_UNSUPPORTED_PACKET = 3,
+        CMDQ_FAULT_MALFORMED_PACKET = 4,
+        CMDQ_FAULT_DMA_ERROR = 5,
+        CMDQ_PACKET_WORDS = 8,
+        CMDQ_PACKET_BYTES = CMDQ_PACKET_WORDS * sizeof(uint32_t),
+        CMDQ_OPCODE_NOP = 0,
+        CMDQ_OPCODE_COPY = 1,
+        CMDQ_OPCODE_BARRIER = 2,
+        CMDQ_OPCODE_SIGNAL_FENCE = 3,
+        CMDQ_OPCODE_DISPATCH = 4,
+        CMDQ_OPCODE_LOAD_EXECUTABLE = 5,
+        CMDQ_DISPATCH_EXEC_SLOT_FLAG = 1u << 31,
+        CMDQ_EXEC_SLOT_COUNT = 16,
+        APKO_MAGIC = 0x4f4b5041,
+        APKO_ABI_VERSION = 0,
+        EXEC_FORMAT_APKO_V0 = 1,
+        CMDQ_DISPATCH_KIND_CNN = 1,
+        CMDQ_DISPATCH_KIND_VADD = 2,
+        VADD_WORDS = 4,
+        VADD_INPUT_WORDS = VADD_WORDS * 2,
+        VADD_OUTPUT_WORDS = VADD_WORDS,
         PATH_DIRECT_TLM = 1,
         PATH_SMMU_TRANSLATED = 2,
         PASID_VALID = 1u << 31,
+    };
+
+    struct LoadedExecutable
+    {
+        bool valid = false;
+        uint32_t executable_format = 0;
+        uint32_t abi_version = 0;
+        uint32_t entry_kind = 0;
+        uint32_t input_bytes = 0;
+        uint32_t output_bytes = 0;
     };
 
     uint32_t m_src = 0;
@@ -129,6 +177,17 @@ private:
     uint32_t m_job_fence = 0;
     uint32_t m_irq_status = 0;
     uint32_t m_next_fence = 1;
+    uint32_t m_cmdq_base_lo = 0;
+    uint32_t m_cmdq_base_hi = 0;
+    uint32_t m_cmdq_size = 0;
+    uint32_t m_cmdq_head = 0;
+    uint32_t m_cmdq_tail = 0;
+    uint32_t m_cmdq_status = JOB_STATUS_IDLE;
+    uint32_t m_cmdq_fence_value = 0;
+	    uint32_t m_cmdq_fault_code = CMDQ_FAULT_NONE;
+	    uint32_t m_cmdq_fault_addr_lo = 0;
+	    uint32_t m_cmdq_fault_addr_hi = 0;
+	    std::array<LoadedExecutable, CMDQ_EXEC_SLOT_COUNT> m_loaded_executables {};
 
     void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)
     {
@@ -208,6 +267,26 @@ private:
         case REG_PASID:
             return (p_substream_id.get_value() & 0x000fffffu) |
                    (p_substream_id_valid.get_value() ? PASID_VALID : 0u);
+        case REG_CMDQ_BASE_LO:
+            return m_cmdq_base_lo;
+        case REG_CMDQ_BASE_HI:
+            return m_cmdq_base_hi;
+        case REG_CMDQ_SIZE:
+            return m_cmdq_size;
+        case REG_CMDQ_HEAD:
+            return m_cmdq_head;
+        case REG_CMDQ_TAIL:
+            return m_cmdq_tail;
+        case REG_CMDQ_STATUS:
+            return m_cmdq_status;
+        case REG_CMDQ_FENCE_VALUE:
+            return m_cmdq_fence_value;
+        case REG_CMDQ_FAULT_CODE:
+            return m_cmdq_fault_code;
+        case REG_CMDQ_FAULT_ADDR_LO:
+            return m_cmdq_fault_addr_lo;
+        case REG_CMDQ_FAULT_ADDR_HI:
+            return m_cmdq_fault_addr_hi;
         default:
             return 0;
         }
@@ -310,6 +389,24 @@ private:
                       << " pasid=0x" << std::hex << p_substream_id.get_value()
                       << std::dec << std::endl;
             break;
+        case REG_CMDQ_BASE_LO:
+            m_cmdq_base_lo = value;
+            break;
+        case REG_CMDQ_BASE_HI:
+            m_cmdq_base_hi = value;
+            break;
+        case REG_CMDQ_SIZE:
+            m_cmdq_size = value;
+            break;
+        case REG_CMDQ_HEAD:
+            m_cmdq_head = value;
+            break;
+        case REG_CMDQ_TAIL:
+            m_cmdq_tail = value;
+            break;
+        case REG_CMDQ_DOORBELL:
+            run_command_queue(value);
+            break;
         default:
             SCP_WARN(()) << "APOLLO_HEXAGON_DMA: ignored write offset=0x" << std::hex << addr << " value=0x" << value;
             break;
@@ -323,7 +420,7 @@ private:
         }
     }
 
-    void complete_async_event()
+    uint32_t complete_async_event()
     {
         const uint32_t irq_bit = 1u << (m_job_queue % QUEUE_COUNT);
 
@@ -335,6 +432,357 @@ private:
         std::cerr << "APOLLO_HEXAGON_DMA: async irq pending queue=" << std::dec << m_job_queue
                   << " fence=" << m_job_fence << " irq=0x" << std::hex << m_irq_status << std::dec
                   << std::endl;
+        return m_job_fence;
+    }
+
+    uint64_t command_queue_base() const
+    {
+        return (static_cast<uint64_t>(m_cmdq_base_hi) << 32) | m_cmdq_base_lo;
+    }
+
+    static bool command_queue_addr(uint64_t base, uint32_t offset, uint64_t& addr)
+    {
+        if (base > std::numeric_limits<uint64_t>::max() - offset) {
+            return false;
+        }
+
+        addr = base + offset;
+        return true;
+    }
+
+    void set_command_queue_fault(uint32_t code, uint64_t fault_addr)
+    {
+        m_cmdq_status = JOB_STATUS_ERROR;
+        m_cmdq_fault_code = code;
+        m_cmdq_fault_addr_lo = static_cast<uint32_t>(fault_addr & 0xffffffffu);
+        m_cmdq_fault_addr_hi = static_cast<uint32_t>(fault_addr >> 32);
+        m_cmdq_fence_value = complete_async_event();
+    }
+
+    void complete_command_queue()
+    {
+        m_cmdq_status = JOB_STATUS_DONE;
+        m_cmdq_fault_code = CMDQ_FAULT_NONE;
+        m_cmdq_fault_addr_lo = 0;
+        m_cmdq_fault_addr_hi = 0;
+        m_cmdq_fence_value = complete_async_event();
+        SCP_INFO(()) << "APOLLO_HEXAGON_DMA: command queue complete head=0x" << std::hex << m_cmdq_head
+                     << " tail=0x" << m_cmdq_tail << " fence=" << std::dec << m_cmdq_fence_value;
+        std::cerr << "APOLLO_HEXAGON_DMA: command queue complete head=0x" << std::hex << m_cmdq_head
+                  << " tail=0x" << m_cmdq_tail << " fence=" << std::dec << m_cmdq_fence_value << std::endl;
+    }
+
+    bool read_command_packet(uint64_t packet_addr, std::array<uint32_t, CMDQ_PACKET_WORDS>& packet)
+    {
+        std::array<uint8_t, CMDQ_PACKET_BYTES> raw {};
+        sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+
+        if (!do_dma(tlm::TLM_READ_COMMAND, packet_addr, raw.data(), raw.size(), delay, false)) {
+            set_command_queue_fault(CMDQ_FAULT_DMA_ERROR, packet_addr);
+            return false;
+        }
+
+        for (size_t i = 0; i < packet.size(); i++) {
+            std::memcpy(&packet[i], &raw[i * sizeof(uint32_t)], sizeof(uint32_t));
+        }
+        return true;
+    }
+
+    static uint64_t packet_u64(const std::array<uint32_t, CMDQ_PACKET_WORDS>& packet, size_t lo_index)
+    {
+        return static_cast<uint64_t>(packet[lo_index]) |
+               (static_cast<uint64_t>(packet[lo_index + 1]) << 32);
+    }
+
+    static bool packet_has_only_opcode(const std::array<uint32_t, CMDQ_PACKET_WORDS>& packet)
+    {
+        for (size_t i = 1; i < packet.size(); i++) {
+            if (packet[i] != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static uint32_t float_to_word(float value)
+    {
+        uint32_t word;
+
+        std::memcpy(&word, &value, sizeof(word));
+        return word;
+    }
+
+    bool execute_copy_packet(const std::array<uint32_t, CMDQ_PACKET_WORDS>& packet, uint64_t packet_addr)
+    {
+        const uint64_t src = packet_u64(packet, 2);
+        const uint64_t dst = packet_u64(packet, 4);
+        const uint32_t len = packet[6];
+        sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+
+        if (packet[1] != 0 || packet[7] != 0 || len == 0 || len > MAX_DMA_LEN) {
+            set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, packet_addr);
+            return false;
+        }
+
+        std::vector<uint8_t> buffer(len);
+        if (!do_dma(tlm::TLM_READ_COMMAND, src, buffer.data(), len, delay, false)) {
+            set_command_queue_fault(CMDQ_FAULT_DMA_ERROR, src);
+            return false;
+        }
+        if (!do_dma(tlm::TLM_WRITE_COMMAND, dst, buffer.data(), len, delay, false)) {
+            set_command_queue_fault(CMDQ_FAULT_DMA_ERROR, dst);
+            return false;
+        }
+
+        SCP_INFO(()) << "APOLLO_HEXAGON_DMA: command copy src=0x" << std::hex << src << " dst=0x"
+                     << dst << " len=0x" << len;
+        std::cerr << "APOLLO_HEXAGON_DMA: command copy src=0x" << std::hex << src << " dst=0x"
+                  << dst << " len=0x" << len << std::dec << std::endl;
+        return true;
+    }
+
+    bool execute_vadd_dispatch_packet(uint64_t input_addr, uint64_t output_addr, uint32_t input_bytes,
+                                      uint32_t output_bytes, uint64_t packet_addr)
+    {
+        std::array<uint32_t, VADD_INPUT_WORDS> input {};
+        std::array<uint32_t, VADD_OUTPUT_WORDS> output {};
+        sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+
+        if (input_bytes != input.size() * sizeof(uint32_t) ||
+            output_bytes != output.size() * sizeof(uint32_t)) {
+            set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, packet_addr);
+            return false;
+        }
+
+        if (!do_dma(tlm::TLM_READ_COMMAND, input_addr, reinterpret_cast<uint8_t*>(input.data()),
+                    input_bytes, delay, false)) {
+            set_command_queue_fault(CMDQ_FAULT_DMA_ERROR, input_addr);
+            return false;
+        }
+
+        for (size_t i = 0; i < output.size(); i++) {
+            const uint32_t sum = input[i] + input[i + VADD_WORDS];
+
+            output[i] = float_to_word(static_cast<float>(sum));
+        }
+
+        if (!do_dma(tlm::TLM_WRITE_COMMAND, output_addr, reinterpret_cast<uint8_t*>(output.data()),
+                    output_bytes, delay, false)) {
+            set_command_queue_fault(CMDQ_FAULT_DMA_ERROR, output_addr);
+            return false;
+        }
+
+        m_job_status = JOB_STATUS_DONE;
+        m_job_result = JOB_RESULT_VADD_OK;
+        SCP_INFO(()) << "APOLLO_HEXAGON_DMA: command dispatch vadd input=0x" << std::hex << input_addr
+                     << " output=0x" << output_addr << " bytes=0x" << input_bytes;
+        std::cerr << "APOLLO_HEXAGON_DMA: command dispatch vadd input=0x" << std::hex << input_addr
+                  << " output=0x" << output_addr << " bytes=0x" << input_bytes << std::dec
+                  << std::endl;
+        return true;
+    }
+
+    bool execute_load_executable_packet(const std::array<uint32_t, CMDQ_PACKET_WORDS>& packet,
+                                        uint64_t packet_addr)
+    {
+        const uint32_t slot = packet[1];
+        const uint32_t magic = packet[2];
+        const uint32_t abi_version = packet[3];
+        const uint32_t executable_format = packet[4];
+        const uint32_t entry_kind = packet[5];
+        const uint32_t input_bytes = packet[6];
+        const uint32_t output_bytes = packet[7];
+
+        if (slot == 0 || slot >= m_loaded_executables.size() ||
+            magic != APKO_MAGIC ||
+            abi_version != APKO_ABI_VERSION ||
+            executable_format != EXEC_FORMAT_APKO_V0 ||
+            entry_kind != CMDQ_DISPATCH_KIND_VADD ||
+            input_bytes != VADD_INPUT_WORDS * sizeof(uint32_t) ||
+            output_bytes != VADD_OUTPUT_WORDS * sizeof(uint32_t)) {
+            set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, packet_addr);
+            return false;
+        }
+
+        m_loaded_executables[slot] = {
+            true,
+            executable_format,
+            abi_version,
+            entry_kind,
+            input_bytes,
+            output_bytes,
+        };
+        SCP_INFO(()) << "APOLLO_HEXAGON_DMA: command load executable slot=" << std::dec << slot
+                     << " kind=" << entry_kind << " input-bytes=" << input_bytes
+                     << " output-bytes=" << output_bytes << " format=0x" << std::hex
+                     << executable_format;
+        std::cerr << "APOLLO_HEXAGON_DMA: command load executable slot=" << std::dec << slot
+                  << " kind=" << entry_kind << " input-bytes=" << input_bytes
+                  << " output-bytes=" << output_bytes << " format=0x" << std::hex
+                  << executable_format << std::dec << std::endl;
+        return true;
+    }
+
+    bool execute_loaded_dispatch_packet(const std::array<uint32_t, CMDQ_PACKET_WORDS>& packet,
+                                        uint64_t packet_addr)
+    {
+        const uint32_t slot = packet[1] & ~CMDQ_DISPATCH_EXEC_SLOT_FLAG;
+        const uint64_t input_addr = packet_u64(packet, 2);
+        const uint64_t output_addr = packet_u64(packet, 4);
+        const uint32_t input_bytes = packet[6];
+        const uint32_t output_bytes = packet[7];
+        const LoadedExecutable& executable =
+            slot < m_loaded_executables.size() ? m_loaded_executables[slot] : m_loaded_executables[0];
+
+        if (slot == 0 || slot >= m_loaded_executables.size() ||
+            !executable.valid ||
+            input_bytes != executable.input_bytes ||
+            output_bytes != executable.output_bytes) {
+            set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, packet_addr);
+            return false;
+        }
+
+        switch (executable.entry_kind) {
+        case CMDQ_DISPATCH_KIND_VADD:
+            SCP_INFO(()) << "APOLLO_HEXAGON_DMA: command dispatch executable slot=" << std::dec << slot
+                         << " kind=" << executable.entry_kind;
+            std::cerr << "APOLLO_HEXAGON_DMA: command dispatch executable slot=" << std::dec << slot
+                      << " kind=" << executable.entry_kind << std::endl;
+            return execute_vadd_dispatch_packet(input_addr, output_addr, input_bytes, output_bytes,
+                                                packet_addr);
+        default:
+            set_command_queue_fault(CMDQ_FAULT_UNSUPPORTED_PACKET, packet_addr);
+            return false;
+        }
+    }
+
+    bool execute_dispatch_packet(const std::array<uint32_t, CMDQ_PACKET_WORDS>& packet, uint64_t packet_addr)
+    {
+        const uint32_t dispatch_kind = packet[1];
+        const uint64_t input_addr = packet_u64(packet, 2);
+        const uint64_t output_addr = packet_u64(packet, 4);
+        const uint32_t input_bytes = packet[6];
+        const uint32_t output_bytes = packet[7];
+
+        if (dispatch_kind & CMDQ_DISPATCH_EXEC_SLOT_FLAG) {
+            return execute_loaded_dispatch_packet(packet, packet_addr);
+        }
+
+        switch (dispatch_kind) {
+        case CMDQ_DISPATCH_KIND_VADD:
+            return execute_vadd_dispatch_packet(input_addr, output_addr, input_bytes, output_bytes,
+                                                packet_addr);
+        default:
+            set_command_queue_fault(CMDQ_FAULT_UNSUPPORTED_PACKET, packet_addr);
+            return false;
+        }
+    }
+
+    bool execute_command_packet(const std::array<uint32_t, CMDQ_PACKET_WORDS>& packet, uint64_t packet_addr)
+    {
+        const uint32_t opcode = packet[0];
+
+        switch (opcode) {
+        case CMDQ_OPCODE_NOP:
+            if (!packet_has_only_opcode(packet)) {
+                set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, packet_addr);
+                return false;
+            }
+            return true;
+        case CMDQ_OPCODE_COPY:
+            return execute_copy_packet(packet, packet_addr);
+        case CMDQ_OPCODE_BARRIER:
+            if (!packet_has_only_opcode(packet)) {
+                set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, packet_addr);
+                return false;
+            }
+            SCP_INFO(()) << "APOLLO_HEXAGON_DMA: command barrier";
+            std::cerr << "APOLLO_HEXAGON_DMA: command barrier" << std::endl;
+            return true;
+        case CMDQ_OPCODE_SIGNAL_FENCE:
+            if (!packet_has_only_opcode(packet)) {
+                set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, packet_addr);
+                return false;
+            }
+            SCP_INFO(()) << "APOLLO_HEXAGON_DMA: command signal fence";
+            std::cerr << "APOLLO_HEXAGON_DMA: command signal fence" << std::endl;
+            return true;
+        case CMDQ_OPCODE_DISPATCH:
+            return execute_dispatch_packet(packet, packet_addr);
+        case CMDQ_OPCODE_LOAD_EXECUTABLE:
+            return execute_load_executable_packet(packet, packet_addr);
+        default:
+            set_command_queue_fault(CMDQ_FAULT_UNSUPPORTED_PACKET, packet_addr);
+            return false;
+        }
+    }
+
+    void run_command_queue(uint32_t doorbell)
+    {
+        const uint64_t base = command_queue_base();
+        uint32_t offset;
+        uint64_t fault_addr = base;
+        bool fault_addr_valid;
+
+        if ((doorbell & JOB_CTRL_START) == 0) {
+            return;
+        }
+
+        m_cmdq_status = JOB_STATUS_IDLE;
+        m_cmdq_fault_code = CMDQ_FAULT_NONE;
+        m_cmdq_fault_addr_lo = 0;
+        m_cmdq_fault_addr_hi = 0;
+
+        SCP_INFO(()) << "APOLLO_HEXAGON_DMA: command queue doorbell base=0x" << std::hex << base
+                     << " size=0x" << m_cmdq_size << " head=0x" << m_cmdq_head << " tail=0x"
+                     << m_cmdq_tail << " queue=" << std::dec << m_job_queue;
+        std::cerr << "APOLLO_HEXAGON_DMA: command queue doorbell base=0x" << std::hex << base
+                  << " size=0x" << m_cmdq_size << " head=0x" << m_cmdq_head << " tail=0x"
+                  << m_cmdq_tail << " queue=" << std::dec << m_job_queue << std::endl;
+
+        fault_addr_valid = command_queue_addr(base, m_cmdq_head, fault_addr);
+        if (m_cmdq_size == 0) {
+            set_command_queue_fault(CMDQ_FAULT_DISABLED, base);
+        } else if ((m_cmdq_head % CMDQ_PACKET_BYTES) != 0 ||
+                   (m_cmdq_tail % CMDQ_PACKET_BYTES) != 0 ||
+                   m_cmdq_head > m_cmdq_tail ||
+                   m_cmdq_tail > m_cmdq_size ||
+                   !fault_addr_valid) {
+            set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, fault_addr);
+        } else if (m_cmdq_head == m_cmdq_tail) {
+            set_command_queue_fault(CMDQ_FAULT_EMPTY, fault_addr);
+        } else {
+            for (offset = m_cmdq_head; offset < m_cmdq_tail; offset += CMDQ_PACKET_BYTES) {
+                std::array<uint32_t, CMDQ_PACKET_WORDS> packet {};
+                uint64_t packet_addr = base;
+
+                if (!command_queue_addr(base, offset, packet_addr)) {
+                    set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, base);
+                    m_cmdq_head = offset;
+                    break;
+                }
+
+                if (!read_command_packet(packet_addr, packet) ||
+                    !execute_command_packet(packet, packet_addr)) {
+                    m_cmdq_head = offset;
+                    break;
+                }
+                m_cmdq_head = offset + CMDQ_PACKET_BYTES;
+            }
+            if (m_cmdq_status != JOB_STATUS_ERROR) {
+                complete_command_queue();
+            }
+        }
+
+        if (m_cmdq_status == JOB_STATUS_ERROR) {
+            SCP_WARN(()) << "APOLLO_HEXAGON_DMA: command queue fault code=" << std::dec << m_cmdq_fault_code
+                         << " addr=0x" << std::hex
+                         << ((static_cast<uint64_t>(m_cmdq_fault_addr_hi) << 32) | m_cmdq_fault_addr_lo);
+            std::cerr << "APOLLO_HEXAGON_DMA: command queue fault code=" << std::dec << m_cmdq_fault_code
+                      << " addr=0x" << std::hex
+                      << ((static_cast<uint64_t>(m_cmdq_fault_addr_hi) << 32) | m_cmdq_fault_addr_lo)
+                      << " fence=" << std::dec << m_cmdq_fence_value << std::endl;
+        }
     }
 
     void run_dma(sc_core::sc_time& delay)
@@ -386,7 +834,8 @@ private:
                   << " len=0x" << m_len << " first=0x" << first_word << std::dec << std::endl;
     }
 
-    bool do_dma(tlm::tlm_command command, uint64_t addr, uint8_t* data, uint32_t len, sc_core::sc_time& delay)
+    bool do_dma(tlm::tlm_command command, uint64_t addr, uint8_t* data, uint32_t len, sc_core::sc_time& delay,
+                bool update_copy_status = true)
     {
         tlm::tlm_generic_payload trans;
         trans.set_command(command);
@@ -409,11 +858,17 @@ private:
             dma->b_transport(trans, delay);
         }
         if (!trans.is_response_ok()) {
-            m_status = STATUS_ERROR;
-            m_result = RESULT_TLM_ERROR;
-            SCP_ERR(()) << "APOLLO_HEXAGON_DMA: DMA transaction failed command="
-                         << (command == tlm::TLM_READ_COMMAND ? "read" : "write") << " addr=0x" << std::hex
-                         << addr << " response=" << trans.get_response_string();
+            if (update_copy_status) {
+                m_status = STATUS_ERROR;
+                m_result = RESULT_TLM_ERROR;
+                SCP_ERR(()) << "APOLLO_HEXAGON_DMA: DMA transaction failed command="
+                             << (command == tlm::TLM_READ_COMMAND ? "read" : "write") << " addr=0x" << std::hex
+                             << addr << " response=" << trans.get_response_string();
+            } else {
+                SCP_WARN(()) << "APOLLO_HEXAGON_DMA: command DMA transaction failed command="
+                             << (command == tlm::TLM_READ_COMMAND ? "read" : "write") << " addr=0x" << std::hex
+                             << addr << " response=" << trans.get_response_string();
+            }
             std::cerr << "APOLLO_HEXAGON_DMA: DMA transaction failed command="
                       << (command == tlm::TLM_READ_COMMAND ? "read" : "write") << " addr=0x" << std::hex << addr
                       << " response=" << trans.get_response_string() << std::dec << std::endl;
