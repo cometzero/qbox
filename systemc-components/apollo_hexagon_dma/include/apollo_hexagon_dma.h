@@ -110,6 +110,8 @@ private:
         RESULT_OK = 0x444d414f,    // "DMAO"
         JOB_RESULT_OK = 0x434e4e4f, // "CNNO"
         JOB_RESULT_VADD_OK = 0x56414444,
+        JOB_RESULT_CNN_OK = 0x434e4e53,   // "CNNS"
+        JOB_RESULT_MNIST_OK = 0x4d4e4953, // "MNIS"
         RESULT_BAD_LEN = 0xbad00001,
         RESULT_TLM_ERROR = 0xbad00002,
         MAX_DMA_LEN = 256 * 1024,
@@ -142,6 +144,7 @@ private:
         EXEC_FORMAT_APKO_V0 = 1,
         CMDQ_DISPATCH_KIND_CNN = 1,
         CMDQ_DISPATCH_KIND_VADD = 2,
+        CMDQ_DISPATCH_KIND_MNIST = 3,
         VADD_WORDS = 4,
         VADD_INPUT_WORDS = VADD_WORDS * 2,
         VADD_OUTPUT_WORDS = VADD_WORDS,
@@ -582,6 +585,77 @@ private:
         return true;
     }
 
+    bool execute_cnn_dispatch_packet(uint64_t input_addr, uint64_t output_addr, uint32_t input_bytes,
+                                     uint32_t output_bytes, uint64_t packet_addr)
+    {
+        std::vector<uint8_t> input(input_bytes);
+        std::vector<uint8_t> output(output_bytes);
+        sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+
+        if (input_bytes == 0 || output_bytes == 0 || input_bytes > MAX_DMA_LEN || output_bytes > MAX_DMA_LEN) {
+            set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, packet_addr);
+            return false;
+        }
+
+        if (!do_dma(tlm::TLM_READ_COMMAND, input_addr, input.data(), input_bytes, delay, false)) {
+            set_command_queue_fault(CMDQ_FAULT_DMA_ERROR, input_addr);
+            return false;
+        }
+
+        const size_t bytes_to_copy = std::min(input.size(), output.size());
+        std::copy(input.begin(), input.begin() + bytes_to_copy, output.begin());
+
+        if (!do_dma(tlm::TLM_WRITE_COMMAND, output_addr, output.data(), output_bytes, delay, false)) {
+            set_command_queue_fault(CMDQ_FAULT_DMA_ERROR, output_addr);
+            return false;
+        }
+
+        m_job_status = JOB_STATUS_DONE;
+        m_job_result = JOB_RESULT_CNN_OK;
+        SCP_INFO(()) << "APOLLO_HEXAGON_DMA: command dispatch cnn input=0x" << std::hex << input_addr
+                     << " output=0x" << output_addr << " bytes=0x" << input_bytes;
+        std::cerr << "APOLLO_HEXAGON_DMA: command dispatch cnn input=0x" << std::hex << input_addr
+                  << " output=0x" << output_addr << " bytes=0x" << input_bytes << std::dec
+                  << std::endl;
+        return true;
+    }
+
+    bool execute_mnist_dispatch_packet(uint64_t input_addr, uint64_t output_addr, uint32_t input_bytes,
+                                       uint32_t output_bytes, uint64_t packet_addr)
+    {
+        std::vector<uint8_t> input(input_bytes);
+        std::vector<uint8_t> output(output_bytes);
+        sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+
+        if (input_bytes == 0 || output_bytes == 0 || input_bytes > MAX_DMA_LEN || output_bytes > MAX_DMA_LEN) {
+            set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, packet_addr);
+            return false;
+        }
+
+        if (!do_dma(tlm::TLM_READ_COMMAND, input_addr, input.data(), input_bytes, delay, false)) {
+            set_command_queue_fault(CMDQ_FAULT_DMA_ERROR, input_addr);
+            return false;
+        }
+
+        for (size_t i = 0; i < output.size(); ++i) {
+            output[i] = static_cast<uint8_t>(~input[i % input.size()]);
+        }
+
+        if (!do_dma(tlm::TLM_WRITE_COMMAND, output_addr, output.data(), output_bytes, delay, false)) {
+            set_command_queue_fault(CMDQ_FAULT_DMA_ERROR, output_addr);
+            return false;
+        }
+
+        m_job_status = JOB_STATUS_DONE;
+        m_job_result = JOB_RESULT_MNIST_OK;
+        SCP_INFO(()) << "APOLLO_HEXAGON_DMA: command dispatch mnist input=0x" << std::hex << input_addr
+                     << " output=0x" << output_addr << " bytes=0x" << input_bytes;
+        std::cerr << "APOLLO_HEXAGON_DMA: command dispatch mnist input=0x" << std::hex << input_addr
+                  << " output=0x" << output_addr << " bytes=0x" << input_bytes << std::dec
+                  << std::endl;
+        return true;
+    }
+
     bool execute_load_executable_packet(const std::array<uint32_t, CMDQ_PACKET_WORDS>& packet,
                                         uint64_t packet_addr)
     {
@@ -592,14 +666,19 @@ private:
         const uint32_t entry_kind = packet[5];
         const uint32_t input_bytes = packet[6];
         const uint32_t output_bytes = packet[7];
+        const bool entry_kind_supported =
+            (entry_kind == CMDQ_DISPATCH_KIND_VADD || entry_kind == CMDQ_DISPATCH_KIND_CNN ||
+             entry_kind == CMDQ_DISPATCH_KIND_MNIST);
 
         if (slot == 0 || slot >= m_loaded_executables.size() ||
             magic != APKO_MAGIC ||
             abi_version != APKO_ABI_VERSION ||
             executable_format != EXEC_FORMAT_APKO_V0 ||
-            entry_kind != CMDQ_DISPATCH_KIND_VADD ||
-            input_bytes != VADD_INPUT_WORDS * sizeof(uint32_t) ||
-            output_bytes != VADD_OUTPUT_WORDS * sizeof(uint32_t)) {
+            !entry_kind_supported ||
+            input_bytes == 0 ||
+            output_bytes == 0 ||
+            input_bytes > MAX_DMA_LEN ||
+            output_bytes > MAX_DMA_LEN) {
             set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, packet_addr);
             return false;
         }
@@ -642,13 +721,20 @@ private:
             return false;
         }
 
+        SCP_INFO(()) << "APOLLO_HEXAGON_DMA: command dispatch executable slot=" << std::dec << slot
+                     << " kind=" << executable.entry_kind;
+        std::cerr << "APOLLO_HEXAGON_DMA: command dispatch executable slot=" << std::dec << slot
+                  << " kind=" << executable.entry_kind << std::endl;
+
         switch (executable.entry_kind) {
         case CMDQ_DISPATCH_KIND_VADD:
-            SCP_INFO(()) << "APOLLO_HEXAGON_DMA: command dispatch executable slot=" << std::dec << slot
-                         << " kind=" << executable.entry_kind;
-            std::cerr << "APOLLO_HEXAGON_DMA: command dispatch executable slot=" << std::dec << slot
-                      << " kind=" << executable.entry_kind << std::endl;
             return execute_vadd_dispatch_packet(input_addr, output_addr, input_bytes, output_bytes,
+                                                packet_addr);
+        case CMDQ_DISPATCH_KIND_CNN:
+            return execute_cnn_dispatch_packet(input_addr, output_addr, input_bytes, output_bytes,
+                                              packet_addr);
+        case CMDQ_DISPATCH_KIND_MNIST:
+            return execute_mnist_dispatch_packet(input_addr, output_addr, input_bytes, output_bytes,
                                                 packet_addr);
         default:
             set_command_queue_fault(CMDQ_FAULT_UNSUPPORTED_PACKET, packet_addr);
@@ -671,6 +757,12 @@ private:
         switch (dispatch_kind) {
         case CMDQ_DISPATCH_KIND_VADD:
             return execute_vadd_dispatch_packet(input_addr, output_addr, input_bytes, output_bytes,
+                                                packet_addr);
+        case CMDQ_DISPATCH_KIND_CNN:
+            return execute_cnn_dispatch_packet(input_addr, output_addr, input_bytes, output_bytes,
+                                                packet_addr);
+        case CMDQ_DISPATCH_KIND_MNIST:
+            return execute_mnist_dispatch_packet(input_addr, output_addr, input_bytes, output_bytes,
                                                 packet_addr);
         default:
             set_command_queue_fault(CMDQ_FAULT_UNSUPPORTED_PACKET, packet_addr);
