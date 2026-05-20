@@ -52,7 +52,7 @@ TEST(Dma350Test, ResetValuesCoverEarlyBl1Polling)
 {
     dma350 dut("dma350");
 
-    EXPECT_EQ(read32(dut, DMASECINFO), 0x0u);
+    EXPECT_EQ(read32(dut, DMASECINFO), 0x30u);
     EXPECT_EQ(read32(dut, CH0_CTRL), 0x00200200u);
     EXPECT_EQ(read32(dut, CH0_DESTRANSCFG), 0x000f0400u);
 }

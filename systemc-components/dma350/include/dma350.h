@@ -7,7 +7,10 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <iomanip>
+#include <iostream>
 
+#include <cci_configuration>
 #include <module_factory_registery.h>
 #include <systemc>
 #include <tlm>
@@ -25,6 +28,7 @@ class dma350 : public sc_core::sc_module
     static constexpr uint32_t CH_DESTRANSCFG = 0x02c;
 
     std::array<uint8_t, REG_BYTES> m_regs{};
+    unsigned int m_trace_count = 0;
 
     static bool is_supported_length(unsigned int len)
     {
@@ -39,7 +43,7 @@ class dma350 : public sc_core::sc_module
     void reset_registers()
     {
         m_regs.fill(0);
-        store32(DMASECINFO, 0x00000000); /* one DMA channel: ((value >> 4) & 0xf) + 1 */
+        store32(DMASECINFO, 0x00000030); /* four DMA channels: ((value >> 4) & 0xf) + 1 */
         store32(CH_BASE + CH_CTRL, 0x00200200);
         store32(CH_BASE + CH_DESTRANSCFG, 0x000f0400);
     }
@@ -89,14 +93,39 @@ class dma350 : public sc_core::sc_module
         }
 
         trans.set_response_status(tlm::TLM_OK_RESPONSE);
+        trace_access(trans, offset, len);
         return true;
     }
 
+    void trace_access(tlm::tlm_generic_payload& trans, uint64_t offset, unsigned int len)
+    {
+        if (!p_trace.get_value() || m_trace_count >= p_trace_limit.get_value()) {
+            return;
+        }
+
+        ++m_trace_count;
+        uint32_t value = 0;
+        if (len <= sizeof(value)) {
+            std::memcpy(&value, trans.get_data_ptr(), len);
+        }
+
+        std::cerr << name() << " "
+                  << (trans.get_command() == tlm::TLM_READ_COMMAND ? "read" : "write")
+                  << " offset=0x" << std::hex << offset
+                  << " len=0x" << len
+                  << " value=0x" << value
+                  << std::dec << std::endl;
+    }
+
 public:
+    cci::cci_param<bool> p_trace;
+    cci::cci_param<unsigned int> p_trace_limit;
     tlm_utils::simple_target_socket<dma350, DEFAULT_TLM_BUSWIDTH> target_socket;
 
     explicit dma350(sc_core::sc_module_name name)
         : sc_core::sc_module(name)
+        , p_trace("trace", false)
+        , p_trace_limit("trace_limit", 64)
         , target_socket("target_socket")
     {
         reset_registers();

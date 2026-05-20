@@ -100,9 +100,10 @@ python3 scripts/run_qbox_fvp_rd_aspen_rse.py \
 
 The current skeleton starts the generated RSE ROM through the existing
 `RemoteCPU` Cortex-M55 wrapper and writes per-console logs plus `result.json`.
-As of the 2026-05-21 runs, limited CC3XX and DMA350 SystemC/TLM models remove
-the previous `rse_first_fault:0x501541c4` Data Abort. The current expected
-result is still an RSE-oriented boot failure:
+As of the 2026-05-21 runs, limited CC3XX, DTCM alias, and DMA350 SystemC/TLM
+models remove the previous `rse_first_fault:0x501541c4` Data Abort and trace
+the next no-console point to BL1_1 DTCM/VM erase/fill through DMA350. The
+current expected result is still an RSE-oriented boot failure:
 
 ```text
 blocker: qbox_platform_timeout
@@ -110,5 +111,6 @@ first_failing_register_access: none
 ```
 
 This is not an RSE boot pass. It is evidence that the platform now progresses
-past the first CC3XX register abort, but still needs trace-driven modeling of
-the next early RSE hardware side effect before TF-M emits an RSE UART marker.
+past the first CC3XX register abort, but still needs DMA350 fill/data-movement
+behavior and trace-driven modeling of later RSE hardware side effects before
+TF-M emits an RSE UART marker.

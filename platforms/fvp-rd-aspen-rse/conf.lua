@@ -36,12 +36,19 @@ local rse_uart_read_file = getenv_or("QBOX_RDASPEN_UART_READ_FILE", "/dev/null")
 local qemu_args = getenv_or("QBOX_RDASPEN_RSE_QEMU_ARGS", "")
 local cc3xx_trace = getenv_or("QBOX_RDASPEN_CC3XX_TRACE", "false") == "true"
 local cc3xx_trace_limit = tonumber(getenv_or("QBOX_RDASPEN_CC3XX_TRACE_LIMIT", "64"))
+local dma350_trace = getenv_or("QBOX_RDASPEN_DMA350_TRACE", "false") == "true"
+local dma350_trace_limit = tonumber(getenv_or("QBOX_RDASPEN_DMA350_TRACE_LIMIT", "64"))
 local remote_cpu_exec = getenv_or(
     "QBOX_REMOTE_CPU_EXEC",
     root.."tools/qbox/build/remote_cpu")
 
 local RSE_ROM_BASE_S = 0x11000000
 local RSE_ROM_SIZE = 0x00020000
+local RSE_DTCM_BASE_NS = 0x20000000
+local RSE_DTCM_CPU0_BASE_NS = 0x24000000
+local RSE_DTCM_BASE_S = 0x30000000
+local RSE_DTCM_CPU0_BASE_S = 0x34000000
+local RSE_DTCM_SIZE = 0x00008000
 local RSE_VM0_BASE_S = 0x31000000
 local RSE_VM_SIZE = 0x00040000
 local RSE_VM1_BASE_S = RSE_VM0_BASE_S + RSE_VM_SIZE
@@ -100,6 +107,31 @@ platform = {
         log_level = 0;
     },
 
+    rse_dtcm = {
+        moduletype = "gs_memory";
+        target_socket = {
+            address = RSE_DTCM_BASE_S;
+            size = RSE_DTCM_SIZE;
+            bind = "&rse_router.initiator_socket";
+            aliases = {
+                cpu0_s = {
+                    address = RSE_DTCM_CPU0_BASE_S;
+                    size = RSE_DTCM_SIZE;
+                };
+                ns = {
+                    address = RSE_DTCM_BASE_NS;
+                    size = RSE_DTCM_SIZE;
+                };
+                cpu0_ns = {
+                    address = RSE_DTCM_CPU0_BASE_NS;
+                    size = RSE_DTCM_SIZE;
+                };
+            };
+        };
+        init_mem = true;
+        log_level = 0;
+    },
+
     rse_vm0 = {
         moduletype = "gs_memory";
         target_socket = {
@@ -147,6 +179,8 @@ platform = {
 
     rse_dma350 = {
         moduletype = "dma350";
+        trace = dma350_trace;
+        trace_limit = dma350_trace_limit;
         target_socket = {
             address = RSE_DMA350_BASE_S;
             size = 0x00002000;
