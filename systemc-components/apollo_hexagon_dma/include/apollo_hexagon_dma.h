@@ -789,22 +789,26 @@ private:
                                       uint64_t output_addr, uint32_t input_bytes, uint32_t output_bytes,
                                       uint64_t packet_addr)
     {
+        const uint32_t code_entry = executable.payload_entry_word;
+
         if (executable.payload_magic != APKO_PAYLOAD_MAGIC ||
             executable.payload_opcode == 0 ||
             executable.payload_code_words == 0 ||
-            executable.payload_entry_word != executable.payload_opcode) {
+            code_entry != executable.payload_opcode) {
             set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, packet_addr);
             return false;
         }
 
         SCP_INFO(()) << "APOLLO_HEXAGON_DMA: APKO payload execute opcode=" << std::dec
                      << executable.payload_opcode << " code-words="
-                     << executable.payload_code_words;
+                     << executable.payload_code_words << " code-entry="
+                     << code_entry;
         std::cerr << "APOLLO_HEXAGON_DMA: APKO payload execute opcode=" << std::dec
                   << executable.payload_opcode << " code-words="
-                  << executable.payload_code_words << std::endl;
+                  << executable.payload_code_words << " code-entry="
+                  << code_entry << std::endl;
 
-        switch (executable.payload_opcode) {
+        switch (code_entry) {
         case APKO_PAYLOAD_OPCODE_VADD:
             return execute_vadd_dispatch_packet(input_addr, output_addr, input_bytes, output_bytes,
                                                 packet_addr);
@@ -840,9 +844,11 @@ private:
         }
 
         SCP_INFO(()) << "APOLLO_HEXAGON_DMA: command dispatch executable slot=" << std::dec << slot
-                     << " kind=" << executable.entry_kind;
+                     << " kind=" << executable.entry_kind << " code-entry="
+                     << executable.payload_entry_word;
         std::cerr << "APOLLO_HEXAGON_DMA: command dispatch executable slot=" << std::dec << slot
-                  << " kind=" << executable.entry_kind << std::endl;
+                  << " kind=" << executable.entry_kind << " code-entry="
+                  << executable.payload_entry_word << std::endl;
 
         return execute_apko_payload_program(executable, input_addr, output_addr, input_bytes,
                                             output_bytes, packet_addr);

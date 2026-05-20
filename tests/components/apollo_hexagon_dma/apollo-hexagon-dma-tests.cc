@@ -615,7 +615,8 @@ TEST_BENCH(ApolloHexagonDmaTestBench, CommandQueueLoadPayloadRejectsBadOpcode)
                    EXEC_FORMAT_APKO_V0, CMDQ_DISPATCH_KIND_VADD, input_bytes, output_bytes });
     write_packet(cmdq_base + CMDQ_PACKET_BYTES,
                  { CMDQ_OPCODE_LOAD_PAYLOAD, slot, APKO_PAYLOAD_MAGIC, APKO_PAYLOAD_VERSION,
-                   CMDQ_DISPATCH_KIND_CNN, APKO_PAYLOAD_DESCRIPTOR_WORDS, 0, 0 });
+                   CMDQ_DISPATCH_KIND_CNN, APKO_PAYLOAD_DESCRIPTOR_WORDS,
+                   1, CMDQ_DISPATCH_KIND_CNN });
 
     write32(REG_JOB_QUEUE, QUEUE_DMA);
     write32(REG_CMDQ_BASE_LO, cmdq_base);
@@ -648,6 +649,38 @@ TEST_BENCH(ApolloHexagonDmaTestBench, CommandQueueLoadPayloadRejectsMissingCodeW
                  { CMDQ_OPCODE_LOAD_PAYLOAD, slot, APKO_PAYLOAD_MAGIC, APKO_PAYLOAD_VERSION,
                    CMDQ_DISPATCH_KIND_VADD, APKO_PAYLOAD_DESCRIPTOR_WORDS,
                    0, CMDQ_DISPATCH_KIND_VADD });
+
+    write32(REG_JOB_QUEUE, QUEUE_DMA);
+    write32(REG_CMDQ_BASE_LO, cmdq_base);
+    write32(REG_CMDQ_SIZE, 0x200);
+    write32(REG_CMDQ_HEAD, 0);
+    write32(REG_CMDQ_TAIL, 2 * CMDQ_PACKET_BYTES);
+    write32(REG_CMDQ_DOORBELL, 1);
+
+    EXPECT_EQ(JOB_STATUS_ERROR, read32(REG_CMDQ_STATUS));
+    EXPECT_EQ(CMDQ_FAULT_MALFORMED_PACKET, read32(REG_CMDQ_FAULT_CODE));
+    EXPECT_EQ(cmdq_base + CMDQ_PACKET_BYTES, read32(REG_CMDQ_FAULT_ADDR_LO));
+    EXPECT_EQ(0u, read32(REG_CMDQ_FAULT_ADDR_HI));
+    EXPECT_EQ(CMDQ_PACKET_BYTES, read32(REG_CMDQ_HEAD));
+    EXPECT_TRUE(m_irq_line.read());
+    EXPECT_EQ(1u << QUEUE_DMA, read32(REG_IRQ_STATUS));
+    EXPECT_EQ(read32(REG_JOB_FENCE), read32(REG_CMDQ_FENCE_VALUE));
+}
+
+TEST_BENCH(ApolloHexagonDmaTestBench, CommandQueueLoadPayloadRejectsBadCodeEntry)
+{
+    constexpr uint32_t cmdq_base = 0x100;
+    constexpr uint32_t input_bytes = 8 * sizeof(uint32_t);
+    constexpr uint32_t output_bytes = 4 * sizeof(uint32_t);
+    constexpr uint32_t slot = 1;
+
+    write_packet(cmdq_base,
+                 { CMDQ_OPCODE_LOAD_EXECUTABLE, slot, APKO_MAGIC, APKO_ABI_VERSION,
+                   EXEC_FORMAT_APKO_V0, CMDQ_DISPATCH_KIND_VADD, input_bytes, output_bytes });
+    write_packet(cmdq_base + CMDQ_PACKET_BYTES,
+                 { CMDQ_OPCODE_LOAD_PAYLOAD, slot, APKO_PAYLOAD_MAGIC, APKO_PAYLOAD_VERSION,
+                   CMDQ_DISPATCH_KIND_VADD, APKO_PAYLOAD_DESCRIPTOR_WORDS,
+                   1, CMDQ_DISPATCH_KIND_CNN });
 
     write32(REG_JOB_QUEUE, QUEUE_DMA);
     write32(REG_CMDQ_BASE_LO, cmdq_base);
