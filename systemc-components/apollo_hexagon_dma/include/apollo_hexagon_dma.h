@@ -152,6 +152,9 @@ private:
         APKO_CODE_MAGIC = 0x45444f43, // "CODE"
         APKO_CODE_VERSION = 0,
         APKO_CODE_DESCRIPTOR_WORDS = 4,
+        APKO_CODE_OP_MODEL_DISPATCH = 0x00010000u,
+        APKO_CODE_OP_MASK = 0xffff0000u,
+        APKO_CODE_MODEL_MASK = 0x0000ffffu,
         APKO_PAYLOAD_OPCODE_CNN = CMDQ_DISPATCH_KIND_CNN,
         APKO_PAYLOAD_OPCODE_VADD = CMDQ_DISPATCH_KIND_VADD,
         APKO_PAYLOAD_OPCODE_MNIST = CMDQ_DISPATCH_KIND_MNIST,
@@ -700,6 +703,15 @@ private:
         }
     }
 
+    static bool decode_code_entry(uint32_t code_entry, uint32_t& payload_opcode)
+    {
+        if ((code_entry & APKO_CODE_OP_MASK) != APKO_CODE_OP_MODEL_DISPATCH) {
+            return false;
+        }
+        payload_opcode = code_entry & APKO_CODE_MODEL_MASK;
+        return payload_opcode_valid(payload_opcode);
+    }
+
     bool execute_load_executable_packet(const std::array<uint32_t, CMDQ_PACKET_WORDS>& packet,
                                         uint64_t packet_addr)
     {
@@ -757,6 +769,7 @@ private:
         const uint32_t descriptor_words = packet[5];
         const uint32_t code_words = packet[6];
         const uint32_t entry_word = packet[7];
+        uint32_t code_payload_opcode = 0;
 
         if (slot == 0 || slot >= m_loaded_executables.size() ||
             !m_loaded_executables[slot].valid ||
@@ -764,7 +777,8 @@ private:
             version != APKO_PAYLOAD_VERSION ||
             descriptor_words != APKO_PAYLOAD_DESCRIPTOR_WORDS ||
             code_words == 0 ||
-            entry_word != payload_opcode ||
+            !decode_code_entry(entry_word, code_payload_opcode) ||
+            code_payload_opcode != payload_opcode ||
             !payload_opcode_valid(payload_opcode) ||
             payload_opcode != m_loaded_executables[slot].entry_kind) {
             set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, packet_addr);
@@ -790,11 +804,13 @@ private:
                                       uint64_t packet_addr)
     {
         const uint32_t code_entry = executable.payload_entry_word;
+        uint32_t payload_opcode = 0;
 
         if (executable.payload_magic != APKO_PAYLOAD_MAGIC ||
             executable.payload_opcode == 0 ||
             executable.payload_code_words == 0 ||
-            code_entry != executable.payload_opcode) {
+            !decode_code_entry(code_entry, payload_opcode) ||
+            payload_opcode != executable.payload_opcode) {
             set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, packet_addr);
             return false;
         }
@@ -808,7 +824,7 @@ private:
                   << executable.payload_code_words << " code-entry="
                   << code_entry << std::endl;
 
-        switch (code_entry) {
+        switch (payload_opcode) {
         case APKO_PAYLOAD_OPCODE_VADD:
             return execute_vadd_dispatch_packet(input_addr, output_addr, input_bytes, output_bytes,
                                                 packet_addr);

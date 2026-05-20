@@ -129,6 +129,7 @@ protected:
         APKO_PAYLOAD_MAGIC = 0x5041594c,
         APKO_PAYLOAD_VERSION = 0,
         APKO_PAYLOAD_DESCRIPTOR_WORDS = 4,
+        APKO_CODE_OP_MODEL_DISPATCH = 0x00010000u,
         EXEC_FORMAT_APKO_V0 = 1,
         CMDQ_DISPATCH_KIND_CNN = 1,
         CMDQ_DISPATCH_KIND_VADD = 2,
@@ -449,7 +450,7 @@ TEST_BENCH(ApolloHexagonDmaTestBench, CommandQueueLoadExecutableDispatchesVaddSl
     write_packet(cmdq_base + CMDQ_PACKET_BYTES,
                  { CMDQ_OPCODE_LOAD_PAYLOAD, slot, APKO_PAYLOAD_MAGIC, APKO_PAYLOAD_VERSION,
                    CMDQ_DISPATCH_KIND_VADD, APKO_PAYLOAD_DESCRIPTOR_WORDS,
-                   1, CMDQ_DISPATCH_KIND_VADD });
+                   1, APKO_CODE_OP_MODEL_DISPATCH | CMDQ_DISPATCH_KIND_VADD });
     write_packet(cmdq_base + 2 * CMDQ_PACKET_BYTES,
                  { CMDQ_OPCODE_DISPATCH, CMDQ_DISPATCH_EXEC_SLOT_FLAG | slot,
                    input_addr, 0, output_addr, 0, input_bytes, output_bytes });
@@ -500,7 +501,7 @@ TEST_BENCH(ApolloHexagonDmaTestBench, CommandQueueLoadExecutableDispatchesCnnSlo
     write_packet(cmdq_base + CMDQ_PACKET_BYTES,
                  { CMDQ_OPCODE_LOAD_PAYLOAD, slot, APKO_PAYLOAD_MAGIC, APKO_PAYLOAD_VERSION,
                    CMDQ_DISPATCH_KIND_CNN, APKO_PAYLOAD_DESCRIPTOR_WORDS,
-                   1, CMDQ_DISPATCH_KIND_CNN });
+                   1, APKO_CODE_OP_MODEL_DISPATCH | CMDQ_DISPATCH_KIND_CNN });
     write_packet(cmdq_base + 2 * CMDQ_PACKET_BYTES,
                  { CMDQ_OPCODE_DISPATCH, CMDQ_DISPATCH_EXEC_SLOT_FLAG | slot,
                    input_addr, 0, output_addr, 0, input_bytes, output_bytes });
@@ -546,7 +547,7 @@ TEST_BENCH(ApolloHexagonDmaTestBench, CommandQueueLoadExecutableDispatchesMnistS
     write_packet(cmdq_base + CMDQ_PACKET_BYTES,
                  { CMDQ_OPCODE_LOAD_PAYLOAD, slot, APKO_PAYLOAD_MAGIC, APKO_PAYLOAD_VERSION,
                    CMDQ_DISPATCH_KIND_MNIST, APKO_PAYLOAD_DESCRIPTOR_WORDS,
-                   1, CMDQ_DISPATCH_KIND_MNIST });
+                   1, APKO_CODE_OP_MODEL_DISPATCH | CMDQ_DISPATCH_KIND_MNIST });
     write_packet(cmdq_base + 2 * CMDQ_PACKET_BYTES,
                  { CMDQ_OPCODE_DISPATCH, CMDQ_DISPATCH_EXEC_SLOT_FLAG | slot,
                    input_addr, 0, output_addr, 0, input_bytes, output_bytes });
@@ -616,7 +617,7 @@ TEST_BENCH(ApolloHexagonDmaTestBench, CommandQueueLoadPayloadRejectsBadOpcode)
     write_packet(cmdq_base + CMDQ_PACKET_BYTES,
                  { CMDQ_OPCODE_LOAD_PAYLOAD, slot, APKO_PAYLOAD_MAGIC, APKO_PAYLOAD_VERSION,
                    CMDQ_DISPATCH_KIND_CNN, APKO_PAYLOAD_DESCRIPTOR_WORDS,
-                   1, CMDQ_DISPATCH_KIND_CNN });
+                   1, APKO_CODE_OP_MODEL_DISPATCH | CMDQ_DISPATCH_KIND_CNN });
 
     write32(REG_JOB_QUEUE, QUEUE_DMA);
     write32(REG_CMDQ_BASE_LO, cmdq_base);
@@ -648,7 +649,7 @@ TEST_BENCH(ApolloHexagonDmaTestBench, CommandQueueLoadPayloadRejectsMissingCodeW
     write_packet(cmdq_base + CMDQ_PACKET_BYTES,
                  { CMDQ_OPCODE_LOAD_PAYLOAD, slot, APKO_PAYLOAD_MAGIC, APKO_PAYLOAD_VERSION,
                    CMDQ_DISPATCH_KIND_VADD, APKO_PAYLOAD_DESCRIPTOR_WORDS,
-                   0, CMDQ_DISPATCH_KIND_VADD });
+                   0, APKO_CODE_OP_MODEL_DISPATCH | CMDQ_DISPATCH_KIND_VADD });
 
     write32(REG_JOB_QUEUE, QUEUE_DMA);
     write32(REG_CMDQ_BASE_LO, cmdq_base);
@@ -680,7 +681,7 @@ TEST_BENCH(ApolloHexagonDmaTestBench, CommandQueueLoadPayloadRejectsBadCodeEntry
     write_packet(cmdq_base + CMDQ_PACKET_BYTES,
                  { CMDQ_OPCODE_LOAD_PAYLOAD, slot, APKO_PAYLOAD_MAGIC, APKO_PAYLOAD_VERSION,
                    CMDQ_DISPATCH_KIND_VADD, APKO_PAYLOAD_DESCRIPTOR_WORDS,
-                   1, CMDQ_DISPATCH_KIND_CNN });
+                   1, APKO_CODE_OP_MODEL_DISPATCH | CMDQ_DISPATCH_KIND_CNN });
 
     write32(REG_JOB_QUEUE, QUEUE_DMA);
     write32(REG_CMDQ_BASE_LO, cmdq_base);
