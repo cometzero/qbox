@@ -473,19 +473,22 @@ TEST_BENCH(ApolloHexagonDmaTestBench, CommandQueueLoadExecutableDispatchesCnnSlo
     constexpr uint32_t cmdq_base = 0x100;
     constexpr uint32_t input_addr = 0x300;
     constexpr uint32_t output_addr = 0x380;
-    constexpr uint32_t input_bytes = 16;
-    constexpr uint32_t output_bytes = 16;
+    constexpr uint32_t input_bytes = 16 * sizeof(uint32_t);
+    constexpr uint32_t output_bytes = 4 * sizeof(uint32_t);
     constexpr uint32_t slot = 1;
-    const std::array<uint8_t, input_bytes> input {
-        0x10, 0x20, 0x30, 0x40,
-        0x50, 0x60, 0x70, 0x80,
-        0x90, 0xa0, 0xb0, 0xc0,
-        0xd0, 0xe0, 0xf0, 0x00,
+    const std::array<uint32_t, 16> input {
+        1, 2, 3, 4,
+        5, 6, 7, 8,
+        9, 10, 11, 12,
+        13, 14, 15, 16,
     };
-    std::array<uint8_t, output_bytes> output {};
+    const std::array<uint32_t, 4> expected {
+        0x42580000, 0x427c0000, 0x42b40000, 0x42c60000,
+    };
+    std::array<uint32_t, 4> output {};
 
     m_memory.write_bytes(input_addr, reinterpret_cast<const uint8_t*>(input.data()),
-                         input.size() * sizeof(uint8_t));
+                         input.size() * sizeof(uint32_t));
     write_packet(cmdq_base,
                  { CMDQ_OPCODE_LOAD_EXECUTABLE, slot, APKO_MAGIC, APKO_ABI_VERSION,
                    EXEC_FORMAT_APKO_V0, CMDQ_DISPATCH_KIND_CNN, input_bytes, output_bytes });
@@ -501,8 +504,8 @@ TEST_BENCH(ApolloHexagonDmaTestBench, CommandQueueLoadExecutableDispatchesCnnSlo
     write32(REG_CMDQ_DOORBELL, 1);
 
     m_memory.read_bytes(output_addr, reinterpret_cast<uint8_t*>(output.data()),
-                        output.size() * sizeof(uint8_t));
-    EXPECT_EQ(input, output);
+                        output.size() * sizeof(uint32_t));
+    EXPECT_EQ(expected, output);
     EXPECT_EQ(JOB_STATUS_DONE, read32(REG_CMDQ_STATUS));
     EXPECT_EQ(CMDQ_FAULT_NONE, read32(REG_CMDQ_FAULT_CODE));
     EXPECT_EQ(2u * CMDQ_PACKET_BYTES, read32(REG_CMDQ_HEAD));
