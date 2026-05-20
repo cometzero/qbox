@@ -78,3 +78,37 @@ virtio-blk, virtio-net, and virtio-rng. With `--post-login-probe`, the log
 also records platform-device links, interrupt counters, module status, failed
 systemd units, remoteproc state, RPMsg module load results, and explicit
 `modprobe` results for the modules loaded by the image.
+
+## RSE-Oriented Skeleton Mode
+
+The RSE-oriented bring-up path is separate from this primary-compute direct boot
+configuration. Its Lua configuration is:
+
+```text
+tools/qbox/platforms/fvp-rd-aspen-rse/conf.lua
+```
+
+Run a file-backed trace smoke with:
+
+```bash
+python3 scripts/run_qbox_fvp_rd_aspen_rse.py \
+  --skip-build \
+  --qemu-trace \
+  --timeout 5 \
+  --out-dir build/qbox-fvp-rd-aspen/rse-remote-cpu-trace-<run-id>
+```
+
+The current skeleton starts the generated RSE ROM through the existing
+`RemoteCPU` Cortex-M55 wrapper and writes per-console logs plus `result.json`.
+As of the 2026-05-21 runs, limited CC3XX and DMA350 SystemC/TLM models remove
+the previous `rse_first_fault:0x501541c4` Data Abort. The current expected
+result is still an RSE-oriented boot failure:
+
+```text
+blocker: qbox_platform_timeout
+first_failing_register_access: none
+```
+
+This is not an RSE boot pass. It is evidence that the platform now progresses
+past the first CC3XX register abort, but still needs trace-driven modeling of
+the next early RSE hardware side effect before TF-M emits an RSE UART marker.
