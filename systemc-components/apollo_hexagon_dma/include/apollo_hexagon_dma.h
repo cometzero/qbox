@@ -149,6 +149,9 @@ private:
         APKO_PAYLOAD_MAGIC = 0x5041594c, // "PAYL"
         APKO_PAYLOAD_VERSION = 0,
         APKO_PAYLOAD_DESCRIPTOR_WORDS = 4,
+        APKO_CODE_MAGIC = 0x45444f43, // "CODE"
+        APKO_CODE_VERSION = 0,
+        APKO_CODE_DESCRIPTOR_WORDS = 4,
         APKO_PAYLOAD_OPCODE_CNN = CMDQ_DISPATCH_KIND_CNN,
         APKO_PAYLOAD_OPCODE_VADD = CMDQ_DISPATCH_KIND_VADD,
         APKO_PAYLOAD_OPCODE_MNIST = CMDQ_DISPATCH_KIND_MNIST,
@@ -172,6 +175,8 @@ private:
         uint32_t output_bytes = 0;
         uint32_t payload_magic = 0;
         uint32_t payload_opcode = 0;
+        uint32_t payload_code_words = 0;
+        uint32_t payload_entry_word = 0;
     };
 
     uint32_t m_src = 0;
@@ -728,6 +733,8 @@ private:
             output_bytes,
             0,
             0,
+            0,
+            0,
         };
         SCP_INFO(()) << "APOLLO_HEXAGON_DMA: command load executable slot=" << std::dec << slot
                      << " kind=" << entry_kind << " input-bytes=" << input_bytes
@@ -748,14 +755,16 @@ private:
         const uint32_t version = packet[3];
         const uint32_t payload_opcode = packet[4];
         const uint32_t descriptor_words = packet[5];
+        const uint32_t code_words = packet[6];
+        const uint32_t entry_word = packet[7];
 
         if (slot == 0 || slot >= m_loaded_executables.size() ||
             !m_loaded_executables[slot].valid ||
             magic != APKO_PAYLOAD_MAGIC ||
             version != APKO_PAYLOAD_VERSION ||
             descriptor_words != APKO_PAYLOAD_DESCRIPTOR_WORDS ||
-            packet[6] != 0 ||
-            packet[7] != 0 ||
+            code_words == 0 ||
+            entry_word != payload_opcode ||
             !payload_opcode_valid(payload_opcode) ||
             payload_opcode != m_loaded_executables[slot].entry_kind) {
             set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, packet_addr);
@@ -764,10 +773,14 @@ private:
 
         m_loaded_executables[slot].payload_magic = APKO_PAYLOAD_MAGIC;
         m_loaded_executables[slot].payload_opcode = payload_opcode;
+        m_loaded_executables[slot].payload_code_words = code_words;
+        m_loaded_executables[slot].payload_entry_word = entry_word;
         SCP_INFO(()) << "APOLLO_HEXAGON_DMA: command load payload slot=" << std::dec << slot
-                     << " opcode=" << payload_opcode << " words=" << descriptor_words;
+                     << " opcode=" << payload_opcode << " words=" << descriptor_words
+                     << " code-words=" << code_words;
         std::cerr << "APOLLO_HEXAGON_DMA: command load payload slot=" << std::dec << slot
                   << " opcode=" << payload_opcode << " words=" << descriptor_words
+                  << " code-words=" << code_words
                   << std::endl;
         return true;
     }
@@ -777,15 +790,19 @@ private:
                                       uint64_t packet_addr)
     {
         if (executable.payload_magic != APKO_PAYLOAD_MAGIC ||
-            executable.payload_opcode == 0) {
+            executable.payload_opcode == 0 ||
+            executable.payload_code_words == 0 ||
+            executable.payload_entry_word != executable.payload_opcode) {
             set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, packet_addr);
             return false;
         }
 
         SCP_INFO(()) << "APOLLO_HEXAGON_DMA: APKO payload execute opcode=" << std::dec
-                     << executable.payload_opcode;
+                     << executable.payload_opcode << " code-words="
+                     << executable.payload_code_words;
         std::cerr << "APOLLO_HEXAGON_DMA: APKO payload execute opcode=" << std::dec
-                  << executable.payload_opcode << std::endl;
+                  << executable.payload_opcode << " code-words="
+                  << executable.payload_code_words << std::endl;
 
         switch (executable.payload_opcode) {
         case APKO_PAYLOAD_OPCODE_VADD:
