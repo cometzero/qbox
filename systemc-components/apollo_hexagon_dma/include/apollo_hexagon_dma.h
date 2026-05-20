@@ -183,6 +183,7 @@ private:
         uint32_t payload_magic = 0;
         uint32_t payload_opcode = 0;
         uint32_t payload_code_words = 0;
+        std::array<uint32_t, APKO_CODE_PROGRAM_WORDS> payload_code {};
         uint32_t payload_entry_word = 0;
         uint32_t payload_end_word = 0;
     };
@@ -211,10 +212,10 @@ private:
     uint32_t m_cmdq_tail = 0;
     uint32_t m_cmdq_status = JOB_STATUS_IDLE;
     uint32_t m_cmdq_fence_value = 0;
-	    uint32_t m_cmdq_fault_code = CMDQ_FAULT_NONE;
-	    uint32_t m_cmdq_fault_addr_lo = 0;
-	    uint32_t m_cmdq_fault_addr_hi = 0;
-	    std::array<LoadedExecutable, CMDQ_EXEC_SLOT_COUNT> m_loaded_executables {};
+    uint32_t m_cmdq_fault_code = CMDQ_FAULT_NONE;
+    uint32_t m_cmdq_fault_addr_lo = 0;
+    uint32_t m_cmdq_fault_addr_hi = 0;
+    std::array<LoadedExecutable, CMDQ_EXEC_SLOT_COUNT> m_loaded_executables {};
 
     void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)
     {
@@ -717,13 +718,33 @@ private:
         return payload_opcode_valid(payload_opcode);
     }
 
-    static bool decode_code_program(uint32_t word_count, uint32_t entry_word,
-                                    uint32_t end_word, uint32_t& payload_opcode)
+    static bool decode_code_program(const std::array<uint32_t, APKO_CODE_PROGRAM_WORDS>& program,
+                                    uint32_t word_count, uint32_t& payload_opcode)
     {
-        if (word_count != APKO_CODE_PROGRAM_WORDS || end_word != APKO_CODE_OP_END) {
+        bool saw_dispatch = false;
+
+        if (word_count == 0 || word_count > program.size()) {
             return false;
         }
-        return decode_code_entry(entry_word, payload_opcode);
+
+        for (uint32_t pc = 0; pc < word_count; pc++) {
+            const uint32_t word = program[pc];
+
+            switch (word & APKO_CODE_OP_MASK) {
+            case APKO_CODE_OP_MODEL_DISPATCH:
+                if (saw_dispatch || !decode_code_entry(word, payload_opcode)) {
+                    return false;
+                }
+                saw_dispatch = true;
+                break;
+            case APKO_CODE_OP_END:
+                return saw_dispatch && pc + 1 == word_count;
+            default:
+                return false;
+            }
+        }
+
+        return false;
     }
 
     bool execute_load_executable_packet(const std::array<uint32_t, CMDQ_PACKET_WORDS>& packet,
@@ -750,20 +771,16 @@ private:
             return false;
         }
 
-        m_loaded_executables[slot] = {
-            true,
-            false,
-            executable_format,
-            abi_version,
-            entry_kind,
-            input_bytes,
-            output_bytes,
-            0,
-            0,
-            0,
-            0,
-            0,
-        };
+        LoadedExecutable executable;
+
+        executable.valid = true;
+        executable.code_valid = false;
+        executable.executable_format = executable_format;
+        executable.abi_version = abi_version;
+        executable.entry_kind = entry_kind;
+        executable.input_bytes = input_bytes;
+        executable.output_bytes = output_bytes;
+        m_loaded_executables[slot] = executable;
         SCP_INFO(()) << "APOLLO_HEXAGON_DMA: command load executable slot=" << std::dec << slot
                      << " kind=" << entry_kind << " input-bytes=" << input_bytes
                      << " output-bytes=" << output_bytes << " format=0x" << std::hex
@@ -802,6 +819,7 @@ private:
         m_loaded_executables[slot].payload_magic = APKO_PAYLOAD_MAGIC;
         m_loaded_executables[slot].payload_opcode = payload_opcode;
         m_loaded_executables[slot].payload_code_words = code_words;
+        m_loaded_executables[slot].payload_code.fill(0);
         m_loaded_executables[slot].payload_entry_word = 0;
         m_loaded_executables[slot].payload_end_word = 0;
         m_loaded_executables[slot].code_valid = false;
@@ -825,6 +843,9 @@ private:
         const uint32_t word_count = packet[5];
         const uint32_t entry_word = packet[6];
         const uint32_t end_word = packet[7];
+        const std::array<uint32_t, APKO_CODE_PROGRAM_WORDS> program {
+            entry_word, end_word,
+        };
         uint32_t code_payload_opcode = 0;
 
         if (slot == 0 || slot >= m_loaded_executables.size() ||
@@ -834,13 +855,13 @@ private:
             version != APKO_CODE_VERSION ||
             word_offset != 0 ||
             word_count != m_loaded_executables[slot].payload_code_words ||
-            !decode_code_program(word_count, entry_word, end_word,
-                                 code_payload_opcode) ||
+            !decode_code_program(program, word_count, code_payload_opcode) ||
             code_payload_opcode != m_loaded_executables[slot].payload_opcode) {
             set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, packet_addr);
             return false;
         }
 
+        m_loaded_executables[slot].payload_code = program;
         m_loaded_executables[slot].payload_entry_word = entry_word;
         m_loaded_executables[slot].payload_end_word = end_word;
         m_loaded_executables[slot].code_valid = true;
@@ -853,6 +874,58 @@ private:
         return true;
     }
 
+    bool execute_apko_code_program(const LoadedExecutable& executable, uint64_t packet_addr,
+                                   uint32_t& payload_opcode)
+    {
+        bool saw_dispatch = false;
+
+        if (executable.payload_magic != APKO_PAYLOAD_MAGIC ||
+            executable.payload_opcode == 0 ||
+            executable.payload_code_words == 0 ||
+            executable.payload_code_words > executable.payload_code.size() ||
+            !executable.code_valid) {
+            set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, packet_addr);
+            return false;
+        }
+
+        for (uint32_t pc = 0; pc < executable.payload_code_words; pc++) {
+            const uint32_t word = executable.payload_code[pc];
+
+            switch (word & APKO_CODE_OP_MASK) {
+            case APKO_CODE_OP_MODEL_DISPATCH:
+                if (saw_dispatch || !decode_code_entry(word, payload_opcode) ||
+                    payload_opcode != executable.payload_opcode) {
+                    set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, packet_addr);
+                    return false;
+                }
+                saw_dispatch = true;
+                SCP_INFO(()) << "APOLLO_HEXAGON_DMA: APKO code program dispatch pc="
+                             << std::dec << pc << " opcode=" << payload_opcode
+                             << " word=" << word;
+                std::cerr << "APOLLO_HEXAGON_DMA: APKO code program dispatch pc="
+                          << std::dec << pc << " opcode=" << payload_opcode
+                          << " word=" << word << std::endl;
+                break;
+            case APKO_CODE_OP_END:
+                if (!saw_dispatch || pc + 1 != executable.payload_code_words) {
+                    set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, packet_addr);
+                    return false;
+                }
+                SCP_INFO(()) << "APOLLO_HEXAGON_DMA: APKO code program end pc="
+                             << std::dec << pc;
+                std::cerr << "APOLLO_HEXAGON_DMA: APKO code program end pc="
+                          << std::dec << pc << std::endl;
+                return true;
+            default:
+                set_command_queue_fault(CMDQ_FAULT_UNSUPPORTED_PACKET, packet_addr);
+                return false;
+            }
+        }
+
+        set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, packet_addr);
+        return false;
+    }
+
     bool execute_apko_payload_program(const LoadedExecutable& executable, uint64_t input_addr,
                                       uint64_t output_addr, uint32_t input_bytes, uint32_t output_bytes,
                                       uint64_t packet_addr)
@@ -861,14 +934,7 @@ private:
         const uint32_t code_end = executable.payload_end_word;
         uint32_t payload_opcode = 0;
 
-        if (executable.payload_magic != APKO_PAYLOAD_MAGIC ||
-            executable.payload_opcode == 0 ||
-            executable.payload_code_words != APKO_CODE_PROGRAM_WORDS ||
-            !executable.code_valid ||
-            !decode_code_program(executable.payload_code_words, code_entry,
-                                 code_end, payload_opcode) ||
-            payload_opcode != executable.payload_opcode) {
-            set_command_queue_fault(CMDQ_FAULT_MALFORMED_PACKET, packet_addr);
+        if (!execute_apko_code_program(executable, packet_addr, payload_opcode)) {
             return false;
         }
 
