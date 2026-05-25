@@ -80,6 +80,7 @@ class gs_memory : public sc_core::sc_module
 
         bool m_mapped = false;
         ShmemIDExtension m_shmemID;
+        FileDMIExtension m_fileDMI;
         bool m_aligned = false;
 
     public:
@@ -117,6 +118,8 @@ class gs_memory : public sc_core::sc_module
                     if ((m_ptr = MemoryServices::get().map_file(((std::string)(m_mem.p_mapfile)), m_len, m_address)) !=
                         nullptr) {
                         m_mapped = true;
+                        m_fileDMI =
+                            FileDMIExtension((std::string)m_mem.p_mapfile, (uint64_t)m_ptr, m_len, m_address);
                         return *this;
                     }
                 }
@@ -203,6 +206,12 @@ class gs_memory : public sc_core::sc_module
             return &m_shmemID;
         }
 
+        FileDMIExtension* get_file_extension()
+        {
+            if (m_fileDMI.empty()) return nullptr;
+            return &m_fileDMI;
+        }
+
         void free_raw_alloc()
         {
             if (!m_ptr) {
@@ -280,6 +289,10 @@ protected:
         ShmemIDExtension* ext = blk.get_extension();
         if (ext) {
             txn.set_extension(ext);
+        }
+        FileDMIExtension* file_ext = blk.get_file_extension();
+        if (file_ext) {
+            txn.set_extension(file_ext);
         }
 
         return true;

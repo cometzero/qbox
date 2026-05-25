@@ -7,8 +7,32 @@
 #include <systemc>
 
 #include "remote-bench.h"
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <stdexcept>
 #include <cci/utils/broker.h>
 #include <scp/report.h>
+
+namespace {
+constexpr size_t REMOTE_DMI_MAP_FILE_SIZE = 0x1000;
+
+std::string create_remote_dmi_map_file()
+{
+    const char* tmpdir = std::getenv("TMPDIR");
+    std::string path = std::string(tmpdir ? tmpdir : "/tmp") + "/qbox-remote-dmi-" + std::to_string(getpid()) + ".bin";
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file) {
+        throw std::runtime_error("failed to create remote DMI map file: " + path);
+    }
+    file.seekp(REMOTE_DMI_MAP_FILE_SIZE - 1);
+    file.put('\0');
+    if (!file) {
+        throw std::runtime_error("failed to size remote DMI map file: " + path);
+    }
+    return path;
+}
+} // namespace
 
 // Simple load and store into the Target 1 and 2
 TEST_BENCH(RemotePassTest, test_bench)
@@ -39,6 +63,8 @@ TEST_BENCH(RemotePassTest, test_bench)
 
 int sc_main(int argc, char* argv[])
 {
+    std::string remote_dmi_map_file = create_remote_dmi_map_file();
+
     gs::ConfigurableBroker m_broker({
         { "test_bench.mem1.target_socket.address", cci::cci_value(0x11000) },
         { "test_bench.mem1.target_socket.size", cci::cci_value(0x1000) },
@@ -55,7 +81,7 @@ int sc_main(int argc, char* argv[])
 
         { "test_bench.mem1.shared_memory", cci::cci_value(true) },
         { "test_bench.pass.mem2.shared_memory", cci::cci_value(true) },
-        { "test_bench.pass.mem3.shared_memory", cci::cci_value(true) },
+        { "test_bench.pass.mem3.map_file", cci::cci_value(remote_dmi_map_file) },
 
         { "test_bench.pass.tlm_initiator_ports_num", cci::cci_value(1) },
         { "test_bench.pass.tlm_target_ports_num", cci::cci_value(2) },
@@ -70,5 +96,7 @@ int sc_main(int argc, char* argv[])
     });
 
     ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
+    int ret = RUN_ALL_TESTS();
+    std::remove(remote_dmi_map_file.c_str());
+    return ret;
 }

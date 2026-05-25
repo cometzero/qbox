@@ -66,6 +66,27 @@ TEST(RseSysctrlTest, ResetValuesMatchFvpRseBootConfiguration)
     EXPECT_EQ(read32(dut, DMA_BOOT_ADDR), 0x00000000u);
 }
 
+TEST(RseSysctrlTest, ResetDefaultsCanBeOverriddenWithCciParameters)
+{
+    auto broker = cci::cci_get_global_broker(
+        cci::cci_originator("rse_sysctrl_test"));
+    broker.set_preset_cci_value("rse_sysctrl_custom.reset_syndrome",
+                                cci::cci_value(0x12345678u));
+    broker.set_preset_cci_value("rse_sysctrl_custom.cpuwait",
+                                cci::cci_value(0x00000003u));
+    broker.set_preset_cci_value("rse_sysctrl_custom.dma_boot_en",
+                                cci::cci_value(0x00000000u));
+    broker.set_preset_cci_value("rse_sysctrl_custom.dma_boot_addr",
+                                cci::cci_value(0x11004000u));
+
+    rse_sysctrl dut("rse_sysctrl_custom");
+
+    EXPECT_EQ(read32(dut, RESET_SYNDROME), 0x12345678u);
+    EXPECT_EQ(read32(dut, CPUWAIT), 0x00000003u);
+    EXPECT_EQ(read32(dut, DMA_BOOT_EN), 0x00000000u);
+    EXPECT_EQ(read32(dut, DMA_BOOT_ADDR), 0x11004000u);
+}
+
 TEST(RseSysctrlTest, TouchedRegistersAreReadWrite)
 {
     rse_sysctrl dut("rse_sysctrl");

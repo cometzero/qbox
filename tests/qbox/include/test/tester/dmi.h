@@ -22,7 +22,7 @@ class CpuTesterDmi : public CpuTesterMmio
 
 public:
     static constexpr uint64_t DMI_ADDR = 0x90000000;
-    static constexpr size_t DMI_SIZE = 1024;
+    static constexpr size_t DMI_SIZE = 4096;
 
     enum SocketId {
         SOCKET_MMIO = CpuTesterMmio::SOCKET_MMIO,
@@ -38,7 +38,7 @@ protected:
      * DMI pointer after invalidation. We could use mmap/mprotect to detect
      * this but the test would not build on non-POSIX systems.
      */
-    uint8_t m_buf[NUM_BUF][DMI_SIZE];
+    alignas(4096) uint8_t m_buf[NUM_BUF][DMI_SIZE];
     size_t m_cur_buf = 0;
 
     bool m_dmi_enabled = true;
@@ -155,6 +155,12 @@ public:
 
         TEST_ASSERT(cpuid * sizeof(uint64_t) < DMI_SIZE);
         return buf[cpuid];
+    }
+
+    uint8_t get_buf_byte(size_t offset)
+    {
+        TEST_ASSERT(offset < DMI_SIZE);
+        return m_buf[m_cur_buf][offset];
     }
 };
 

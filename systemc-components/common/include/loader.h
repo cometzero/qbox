@@ -97,6 +97,7 @@ class loader : public sc_core::sc_module
 {
     SCP_LOGGER();
     cci::cci_broker_handle m_broker;
+    cci::cci_param<bool> p_load_at_elaboration;
 
     template <typename MODULE, typename TYPES = tlm::tlm_base_protocol_types>
     class simple_initiator_socket_zero
@@ -182,6 +183,7 @@ private:
 public:
     loader(sc_core::sc_module_name name)
         : m_broker(cci::cci_get_broker())
+        , p_load_at_elaboration("load_at_elaboration", true)
         , initiator_socket("initiator_socket") //, [&](std::string s) -> void { register_boundto(s); })
         , reset("reset")
     {
@@ -195,11 +197,12 @@ public:
     {
         SCP_WARN(())("Reset");
         if (value) {
-            end_of_elaboration();
+            load_all();
         }
     }
     loader(sc_core::sc_module_name name, std::function<void(const uint8_t* data, uint64_t offset, uint64_t len)> _write)
         : m_broker(cci::cci_get_broker())
+        , p_load_at_elaboration("load_at_elaboration", true)
         , initiator_socket("initiator_socket") //, [&](std::string s) -> void { register_boundto(s); })
         , reset("reset")
         , write_cb(_write)
@@ -290,7 +293,7 @@ protected:
             SCP_FATAL(()) << "Unknown loader type: '" << name << "'";
         }
     }
-    void end_of_elaboration()
+    void load_all()
     {
         int i = 0;
         auto children = sc_cci_children(name());
@@ -302,6 +305,13 @@ protected:
         }
         if (i == 0 && children.size() > 0) {
             load(name());
+        }
+    }
+
+    void end_of_elaboration()
+    {
+        if (p_load_at_elaboration.get_value()) {
+            load_all();
         }
     }
 

@@ -3,6 +3,9 @@
  */
 
 #include <cstdint>
+#include <fstream>
+#include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 #include <systemc>
@@ -51,6 +54,17 @@ void write32(rse_lcm& dut, uint64_t offset, uint32_t value)
     (void)access32(dut, offset, tlm::TLM_WRITE_COMMAND, value);
 }
 
+uint32_t read_file32(const std::string& path)
+{
+    uint32_t value = 0;
+    std::ifstream file(path, std::ios::binary);
+
+    EXPECT_TRUE(file);
+    file.read(reinterpret_cast<char*>(&value), sizeof(value));
+    EXPECT_TRUE(file);
+    return value;
+}
+
 } // namespace
 
 TEST(RseLcmTest, ResetValuesExposeProvisionedLifecycle)
@@ -63,6 +77,16 @@ TEST(RseLcmTest, ResetValuesExposeProvisionedLifecycle)
     EXPECT_EQ(read32(dut, OTP_ADDR_WIDTH), 0x00000010u);
     EXPECT_EQ(read32(dut, OTP_SIZE), 0x00010000u);
     EXPECT_EQ(read32(dut, DCU_EN0), 0xffffffffu);
+}
+
+TEST(RseLcmTest, ConfiguredTciTpModeIsExposed)
+{
+    cci::cci_get_global_broker(cci::cci_originator("rse_lcm_test"))
+        .set_preset_cci_value("rse_lcm_tci.tp_mode", cci::cci_value(0x111155AAu));
+
+    rse_lcm dut("rse_lcm_tci");
+
+    EXPECT_EQ(read32(dut, TP_MODE), 0x111155AAu);
 }
 
 TEST(RseLcmTest, SecureProvisioningMagicSelfCompletes)
@@ -92,6 +116,70 @@ TEST(RseLcmTest, OtpWindowIsWritable)
 
     write32(dut, OTP_WINDOW, 0x01234567u);
     EXPECT_EQ(read32(dut, OTP_WINDOW), 0x01234567u);
+}
+
+TEST(RseLcmTest, OtpImageParameterLoadsOtpWindow)
+{
+    const std::string otp_path = ::testing::TempDir() + "/rse_lcm_otp_image.bin";
+    const std::vector<uint8_t> otp = {
+        0x67, 0x45, 0x23, 0x01,
+        0xef, 0xcd, 0xab, 0x89,
+    };
+
+    {
+        std::ofstream otp_file(otp_path, std::ios::binary);
+        ASSERT_TRUE(otp_file);
+        otp_file.write(reinterpret_cast<const char*>(otp.data()), otp.size());
+        ASSERT_TRUE(otp_file);
+    }
+
+    cci::cci_get_global_broker(cci::cci_originator("rse_lcm_test"))
+        .set_preset_cci_value("rse_lcm_otp_image.otp_image",
+                              cci::cci_value(otp_path));
+
+    rse_lcm dut("rse_lcm_otp_image");
+
+    EXPECT_EQ(read32(dut, OTP_WINDOW), 0x01234567u);
+    EXPECT_EQ(read32(dut, OTP_WINDOW + sizeof(uint32_t)), 0x89abcdefu);
+}
+
+TEST(RseLcmTest, OtpWritebackUpdatesImageFile)
+{
+    const std::string otp_path = ::testing::TempDir() + "/rse_lcm_otp_writeback.bin";
+    const std::vector<uint8_t> otp(8, 0);
+
+    {
+        std::ofstream otp_file(otp_path, std::ios::binary);
+        ASSERT_TRUE(otp_file);
+        otp_file.write(reinterpret_cast<const char*>(otp.data()), otp.size());
+        ASSERT_TRUE(otp_file);
+    }
+
+    cci::cci_get_global_broker(cci::cci_originator("rse_lcm_test"))
+        .set_preset_cci_value("rse_lcm_otp_writeback.otp_image",
+                              cci::cci_value(otp_path));
+    cci::cci_get_global_broker(cci::cci_originator("rse_lcm_test"))
+        .set_preset_cci_value("rse_lcm_otp_writeback.otp_writeback",
+                              cci::cci_value(true));
+
+    rse_lcm dut("rse_lcm_otp_writeback");
+
+    write32(dut, OTP_WINDOW, 0xa5a55a5au);
+
+    EXPECT_EQ(read32(dut, OTP_WINDOW), 0xa5a55a5au);
+    EXPECT_EQ(read_file32(otp_path), 0xa5a55a5au);
+}
+
+TEST(RseLcmTest, OtpLocksAfterProvisioningCompletes)
+{
+    rse_lcm dut("rse_lcm_otp_lock");
+
+    write32(dut, OTP_WINDOW, 0x11112222u);
+    write32(dut, SP_ENABLE, 0x5ec10e1eu);
+    write32(dut, OTP_WINDOW, 0x33334444u);
+
+    EXPECT_EQ(read32(dut, SP_ENABLE), 0xffffffffu);
+    EXPECT_EQ(read32(dut, OTP_WINDOW), 0x11112222u);
 }
 
 TEST(RseLcmTest, RejectsOutOfRangeTransactions)

@@ -250,6 +250,10 @@ class PassRPC : public sc_core::sc_module, public transaction_forwarder_if<PASS>
         std::string m_shmem_fn;
         size_t m_shmem_size;
         uint64_t m_shmem_offset;
+        std::string m_file_path;
+        size_t m_file_size;
+        uint64_t m_file_offset;
+        uint64_t m_file_ptr_offset;
 
         uint64_t m_dmi_start_address;
         uint64_t m_dmi_end_address;
@@ -257,14 +261,35 @@ class PassRPC : public sc_core::sc_module, public transaction_forwarder_if<PASS>
         double m_dmi_read_latency;
         double m_dmi_write_latency;
 
-        MSGPACK_DEFINE_ARRAY(m_shmem_fn, m_shmem_size, m_shmem_offset, m_dmi_start_address, m_dmi_end_address,
-                             m_dmi_access, m_dmi_read_latency, m_dmi_write_latency);
+        MSGPACK_DEFINE_ARRAY(m_shmem_fn, m_shmem_size, m_shmem_offset, m_file_path, m_file_size, m_file_offset,
+                             m_file_ptr_offset, m_dmi_start_address, m_dmi_end_address, m_dmi_access,
+                             m_dmi_read_latency, m_dmi_write_latency);
 
         void from_tlm(tlm::tlm_dmi& other, ShmemIDExtension* shm)
         {
             m_shmem_fn = shm->m_memid;
             m_shmem_size = shm->m_size;
             m_shmem_offset = (uint64_t)(other.get_dmi_ptr()) - shm->m_mapped_addr;
+            m_file_path = "";
+            m_file_size = 0;
+            m_file_offset = 0;
+            m_file_ptr_offset = 0;
+            m_dmi_start_address = other.get_start_address();
+            m_dmi_end_address = other.get_end_address();
+            m_dmi_access = other.get_granted_access();
+            m_dmi_read_latency = other.get_read_latency().to_seconds();
+            m_dmi_write_latency = other.get_write_latency().to_seconds();
+        }
+
+        void from_tlm(tlm::tlm_dmi& other, FileDMIExtension* file)
+        {
+            m_shmem_fn = "";
+            m_shmem_size = 0;
+            m_shmem_offset = 0;
+            m_file_path = file->m_path;
+            m_file_size = file->m_size;
+            m_file_offset = file->m_offset;
+            m_file_ptr_offset = (uint64_t)(other.get_dmi_ptr()) - file->m_mapped_addr;
             m_dmi_start_address = other.get_start_address();
             m_dmi_end_address = other.get_end_address();
             m_dmi_access = other.get_granted_access();
@@ -274,8 +299,14 @@ class PassRPC : public sc_core::sc_module, public transaction_forwarder_if<PASS>
 
         void to_tlm(tlm::tlm_dmi& other)
         {
-            if (m_shmem_size == 0) return;
-            other.set_dmi_ptr(m_shmem_offset + MemoryServices::get().map_mem_join(m_shmem_fn, m_shmem_size));
+            if (m_shmem_size != 0) {
+                other.set_dmi_ptr(m_shmem_offset + MemoryServices::get().map_mem_join(m_shmem_fn, m_shmem_size));
+            } else if (m_file_size != 0 && !m_file_path.empty()) {
+                other.set_dmi_ptr(m_file_ptr_offset +
+                                  MemoryServices::get().map_file_join(m_file_path, m_file_size, m_file_offset));
+            } else {
+                return;
+            }
             other.set_start_address(m_dmi_start_address);
             other.set_end_address(m_dmi_end_address);
             other.set_granted_access((tlm::tlm_dmi::dmi_access_e)m_dmi_access);
@@ -806,7 +837,7 @@ private:
         t.from_tlm(trans);
         r = do_rpc_as<tlm_dmi_rpc>(do_rpc_call("dmi_req", id, t));
 
-        if (r.m_shmem_size == 0) {
+        if (r.m_shmem_size == 0 && r.m_file_size == 0) {
             SCP_DEBUG(()) << name() << "DMI OK, but no shared memory available?" << trans.get_address();
             return false;
         }
@@ -828,10 +859,17 @@ private:
         tlm::tlm_dmi dmi_data;
         tlm_dmi_rpc ret;
         ret.m_shmem_size = 0;
+        ret.m_file_size = 0;
         if (initiator_sockets[id]->get_direct_mem_ptr(trans, dmi_data)) {
             ShmemIDExtension* ext = trans.get_extension<ShmemIDExtension>();
-            if (!ext) return ret;
-            ret.from_tlm(dmi_data, ext);
+            if (ext) {
+                ret.from_tlm(dmi_data, ext);
+                return ret;
+            }
+            FileDMIExtension* file_ext = trans.get_extension<FileDMIExtension>();
+            if (file_ext) {
+                ret.from_tlm(dmi_data, file_ext);
+            }
         }
         return ret;
     }

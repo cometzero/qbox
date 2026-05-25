@@ -401,7 +401,9 @@ public:
 
     void init(const Object& owner, const char* name, uint64_t size);
     void init_io(Object owner, const char* name, uint64_t size, MemoryRegionOpsPtr ops);
-    void init_ram_ptr(Object owner, const char* name, uint64_t size, void* ptr, int fd = -1);
+    void init_ram_ptr(Object owner, const char* name, uint64_t size, void* ptr, int fd = -1,
+                      uint64_t fd_offset = 0);
+    void set_readonly(bool readonly);
     void init_alias(Object owner, const char* name, const MemoryRegion& root, uint64_t offset, uint64_t size);
 
     void add_subregion(MemoryRegion& mr, uint64_t offset);
@@ -686,6 +688,7 @@ public:
     bool loop_is_busy();
 
     bool can_run();
+    uint64_t get_run_state() const;
 
     void set_soft_stopped(bool stopped);
     void halt(bool halted);
@@ -697,6 +700,9 @@ public:
     void remove_sync();
 
     void register_thread();
+
+    uintptr_t get_pc() const;
+    uintptr_t get_mem_io_pc() const;
 
     Cpu set_as_current();
 

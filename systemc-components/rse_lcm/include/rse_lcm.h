@@ -5,6 +5,7 @@
 #pragma once
 
 #include <array>
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -35,6 +36,7 @@ class rse_lcm : public sc_core::sc_module
     static constexpr uint32_t OTP_WINDOW = 0x1000;
 
     std::array<uint8_t, REG_BYTES> m_regs{};
+    bool m_otp_locked = false;
     unsigned int m_trace_count = 0;
 
     static bool is_supported_length(unsigned int len)
@@ -52,6 +54,72 @@ class rse_lcm : public sc_core::sc_module
     void store32(uint32_t offset, uint32_t value)
     {
         std::memcpy(&m_regs[offset], &value, sizeof(value));
+    }
+
+    uint64_t otp_limit() const
+    {
+        const uint64_t configured_size = p_otp_size.get_value();
+        const uint64_t max_size = REG_BYTES - OTP_WINDOW;
+        return OTP_WINDOW + std::min(configured_size, max_size);
+    }
+
+    bool is_otp_access(uint64_t offset, unsigned int len) const
+    {
+        return offset >= OTP_WINDOW && offset + len <= otp_limit();
+    }
+
+    void flush_otp_image()
+    {
+        if (!p_otp_writeback.get_value()) {
+            return;
+        }
+
+        const std::string path = p_otp_image.get_value();
+        if (path.empty()) {
+            return;
+        }
+
+        const uint64_t bytes = otp_limit() - OTP_WINDOW;
+        const std::streamsize stream_bytes = static_cast<std::streamsize>(bytes);
+        std::fstream file(path, std::ios::in | std::ios::out | std::ios::binary);
+        if (!file) {
+            std::ofstream create(path, std::ios::binary);
+            if (!create) {
+                std::cerr << name() << " unable to create otp_image=" << path << std::endl;
+                return;
+            }
+            create.write(reinterpret_cast<const char*>(&m_regs[OTP_WINDOW]), stream_bytes);
+            if (!create) {
+                std::cerr << name() << " unable to write otp_image=" << path << std::endl;
+            }
+            return;
+        }
+
+        file.seekp(0, std::ios::beg);
+        if (!file) {
+            std::cerr << name() << " unable to seek otp_image=" << path << std::endl;
+            return;
+        }
+
+        file.write(reinterpret_cast<const char*>(&m_regs[OTP_WINDOW]), stream_bytes);
+        if (!file) {
+            std::cerr << name() << " unable to write otp_image=" << path << std::endl;
+        }
+    }
+
+    bool write_otp(uint64_t offset, const uint8_t* data, unsigned int len)
+    {
+        if (!is_otp_access(offset, len)) {
+            return false;
+        }
+
+        if (m_otp_locked) {
+            return true;
+        }
+
+        std::memcpy(&m_regs[offset], data, len);
+        flush_otp_image();
+        return true;
     }
 
     void load_otp_image()
@@ -73,6 +141,7 @@ class rse_lcm : public sc_core::sc_module
     void reset_registers()
     {
         m_regs.fill(0);
+        m_otp_locked = false;
 
         store32(LCS_VALUE, p_lcs.get_value());
         store32(KEY_ERR, 0x00000000);
@@ -103,6 +172,9 @@ class rse_lcm : public sc_core::sc_module
         case SP_ENABLE:
             if (value == 0x5ec10e1e) {
                 store32(SP_ENABLE, 0xffffffff);
+                if (p_otp_lock_after_provision.get_value()) {
+                    m_otp_locked = true;
+                }
             } else {
                 store32(SP_ENABLE, value);
             }
@@ -138,7 +210,9 @@ class rse_lcm : public sc_core::sc_module
         if (trans.get_command() == tlm::TLM_READ_COMMAND) {
             std::memcpy(data, &m_regs[offset], len);
         } else if (trans.get_command() == tlm::TLM_WRITE_COMMAND) {
-            if (len == sizeof(uint32_t) && (offset % sizeof(uint32_t)) == 0) {
+            if (write_otp(offset, data, len)) {
+                /* handled by OTP window semantics */
+            } else if (len == sizeof(uint32_t) && (offset % sizeof(uint32_t)) == 0) {
                 uint32_t value = 0;
                 std::memcpy(&value, data, sizeof(value));
                 write32(static_cast<uint32_t>(offset), value);
@@ -186,6 +260,8 @@ public:
     cci::cci_param<uint32_t> p_sp_enable;
     cci::cci_param<uint32_t> p_otp_size;
     cci::cci_param<uint32_t> p_gppc;
+    cci::cci_param<bool> p_otp_writeback;
+    cci::cci_param<bool> p_otp_lock_after_provision;
     tlm_utils::simple_target_socket<rse_lcm, DEFAULT_TLM_BUSWIDTH> target_socket;
 
     explicit rse_lcm(sc_core::sc_module_name name)
@@ -198,6 +274,8 @@ public:
         , p_sp_enable("sp_enable", 0x00000000)
         , p_otp_size("otp_size", 0x00010000)
         , p_gppc("gppc", 0x00000000)
+        , p_otp_writeback("otp_writeback", false)
+        , p_otp_lock_after_provision("otp_lock_after_provision", true)
         , target_socket("target_socket")
     {
         reset_registers();

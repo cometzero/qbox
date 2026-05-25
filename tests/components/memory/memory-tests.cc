@@ -7,8 +7,28 @@
 
 #include <systemc>
 
+#include <cstring>
+
 #include "memory-bench.h"
+#include <memory_services.h>
 #include <cci/utils/broker.h>
+
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
+
+namespace {
+int current_pid()
+{
+#ifdef _WIN32
+    return _getpid();
+#else
+    return getpid();
+#endif
+}
+} // namespace
 
 // Simple read into the memory
 TEST_BENCH(MemoryTestBench, SimpleWriteRead)
@@ -125,6 +145,53 @@ TEST_BENCH(MemoryTestBench, DmiWriteRead)
     /* Read with DMI */
     dmi_write_or_read(0, &data_read, sizeof(data), true);
     ASSERT_EQ(data, data_read);
+}
+
+TEST_BENCH(MemoryTestBench, RseRomLoadIsReadableAndRejectsWrites)
+{
+    uint8_t image[] = {0x10, 0x32, 0x54, 0x76};
+    uint8_t data = 0;
+
+    m_target.p_rom = true;
+    m_target.load.ptr_load(image, 0x20, sizeof(image));
+
+    ASSERT_EQ(m_initiator.do_read(0x22, data), tlm::TLM_OK_RESPONSE);
+    EXPECT_EQ(data, 0x54);
+
+    ASSERT_EQ(m_initiator.do_write<uint8_t>(0x22, 0xa5),
+              tlm::TLM_COMMAND_ERROR_RESPONSE);
+    ASSERT_EQ(m_initiator.do_read(0x22, data), tlm::TLM_OK_RESPONSE);
+    EXPECT_EQ(data, 0x54);
+}
+
+TEST_BENCH(MemoryTestBench, RseProvisioningBundleLoadsAtConfiguredOffset)
+{
+    uint8_t bundle[] = {0xde, 0xad, 0xbe, 0xef};
+    uint8_t data[sizeof(bundle)] = {};
+    tlm::tlm_generic_payload trans;
+
+    m_target.load.ptr_load(bundle, 0x80, sizeof(bundle));
+
+    ASSERT_EQ(m_initiator.do_read_with_txn_and_ptr(
+                  trans, 0x80, data, sizeof(data)),
+              tlm::TLM_OK_RESPONSE);
+    EXPECT_EQ(std::memcmp(data, bundle, sizeof(bundle)), 0);
+}
+
+TEST(MemoryServicesTest, SharedMemoryCreateReturnsFd)
+{
+#ifdef _WIN32
+    const std::string memname = "qbox-memory-services-test-" + std::to_string(current_pid());
+#else
+    const std::string memname = "/qbox-memory-services-test-" + std::to_string(current_pid());
+#endif
+    int fd = -1;
+
+    uint8_t* ptr = gs::MemoryServices::get().map_mem_create(memname, 4096, &fd);
+
+    ASSERT_NE(ptr, nullptr);
+    EXPECT_GE(fd, 0);
+    EXPECT_EQ(fd, gs::MemoryServices::get().get_shmem_fd(memname));
 }
 
 int sc_main(int argc, char* argv[])

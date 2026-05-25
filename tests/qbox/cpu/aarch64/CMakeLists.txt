@@ -1,5 +1,8 @@
 qbox_add_cpu_test(aarch64-simple-write-test 100 simple-write-test.cc)
 qbox_add_cpu_test(aarch64-dmi-test 100 dmi-test.cc)
+qbox_add_cpu_test(aarch64-dmi-byte-store-test 30 dmi-byte-store-test.cc)
+qbox_add_cpu_test(aarch64-shmem-dmi-byte-store-test 30 shmem-dmi-byte-store-test.cc)
+qbox_add_cpu_test(aarch64-shmem-dmi-external-write-test 30 shmem-dmi-external-write-test.cc)
 qbox_add_cpu_test(aarch64-dmi-test-concurrent-inval 100 dmi-test-concurrent-inval.cc)
 # Build assembly firmware for DMI reset test
 find_program(LLVM_MC llvm-mc HINTS /opt/homebrew/opt/llvm/bin)

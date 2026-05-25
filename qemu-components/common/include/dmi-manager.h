@@ -100,14 +100,18 @@ public:
     public:
         DmiRegion() = default;
 
-        DmiRegion(const tlm::tlm_dmi& info, int priority, qemu::LibQemu& inst, int fd = -1)
+        DmiRegion(const tlm::tlm_dmi& info, int priority, qemu::LibQemu& inst, int fd = -1,
+                  uint64_t fd_offset = 0)
             : m_ptr(info.get_dmi_ptr())
             , m_container(inst.object_new_unparented<QemuContainer>())
             , m_mr(inst.object_new_unparented<qemu::MemoryRegion>())
             , m_size(size_from_tlm_dmi(info))
         {
             //          This will parent the objects
-            m_mr.init_ram_ptr(m_container, "dmi", m_size, m_ptr, fd);
+            m_mr.init_ram_ptr(m_container, "dmi", m_size, m_ptr, fd, fd_offset);
+            if (!info.is_write_allowed()) {
+                m_mr.set_readonly(true);
+            }
             m_mr.set_priority(priority);
             SCP_INFO("DMI.Libqbox") << "Creating " << *this;
         }
@@ -229,7 +233,7 @@ public:
      * region container. They can overlap, hence we use the priority mechanism
      * provided by QEMU.
      */
-    void get_region(const tlm::tlm_dmi& info, int fd = -1)
+    void get_region(const tlm::tlm_dmi& info, int fd = -1, uint64_t fd_offset = 0)
     {
         DmiRegion::Key start = DmiRegion::key_from_tlm_dmi(info);
         uint64_t size = (info.get_end_address() - info.get_start_address()) + 1;
@@ -238,6 +242,7 @@ public:
         dmi.set_start_address(info.get_start_address());
         dmi.set_end_address(info.get_end_address());
         dmi.set_dmi_ptr(info.get_dmi_ptr());
+        dmi.set_granted_access(info.get_granted_access());
 
         std::lock_guard<std::mutex> lock(m_mutex);
 
@@ -252,7 +257,7 @@ public:
                 return; // Identical region exists
             }
         }
-        DmiRegion region = DmiRegion(dmi, 0, m_inst, fd);
+        DmiRegion region = DmiRegion(dmi, 0, m_inst, fd, fd_offset);
         m_root.add_subregion(region.get_mut_mr(), region.get_key());
 
         auto res = m_regions.emplace(region.get_key(), std::move(region));
@@ -280,9 +285,9 @@ public:
     /**
      * @brief Create a new alias for the DMI region designated by `info`
      */
-    DmiRegionAlias::Ptr get_new_region_alias(const tlm::tlm_dmi& info, int fd = -1)
+    DmiRegionAlias::Ptr get_new_region_alias(const tlm::tlm_dmi& info, int fd = -1, uint64_t fd_offset = 0)
     {
-        get_region(info, fd);
+        get_region(info, fd, fd_offset);
         return std::make_shared<DmiRegionAlias>(m_root, info, m_inst);
     }
 };

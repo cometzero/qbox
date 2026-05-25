@@ -21,6 +21,8 @@ bool Cpu::loop_is_busy() { return m_int->exports().cpu_loop_is_busy(m_obj); }
 
 bool Cpu::can_run() { return m_int->exports().cpu_can_run(m_obj); }
 
+uint64_t Cpu::get_run_state() const { return m_int->exports().cpu_get_run_state(m_obj); }
+
 void Cpu::set_soft_stopped(bool stopped) { m_int->exports().cpu_set_soft_stopped(m_obj, stopped); }
 
 void Cpu::halt(bool halted) { m_int->exports().cpu_halt(m_obj, halted); }
@@ -32,6 +34,10 @@ void Cpu::set_unplug(bool unplug) { m_int->exports().cpu_set_unplug(m_obj, unplu
 void Cpu::remove_sync() { m_int->exports().cpu_remove_sync(m_obj); }
 
 void Cpu::register_thread() { m_int->exports().cpu_register_thread(m_obj); }
+
+uintptr_t Cpu::get_pc() const { return m_int->exports().cpu_get_pc(m_obj); }
+
+uintptr_t Cpu::get_mem_io_pc() const { return m_int->exports().cpu_get_mem_io_pc(m_obj); }
 
 Cpu Cpu::set_as_current()
 {
@@ -67,7 +73,7 @@ void Cpu::async_safe_run(AsyncJobFn job)
 
 [[noreturn]] void Cpu::exit_loop_from_io()
 {
-    uintptr_t pc = m_int->exports().cpu_get_mem_io_pc(m_obj);
+    uintptr_t pc = get_mem_io_pc();
 
     auto cpu_loop_exit_noexc = m_int->exports().cpu_loop_exit_noexc;
 

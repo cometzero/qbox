@@ -10,6 +10,9 @@
 #define _LIBQBOX_COMPONENTS_CPU_CPU_H
 
 #include <sstream>
+#include <algorithm>
+#include <fstream>
+#include <iomanip>
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
@@ -21,6 +24,7 @@
 #include <cci_configuration>
 
 #include <libgssync.h>
+#include <libqemu-cxx/target/aarch64.h>
 
 #include "device.h"
 #include "ports/initiator.h"
@@ -82,6 +86,21 @@ protected:
     std::mutex m_async_work_mutex;
     std::condition_variable m_async_work_cv;
     static constexpr int ASYNC_WORK_TIMEOUT_MS = 500;
+
+    uint64_t m_pc_trace_seen = 0;
+    uint64_t m_pc_trace_emitted = 0;
+    std::ofstream m_pc_trace_stream;
+    std::mutex m_trace_lock;
+
+    uint64_t get_v7m_state(qemu::CpuArm::V7MStateField field) const
+    {
+        return qemu::CpuArm(m_cpu).get_v7m_state(field);
+    }
+
+    uint64_t get_aarch64_state(qemu::CpuArm::Aarch64StateField field) const
+    {
+        return qemu::CpuArm(m_cpu).get_aarch64_state(field);
+    }
 
     /*
      * Wrap @job so that m_async_work_outstanding is incremented before the
@@ -299,7 +318,7 @@ protected:
             }
         }
 
-        if (m_started) {
+        if (m_started && m_resetting == none) {
             m_cpu.set_soft_stopped(false);
         }
         /*
@@ -337,6 +356,7 @@ protected:
         int64_t now = m_inst.get().get_virtual_clock();
 
         m_cpu.set_soft_stopped(true);
+        trace_pc_sample(now);
 
         m_inst.get().unlock_iothread();
         if (m_finished) return;
@@ -390,8 +410,236 @@ protected:
         }
     }
 
+    void trace_pc_sample(int64_t vclock_now)
+    {
+        if (!p_trace_pc.get_value()) {
+            return;
+        }
+
+        const uint64_t interval = std::max<uint64_t>(1, p_trace_pc_interval.get_value());
+        ++m_pc_trace_seen;
+        if ((m_pc_trace_seen % interval) != 0) {
+            return;
+        }
+
+        const uint64_t limit = p_trace_pc_limit.get_value();
+        if (limit != 0 && m_pc_trace_emitted >= limit) {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(m_trace_lock);
+        std::ostream* out = &std::cerr;
+        const std::string trace_file = p_trace_pc_file.get_value();
+        if (!trace_file.empty()) {
+            if (!m_pc_trace_stream.is_open()) {
+                m_pc_trace_stream.open(trace_file, std::ios::out | std::ios::app);
+                if (!m_pc_trace_stream) {
+                    std::cerr << name() << " pc_trace_error file=" << trace_file << std::endl;
+                    return;
+                }
+            }
+            out = &m_pc_trace_stream;
+        }
+
+        ++m_pc_trace_emitted;
+        *out << name()
+             << " pc_trace sample=" << m_pc_trace_emitted
+             << " seen=" << m_pc_trace_seen
+             << " sc_time=" << sc_core::sc_time_stamp()
+             << " vclock_ns=" << vclock_now
+             << " pc=0x" << std::hex << m_cpu.get_pc()
+             << " mem_io_pc=0x" << m_cpu.get_mem_io_pc()
+             << " run_state=0x" << m_cpu.get_run_state()
+             << " power_state=" << std::dec << qemu::CpuArm(m_cpu).get_power_state();
+        if (p_trace_exception_state.get_value()) {
+            trace_exception_state(*out);
+        }
+        *out << std::endl;
+    }
+
+    const char* reset_state_name() const
+    {
+        switch (m_resetting) {
+        case none:
+            return "none";
+        case start_reset:
+            return "start_reset";
+        case hold_reset:
+            return "hold_reset";
+        case finish_reset:
+            return "finish_reset";
+        }
+
+        return "unknown";
+    }
+
+    void trace_reset_event(const char* event, bool value)
+    {
+        if (!p_trace_pc.get_value()) {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(m_trace_lock);
+        std::ostream* out = &std::cerr;
+        const std::string trace_file = p_trace_pc_file.get_value();
+        if (!trace_file.empty()) {
+            if (!m_pc_trace_stream.is_open()) {
+                m_pc_trace_stream.open(trace_file, std::ios::out | std::ios::app);
+                if (!m_pc_trace_stream) {
+                    std::cerr << name() << " reset_trace_error file=" << trace_file << std::endl;
+                    return;
+                }
+            }
+            out = &m_pc_trace_stream;
+        }
+
+        *out << name()
+             << " reset_trace event=" << event
+             << " value=" << (value ? 1 : 0)
+             << " state=" << reset_state_name()
+             << " started=" << (m_started ? 1 : 0)
+             << " finished=" << (m_finished ? 1 : 0)
+             << " sc_time=" << sc_core::sc_time_stamp()
+             << " vclock_ns=" << m_inst.get().get_virtual_clock()
+             << " run_state=0x" << std::hex << m_cpu.get_run_state()
+             << " power_state=" << std::dec << qemu::CpuArm(m_cpu).get_power_state()
+             << std::endl;
+    }
+
+    void trace_reset_code(const char* event, int code)
+    {
+        if (!p_trace_pc.get_value()) {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(m_trace_lock);
+        std::ostream* out = &std::cerr;
+        const std::string trace_file = p_trace_pc_file.get_value();
+        if (!trace_file.empty()) {
+            if (!m_pc_trace_stream.is_open()) {
+                m_pc_trace_stream.open(trace_file, std::ios::out | std::ios::app);
+                if (!m_pc_trace_stream) {
+                    std::cerr << name() << " reset_trace_error file=" << trace_file << std::endl;
+                    return;
+                }
+            }
+            out = &m_pc_trace_stream;
+        }
+
+        *out << name()
+             << " reset_trace event=" << event
+             << " code=" << code
+             << " state=" << reset_state_name()
+             << " started=" << (m_started ? 1 : 0)
+             << " finished=" << (m_finished ? 1 : 0)
+             << " sc_time=" << sc_core::sc_time_stamp()
+             << " vclock_ns=" << m_inst.get().get_virtual_clock()
+             << " run_state=0x" << std::hex << m_cpu.get_run_state()
+             << " power_state=" << std::dec << qemu::CpuArm(m_cpu).get_power_state()
+             << std::endl;
+    }
+
+    void trace_exception_state(std::ostream& out)
+    {
+        using A64Field = qemu::CpuArm::Aarch64StateField;
+        if (get_aarch64_state(A64Field::IS_A64)) {
+            const auto a64_hex = [this, &out](const char* key, A64Field field) {
+                out << " " << key << "=0x" << std::hex << get_aarch64_state(field) << std::dec;
+            };
+            const auto a64_dec = [this, &out](const char* key, A64Field field) {
+                out << " " << key << "=" << std::dec << get_aarch64_state(field);
+            };
+
+            a64_dec("aarch64", A64Field::IS_A64);
+            a64_dec("el", A64Field::CURRENT_EL);
+            a64_dec("cpu_exception_index", A64Field::CPU_EXCEPTION_INDEX);
+            a64_hex("pstate", A64Field::PSTATE);
+            a64_hex("sp", A64Field::SP);
+            a64_hex("sp_el0", A64Field::SP_EL0);
+            a64_hex("sp_el3", A64Field::SP_EL3);
+            a64_hex("lr", A64Field::LR);
+            a64_hex("x29", A64Field::X29);
+            a64_hex("syndrome", A64Field::EXCEPTION_SYNDROME);
+            a64_hex("vaddr", A64Field::EXCEPTION_VADDRESS);
+            a64_hex("esr_el3", A64Field::ESR_EL3);
+            a64_hex("far_el3", A64Field::FAR_EL3);
+            a64_hex("elr_el3", A64Field::ELR_EL3);
+            a64_hex("x0", A64Field::X0);
+            a64_hex("x1", A64Field::X1);
+            a64_hex("x2", A64Field::X2);
+            a64_hex("x3", A64Field::X3);
+            a64_hex("x4", A64Field::X4);
+            a64_hex("x5", A64Field::X5);
+            a64_hex("x6", A64Field::X6);
+            a64_hex("x7", A64Field::X7);
+            return;
+        }
+
+        using Field = qemu::CpuArm::V7MStateField;
+        const auto hex_field = [this, &out](const char* key, Field field) {
+            out << " " << key << "=0x" << std::hex << get_v7m_state(field) << std::dec;
+        };
+        const auto dec_field = [this, &out](const char* key, Field field) {
+            out << " " << key << "=" << std::dec << get_v7m_state(field);
+        };
+
+        hex_field("xpsr", Field::XPSR);
+        dec_field("exception", Field::EXCEPTION);
+        dec_field("cpu_exception_index", Field::CPU_EXCEPTION_INDEX);
+        dec_field("secure", Field::SECURE);
+        hex_field("sp", Field::SP);
+        hex_field("lr", Field::LR);
+        hex_field("r0", Field::R0);
+        hex_field("r1", Field::R1);
+        hex_field("r2", Field::R2);
+        hex_field("r3", Field::R3);
+        hex_field("r4", Field::R4);
+        hex_field("r5", Field::R5);
+        hex_field("r6", Field::R6);
+        hex_field("r7", Field::R7);
+        hex_field("r8", Field::R8);
+        hex_field("r9", Field::R9);
+        hex_field("r10", Field::R10);
+        hex_field("r11", Field::R11);
+        hex_field("r12", Field::R12);
+        hex_field("cfsr_ns", Field::CFSR_NS);
+        hex_field("cfsr_s", Field::CFSR_S);
+        hex_field("hfsr", Field::HFSR);
+        hex_field("dfsr", Field::DFSR);
+        hex_field("sfsr", Field::SFSR);
+        hex_field("mmfar_ns", Field::MMFAR_NS);
+        hex_field("mmfar_s", Field::MMFAR_S);
+        hex_field("bfar", Field::BFAR);
+        hex_field("sfar", Field::SFAR);
+        hex_field("aircr", Field::AIRCR);
+        hex_field("vtor_ns", Field::VTOR_NS);
+        hex_field("vtor_s", Field::VTOR_S);
+        hex_field("control_ns", Field::CONTROL_NS);
+        hex_field("control_s", Field::CONTROL_S);
+        hex_field("primask_ns", Field::PRIMASK_NS);
+        hex_field("primask_s", Field::PRIMASK_S);
+        hex_field("faultmask_ns", Field::FAULTMASK_NS);
+        hex_field("faultmask_s", Field::FAULTMASK_S);
+        hex_field("basepri_ns", Field::BASEPRI_NS);
+        hex_field("basepri_s", Field::BASEPRI_S);
+        hex_field("other_sp", Field::OTHER_SP);
+        hex_field("other_ss_msp", Field::OTHER_SS_MSP);
+        hex_field("other_ss_psp", Field::OTHER_SS_PSP);
+        hex_field("msplim_ns", Field::MSPLIM_NS);
+        hex_field("msplim_s", Field::MSPLIM_S);
+        hex_field("psplim_ns", Field::PSPLIM_NS);
+        hex_field("psplim_s", Field::PSPLIM_S);
+    }
+
 public:
     cci::cci_param<unsigned int> p_gdb_port;
+    cci::cci_param<bool> p_trace_pc;
+    cci::cci_param<bool> p_trace_exception_state;
+    cci::cci_param<uint64_t> p_trace_pc_interval;
+    cci::cci_param<uint64_t> p_trace_pc_limit;
+    cci::cci_param<std::string> p_trace_pc_file;
+    cci::cci_param<bool> p_start_in_reset;
+    cci::cci_param<bool> p_reset_power_on;
 
     /* The default memory socket. Mapped to the default CPU address space in QEMU */
     QemuInitiatorSocket<> socket;
@@ -405,6 +653,14 @@ public:
         , m_qemu_kick_ev(false)
         , m_signaled(false)
         , p_gdb_port("gdb_port", 0, "Wait for gdb connection on TCP port <gdb_port>")
+        , p_trace_pc("trace_pc", false, "Emit lightweight PC samples at CPU loop sync points")
+        , p_trace_exception_state("trace_exception_state", false,
+                                  "Include Arm M-profile exception state in PC samples")
+        , p_trace_pc_interval("trace_pc_interval", 1, "Emit one PC sample every N CPU loop sync points")
+        , p_trace_pc_limit("trace_pc_limit", 0, "Maximum PC samples to emit; 0 means unlimited")
+        , p_trace_pc_file("trace_pc_file", "", "Optional file path for PC samples")
+        , p_start_in_reset("start_in_reset", false, "Hold the CPU in reset when simulation starts")
+        , p_reset_power_on("reset_power_on", false, "Set Arm PSCI power state to ON when reset is released")
         , socket("mem", *this, inst)
     {
         using namespace std::placeholders;
@@ -562,33 +818,95 @@ public:
     {
         /* Assume this is on the SystemC thread, so no race condition issues */
         if (m_finished) return;
+        trace_reset_event("reset-cb-enter", val);
 
         if (val) {
-            if (m_resetting != none) return; // dont double reset!
+            if (m_resetting != none) {
+                trace_reset_event("reset-cb-assert-ignored", val);
+                return; // dont double reset!
+            }
             SCP_WARN(())("Start reset");
             m_resetting = start_reset;
+            trace_reset_event("reset-cb-assert-start", val);
             m_cpu.async_safe_run(make_tracked_async_job([this] {
                 m_cpu.reset(true);
                 m_resetting = hold_reset;
                 m_start_reset_done_ev.async_notify();
             })); // start the reset (which will pause the CPU)
         } else {
-            if (m_resetting == none) return; // dont finish a finished reset!
+            if (m_resetting == none) {
+                trace_reset_event("reset-cb-release-ignored", val);
+                return; // dont finish a finished reset!
+            }
             while (m_resetting == start_reset) {
                 SCP_WARN(())("Hold reset");
+                trace_reset_event("reset-cb-release-wait-start", val);
                 sc_core::wait(m_start_reset_done_ev);
+                trace_reset_event("reset-cb-release-wait-done", val);
             }
             m_inst.get().lock_iothread();
             socket.reset(); // remove DMI's (needs BQL for memory region updates)
             m_inst.get().unlock_iothread();
+            m_resetting = finish_reset;
+            trace_reset_event("reset-cb-release-start", val);
+            if (p_start_in_reset.get_value()) {
+                const bool reset_power_on = p_reset_power_on.get_value();
+
+                m_qk->start();
+                m_qk->reset();
+                m_resetting = none;
+                m_cpu.async_safe_run(make_tracked_async_job([this, reset_power_on] {
+                    trace_reset_event("reset-cb-release-async-start", false);
+                    if (reset_power_on) {
+                        qemu::CpuArm(m_cpu).set_power_state(true);
+                        trace_reset_event("reset-cb-release-async-set-power-on-before-reset", false);
+                    }
+                    m_cpu.reset(false);
+                    trace_reset_event("reset-cb-release-async-after-reset-false", false);
+                    if (reset_power_on) {
+                        qemu::CpuArm(m_cpu).set_power_state(true);
+                        trace_reset_event("reset-cb-release-async-after-set-power-on", false);
+                    }
+                    m_cpu.set_soft_stopped(false);
+                    rearm_deadline_timer();
+                    m_cpu.kick();
+                    m_qemu_kick_ev.async_notify();
+                    trace_reset_event("reset-cb-release-async-after-kick", false);
+                }));
+                m_qemu_kick_ev.async_notify();
+                trace_reset_event("reset-cb-release-queued", val);
+                return;
+            }
+            if (p_reset_power_on.get_value()) {
+                m_inst.get().lock_iothread();
+                const int power_rc = qemu::CpuArm(m_cpu).power_on_and_reset();
+                m_inst.get().unlock_iothread();
+                trace_reset_code("reset-cb-power-on-and-reset", power_rc);
+            }
             m_cpu.reset(false); // call the end-of-reset (which will unpause the CPU)
+            trace_reset_event("reset-cb-after-reset-false", val);
+            if (p_reset_power_on.get_value()) {
+                m_inst.get().lock_iothread();
+                qemu::CpuArm(m_cpu).set_power_state(true);
+                m_inst.get().unlock_iothread();
+                trace_reset_event("reset-cb-after-set-power-on", val);
+            }
             m_qk->start();      // restart the QK if it's stopped
             m_qk->reset();
-            m_qemu_kick_ev.async_notify(); // notify the other thread so that the CPU is allowed to continue
-            SCP_WARN(())("Finished reset");
             m_resetting = none;
+            m_inst.get().lock_iothread();
+            m_cpu.set_soft_stopped(false);
+            rearm_deadline_timer();
+            m_cpu.kick();
+            m_inst.get().unlock_iothread();
+            trace_reset_event("reset-cb-after-kick", val);
+            m_qemu_kick_ev.notify(sc_core::SC_ZERO_TIME);
+            trace_reset_event("reset-cb-after-kick-notify", val);
+            SCP_WARN(())("Finished reset");
+            trace_reset_event("reset-cb-release-done", val);
         }
-        m_qemu_kick_ev.async_notify(); // notify the other thread so that the CPU is allowed to process if required
+        m_qemu_kick_ev.notify(sc_core::SC_ZERO_TIME);
+        trace_reset_event("reset-cb-after-final-notify", val);
     }
     virtual void end_of_elaboration() override
     {
@@ -607,6 +925,13 @@ public:
         m_quantum_ns = int64_t(tlm_utils::tlm_quantumkeeper::get_global_quantum().to_seconds() * 1e9);
 
         QemuDevice::start_of_simulation();
+        const bool start_in_reset = p_start_in_reset.get_value();
+        if (start_in_reset) {
+            m_cpu.reset(true);
+            m_resetting = hold_reset;
+            trace_reset_event("start-of-simulation-hold-reset", true);
+        }
+
         if (m_inst.get_tcg_mode() == QemuInstance::TCG_SINGLE) {
             if (m_inst.can_run()) {
                 m_qk->start();
@@ -635,19 +960,22 @@ public:
              */
             m_qk->start();
 
-            /* Prepare the CPU for its first run and release it
-             * Hold BQL to synchronize with the vCPU thread's idle-wait loop
-             * in qemu_process_cpu_events(). That loop checks cpu_thread_is_idle()
-             * (which reads soft_stopped) under BQL, then enters
-             * qemu_cond_wait(halt_cond, &bql) which atomically releases BQL.
-             * Without BQL here, the kick (broadcast on halt_cond) can be lost
-             * if the vCPU thread is between the idle check and the cond_wait.
-             */
-            m_inst.get().lock_iothread();
-            m_cpu.set_soft_stopped(false);
-            rearm_deadline_timer();
-            m_cpu.kick();
-            m_inst.get().unlock_iothread();
+            if (!start_in_reset) {
+                trace_reset_event("start-of-simulation-release", false);
+                /* Prepare the CPU for its first run and release it
+                 * Hold BQL to synchronize with the vCPU thread's idle-wait loop
+                 * in qemu_process_cpu_events(). That loop checks cpu_thread_is_idle()
+                 * (which reads soft_stopped) under BQL, then enters
+                 * qemu_cond_wait(halt_cond, &bql) which atomically releases BQL.
+                 * Without BQL here, the kick (broadcast on halt_cond) can be lost
+                 * if the vCPU thread is between the idle check and the cond_wait.
+                 */
+                m_inst.get().lock_iothread();
+                m_cpu.set_soft_stopped(false);
+                rearm_deadline_timer();
+                m_cpu.kick();
+                m_inst.get().unlock_iothread();
+            }
         }
 
         // Have not managed to figure out the root cause of the issue, but the

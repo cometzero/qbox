@@ -56,5 +56,43 @@ public:
 
     bool empty() { return m_size == 0; }
 };
+
+class FileDMIExtension : public tlm::tlm_extension<FileDMIExtension>
+{
+public:
+    std::string m_path;
+    uint64_t m_mapped_addr;
+    uint64_t m_size;
+    uint64_t m_offset;
+
+    FileDMIExtension(): m_mapped_addr(0), m_size(0), m_offset(0) {}
+    FileDMIExtension(const FileDMIExtension&) = default;
+    FileDMIExtension(const std::string& path, uint64_t addr, uint64_t size, uint64_t offset)
+        : m_path(path), m_mapped_addr(addr), m_size(size), m_offset(offset)
+    {
+        SCP_DEBUG("FileDMIExtension") << "FileDMIExtension constructor";
+    }
+
+    FileDMIExtension& operator=(FileDMIExtension o)
+    {
+        m_path.assign(o.m_path);
+        m_mapped_addr = o.m_mapped_addr;
+        m_size = o.m_size;
+        m_offset = o.m_offset;
+        return *this;
+    }
+
+    virtual tlm_extension_base* clone() const override { return const_cast<FileDMIExtension*>(this); }
+
+    virtual void copy_from(const tlm_extension_base& ext) override
+    {
+        const FileDMIExtension& other = static_cast<const FileDMIExtension&>(ext);
+        *this = other;
+    }
+
+    virtual void free() override { return; }
+
+    bool empty() { return m_size == 0 || m_path.empty(); }
+};
 } // namespace gs
 #endif

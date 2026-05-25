@@ -10,6 +10,7 @@
 #include <cstring>
 #include <iomanip>
 #include <iostream>
+#include <string>
 
 #include <cci_configuration>
 #include <module_factory_registery.h>
@@ -23,18 +24,36 @@ class dma350 : public sc_core::sc_module
 {
     static constexpr uint64_t REG_BYTES = 0x2000;
     static constexpr uint32_t DMASECINFO = 0xfb0;
+    static constexpr uint32_t DMAINFO_IIDR = 0xfc8;
+    static constexpr uint32_t DMAINFO_AIDR = 0xfcc;
     static constexpr uint32_t CH_BASE = 0x1000;
     static constexpr uint32_t CH_STRIDE = 0x100;
     static constexpr uint32_t CH_CMD = 0x000;
+    static constexpr uint32_t CH_STATUS = 0x004;
+    static constexpr uint32_t CH_INTREN = 0x008;
     static constexpr uint32_t CH_CTRL = 0x00c;
+    static constexpr uint32_t CH_SRCADDR = 0x010;
+    static constexpr uint32_t CH_SRCADDRHI = 0x014;
     static constexpr uint32_t CH_DESADDR = 0x018;
+    static constexpr uint32_t CH_DESADDRHI = 0x01c;
     static constexpr uint32_t CH_XSIZE = 0x020;
+    static constexpr uint32_t CH_XSIZEHI = 0x024;
+    static constexpr uint32_t CH_SRCTRANSCFG = 0x028;
     static constexpr uint32_t CH_DESTRANSCFG = 0x02c;
     static constexpr uint32_t CH_XADDRINC = 0x030;
     static constexpr uint32_t CH_FILLVAL = 0x038;
 
     static constexpr uint32_t CH_CMD_ENABLE = 0x00000001;
+    static constexpr uint32_t CH_STATUS_INTR_DONE = 1u << 0;
+    static constexpr uint32_t CH_STATUS_INTR_ERR = 1u << 1;
+    static constexpr uint32_t CH_STATUS_STAT_DONE = 1u << 16;
+    static constexpr uint32_t CH_STATUS_STAT_ERR = 1u << 17;
+    static constexpr uint32_t CH_CTRL_XTYPE_SHIFT = 9;
+    static constexpr uint32_t CH_CTRL_XTYPE_MASK = 0x7u << CH_CTRL_XTYPE_SHIFT;
+    static constexpr uint32_t CH_CTRL_XTYPE_CONTINUE = 0x1u;
+    static constexpr uint32_t CH_CTRL_XTYPE_FILL = 0x3u;
     static constexpr unsigned int FILL_CHUNK_BYTES = 256;
+    static constexpr unsigned int COPY_CHUNK_BYTES = 1024;
 
     std::array<uint8_t, REG_BYTES> m_regs{};
     unsigned int m_trace_count = 0;
@@ -63,8 +82,31 @@ class dma350 : public sc_core::sc_module
     {
         m_regs.fill(0);
         store32(DMASECINFO, 0x00000030); /* four DMA channels: ((value >> 4) & 0xf) + 1 */
+        store32(DMAINFO_IIDR, 0x3a00043b); /* Arm DMA350 r0p0 */
+        store32(DMAINFO_AIDR, 0x00000000);
         store32(CH_BASE + CH_CTRL, 0x00200200);
         store32(CH_BASE + CH_DESTRANSCFG, 0x000f0400);
+    }
+
+    bool mem_read(uint64_t address, uint8_t* data, unsigned int len, sc_core::sc_time& delay)
+    {
+        if (initiator_socket.size() == 0) {
+            return false;
+        }
+
+        tlm::tlm_generic_payload trans;
+
+        trans.set_command(tlm::TLM_READ_COMMAND);
+        trans.set_address(address);
+        trans.set_data_ptr(data);
+        trans.set_data_length(len);
+        trans.set_streaming_width(len);
+        trans.set_byte_enable_ptr(nullptr);
+        trans.set_byte_enable_length(0);
+        trans.set_dmi_allowed(false);
+
+        initiator_socket->b_transport(trans, delay);
+        return trans.is_response_ok();
     }
 
     bool mem_write(uint64_t address, const uint8_t* data, unsigned int len, sc_core::sc_time& delay)
@@ -86,6 +128,34 @@ class dma350 : public sc_core::sc_module
 
         initiator_socket->b_transport(trans, delay);
         return trans.is_response_ok();
+    }
+
+    static int16_t sign_extend16(uint32_t value)
+    {
+        return static_cast<int16_t>(value & 0xffffu);
+    }
+
+    static unsigned int transfer_bytes_from_ctrl(uint32_t ctrl)
+    {
+        return 1u << (ctrl & 0x7u);
+    }
+
+    uint64_t channel_address(uint32_t channel_base, uint32_t low_offset) const
+    {
+        return load32(channel_base + low_offset) |
+               (static_cast<uint64_t>(load32(channel_base + low_offset + sizeof(uint32_t))) << 32);
+    }
+
+    uint32_t source_xsize(uint32_t channel_base) const
+    {
+        return (load32(channel_base + CH_XSIZE) & 0xffffu) |
+               ((load32(channel_base + CH_XSIZEHI) & 0xffffu) << 16);
+    }
+
+    uint32_t dest_xsize(uint32_t channel_base) const
+    {
+        return ((load32(channel_base + CH_XSIZE) >> 16) & 0xffffu) |
+               (((load32(channel_base + CH_XSIZEHI) >> 16) & 0xffffu) << 16);
     }
 
     template <size_t N>
@@ -138,6 +208,103 @@ class dma350 : public sc_core::sc_module
         return true;
     }
 
+    bool execute_copy(uint32_t channel_base, sc_core::sc_time& delay)
+    {
+        const uint64_t source_start = channel_address(channel_base, CH_SRCADDR);
+        const uint64_t dest_start = channel_address(channel_base, CH_DESADDR);
+        const uint32_t transfer_count = std::min(source_xsize(channel_base), dest_xsize(channel_base));
+        const uint32_t xaddrinc = load32(channel_base + CH_XADDRINC);
+        const int16_t source_inc = sign_extend16(xaddrinc);
+        const int16_t dest_inc = sign_extend16(xaddrinc >> 16);
+        const unsigned int transfer_bytes = transfer_bytes_from_ctrl(load32(channel_base + CH_CTRL));
+
+        if (transfer_count == 0) {
+            trace_copy(channel_base, source_start, dest_start, 0, true);
+            return true;
+        }
+
+        if (source_inc == 1 && dest_inc == 1) {
+            std::array<uint8_t, COPY_CHUNK_BYTES> chunk{};
+            uint64_t source = source_start;
+            uint64_t dest = dest_start;
+            uint64_t bytes_remaining = static_cast<uint64_t>(transfer_count) * transfer_bytes;
+            const uint64_t bytes_total = bytes_remaining;
+
+            while (bytes_remaining != 0) {
+                const auto len = static_cast<unsigned int>(
+                    std::min<uint64_t>(bytes_remaining, chunk.size()));
+                if (!mem_read(source, chunk.data(), len, delay) ||
+                    !mem_write(dest, chunk.data(), len, delay)) {
+                    trace_copy(channel_base, source_start, dest_start, bytes_total, false);
+                    return false;
+                }
+
+                source += len;
+                dest += len;
+                bytes_remaining -= len;
+            }
+
+            trace_copy(channel_base, source_start, dest_start, bytes_total, true);
+            return true;
+        }
+
+        std::array<uint8_t, 128> transfer{};
+        int64_t source = static_cast<int64_t>(source_start);
+        int64_t dest = static_cast<int64_t>(dest_start);
+        for (uint32_t i = 0; i < transfer_count; ++i) {
+            if (!mem_read(static_cast<uint64_t>(source), transfer.data(), transfer_bytes, delay) ||
+                !mem_write(static_cast<uint64_t>(dest), transfer.data(), transfer_bytes, delay)) {
+                trace_copy(channel_base, source_start, dest_start,
+                           static_cast<uint64_t>(transfer_count) * transfer_bytes, false);
+                return false;
+            }
+
+            source += static_cast<int64_t>(source_inc) * static_cast<int64_t>(transfer_bytes);
+            dest += static_cast<int64_t>(dest_inc) * static_cast<int64_t>(transfer_bytes);
+        }
+
+        trace_copy(channel_base, source_start, dest_start,
+                   static_cast<uint64_t>(transfer_count) * transfer_bytes, true);
+        return true;
+    }
+
+    bool execute_channel(uint32_t channel_base, sc_core::sc_time& delay)
+    {
+        const uint32_t xtype =
+            (load32(channel_base + CH_CTRL) & CH_CTRL_XTYPE_MASK) >> CH_CTRL_XTYPE_SHIFT;
+
+        if (xtype == CH_CTRL_XTYPE_FILL) {
+            return execute_fill(channel_base, delay);
+        }
+
+        return execute_copy(channel_base, delay);
+    }
+
+    void complete_channel(uint32_t channel_base, bool ok)
+    {
+        const uint32_t intren = load32(channel_base + CH_INTREN);
+        uint32_t status = 0;
+
+        if (ok) {
+            status = CH_STATUS_STAT_DONE;
+            if (intren & CH_STATUS_INTR_DONE) {
+                status |= CH_STATUS_INTR_DONE;
+            }
+        } else {
+            status = CH_STATUS_STAT_ERR;
+            if (intren & CH_STATUS_INTR_ERR) {
+                status |= CH_STATUS_INTR_ERR;
+            }
+        }
+
+        store32(channel_base + CH_STATUS, status);
+    }
+
+    void clear_channel_status(uint32_t channel_base, uint32_t value)
+    {
+        store32(channel_base + CH_STATUS, load32(channel_base + CH_STATUS) & ~value);
+    }
+
     bool execute_strided_fill(uint64_t dest, uint32_t transfer_count, int16_t dest_inc,
                               uint32_t fill_value, sc_core::sc_time& delay)
     {
@@ -160,6 +327,12 @@ class dma350 : public sc_core::sc_module
     {
         if (offset >= CH_BASE && offset < REG_BYTES) {
             const uint32_t ch_offset = (offset - CH_BASE) % CH_STRIDE;
+            const uint32_t channel_base = offset - ch_offset;
+            if (ch_offset == CH_STATUS) {
+                clear_channel_status(channel_base, value);
+                return;
+            }
+
             if (ch_offset == CH_CMD) {
                 /*
                  * BL1_1 polls STOP, CLEAR, and ENABLE commands until hardware
@@ -167,7 +340,8 @@ class dma350 : public sc_core::sc_module
                  * immediately.
                  */
                 if (execute_side_effects && (value & CH_CMD_ENABLE) != 0) {
-                    execute_fill(offset - ch_offset, delay);
+                    store32(channel_base + CH_STATUS, 0x00000000);
+                    complete_channel(channel_base, execute_channel(channel_base, delay));
                 }
                 store32(offset, 0x00000000);
                 return;
@@ -210,7 +384,9 @@ class dma350 : public sc_core::sc_module
 
     void trace_access(tlm::tlm_generic_payload& trans, uint64_t offset, unsigned int len)
     {
-        if (!p_trace.get_value() || m_trace_count >= p_trace_limit.get_value()) {
+        if (!p_trace.get_value() ||
+            m_trace_count >= p_trace_limit.get_value() ||
+            !trace_access_filter_matches(offset)) {
             return;
         }
 
@@ -230,7 +406,7 @@ class dma350 : public sc_core::sc_module
 
     void trace_fill(uint32_t channel_base, uint64_t dest, uint64_t bytes, bool ok)
     {
-        if (!p_trace.get_value() || m_trace_count >= p_trace_limit.get_value()) {
+        if (!trace_operation_filter_matches(channel_base, false)) {
             return;
         }
 
@@ -243,9 +419,131 @@ class dma350 : public sc_core::sc_module
                   << std::dec << std::endl;
     }
 
+    void trace_copy(uint32_t channel_base, uint64_t source, uint64_t dest, uint64_t bytes, bool ok)
+    {
+        if (!trace_operation_filter_matches(channel_base, true)) {
+            return;
+        }
+
+        ++m_trace_count;
+        std::cerr << name() << " copy"
+                  << " channel=0x" << std::hex << ((channel_base - CH_BASE) / CH_STRIDE)
+                  << " source=0x" << source
+                  << " dest=0x" << dest
+                  << " bytes=0x" << bytes
+                  << " status=" << (ok ? "ok" : "error")
+                  << std::dec << std::endl;
+    }
+
+    bool trace_access_filter_matches(uint64_t offset) const
+    {
+        const auto filter = p_trace_filter.get_value();
+
+        if (filter == "operation") {
+            return false;
+        }
+
+        if (offset < CH_BASE || offset >= REG_BYTES) {
+            return p_trace_address_min.get_value() == 0 &&
+                   (filter.empty() || filter == "all");
+        }
+
+        const uint32_t channel_base = static_cast<uint32_t>(
+            CH_BASE + (((offset - CH_BASE) / CH_STRIDE) * CH_STRIDE));
+        const uint32_t channel_offset = static_cast<uint32_t>((offset - CH_BASE) % CH_STRIDE);
+
+        if (!trace_address_matches(channel_base)) {
+            return false;
+        }
+
+        if (filter.empty() || filter == "all") {
+            return true;
+        }
+
+        if (filter == "copy") {
+            return is_copy_trace_offset(channel_offset);
+        }
+
+        if (filter == "fill") {
+            return is_fill_trace_offset(channel_offset);
+        }
+
+        return false;
+    }
+
+    bool trace_operation_filter_matches(uint32_t channel_base, bool copy) const
+    {
+        if (!p_trace.get_value() ||
+            m_trace_count >= p_trace_limit.get_value() ||
+            !trace_address_matches(channel_base)) {
+            return false;
+        }
+
+        const auto filter = p_trace_filter.get_value();
+        if (filter.empty() || filter == "all" || filter == "operation") {
+            return true;
+        }
+
+        return copy ? filter == "copy" : filter == "fill";
+    }
+
+    bool trace_address_matches(uint32_t channel_base) const
+    {
+        const auto min_address = p_trace_address_min.get_value();
+
+        if (min_address == 0) {
+            return true;
+        }
+
+        return channel_address(channel_base, CH_SRCADDR) >= min_address ||
+               channel_address(channel_base, CH_DESADDR) >= min_address;
+    }
+
+    static bool is_copy_trace_offset(uint32_t channel_offset)
+    {
+        switch (channel_offset) {
+        case CH_CMD:
+        case CH_STATUS:
+        case CH_CTRL:
+        case CH_SRCADDR:
+        case CH_SRCADDRHI:
+        case CH_DESADDR:
+        case CH_DESADDRHI:
+        case CH_XSIZE:
+        case CH_XSIZEHI:
+        case CH_SRCTRANSCFG:
+        case CH_DESTRANSCFG:
+        case CH_XADDRINC:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    static bool is_fill_trace_offset(uint32_t channel_offset)
+    {
+        switch (channel_offset) {
+        case CH_CMD:
+        case CH_STATUS:
+        case CH_CTRL:
+        case CH_DESADDR:
+        case CH_DESADDRHI:
+        case CH_XSIZE:
+        case CH_XSIZEHI:
+        case CH_DESTRANSCFG:
+        case CH_XADDRINC:
+        case CH_FILLVAL:
+            return true;
+        default:
+            return false;
+        }
+    }
+
 public:
     cci::cci_param<bool> p_trace;
     cci::cci_param<unsigned int> p_trace_limit;
+    cci::cci_param<std::string> p_trace_filter;
+    cci::cci_param<uint64_t> p_trace_address_min;
     initiator_socket_type initiator_socket;
     tlm_utils::simple_target_socket<dma350, DEFAULT_TLM_BUSWIDTH> target_socket;
 
@@ -253,6 +551,8 @@ public:
         : sc_core::sc_module(name)
         , p_trace("trace", false)
         , p_trace_limit("trace_limit", 64)
+        , p_trace_filter("trace_filter", "all")
+        , p_trace_address_min("trace_address_min", 0)
         , initiator_socket("initiator_socket")
         , target_socket("target_socket")
     {

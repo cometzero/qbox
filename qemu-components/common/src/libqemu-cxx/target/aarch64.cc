@@ -23,6 +23,22 @@ uint64_t CpuArm::get_exclusive_val() const { return m_int->exports().cpu_arm_get
 
 void CpuArm::set_exclusive_val(uint64_t val) { m_int->exports().cpu_arm_set_exclusive_val(m_obj, val); }
 
+void CpuArm::set_power_state(bool powered_on) { m_int->exports().cpu_arm_set_power_state(m_obj, powered_on); }
+
+int CpuArm::get_power_state() const { return m_int->exports().cpu_arm_get_power_state(m_obj); }
+
+int CpuArm::power_on_and_reset() { return m_int->exports().cpu_arm_power_on_and_reset(m_obj); }
+
+uint64_t CpuArm::get_v7m_state(V7MStateField field) const
+{
+    return m_int->exports().cpu_arm_v7m_get_state(m_obj, static_cast<int>(field));
+}
+
+uint64_t CpuArm::get_aarch64_state(Aarch64StateField field) const
+{
+    return m_int->exports().cpu_arm_aarch64_get_state(m_obj, static_cast<int>(field));
+}
+
 void CpuArm::post_init() { m_int->exports().cpu_arm_post_init(m_obj); }
 
 void CpuArm::register_reset() { m_int->exports().cpu_arm_register_reset(m_obj); }

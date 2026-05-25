@@ -23,6 +23,8 @@
 #include <scp/report.h>
 
 #include <qemu-instance.h>
+#include <memory_services.h>
+#include <tlm-extensions/qemu-memtx-attrs.h>
 #include <tlm-extensions/qemu-mr-hint.h>
 #include <tlm-extensions/exclusive-access.h>
 #include <tlm-extensions/shmem_extension.h>
@@ -341,6 +343,7 @@ protected:
         assert(trans.is_dmi_allowed());
         tlm::tlm_dmi dmi_data;
         int shm_fd = -1;
+        uint64_t shm_offset = 0;
         auto addr = trans.get_address();
         /* We got a DMI hint, lets just make sure this isn't in an existing m_mmio_mrs region
          * Because if it is, what probably happened is that we took the MMIO path
@@ -464,6 +467,11 @@ protected:
         // memory is a shared memory type.
         if (shm_ext) {
             shm_fd = shm_ext->m_fd;
+            shm_offset = reinterpret_cast<uintptr_t>(dmi_data.get_dmi_ptr()) - shm_ext->m_mapped_addr;
+        } else {
+            const uint64_t dmi_size = (dmi_data.get_end_address() - dmi_data.get_start_address()) + 1;
+            gs::MemoryServices::get().get_shmem_fd_offset_for_ptr(dmi_data.get_dmi_ptr(), dmi_size, shm_fd,
+                                                                  shm_offset);
         }
 
         SCP_INFO(()) << "DMI Adding for address 0x" << std::hex << trans.get_address();
@@ -493,7 +501,7 @@ protected:
             SCP_INFO(()) << "Adding DMI for range [0x" << std::hex << dmi_data.get_start_address() << "-0x" << std::hex
                          << dmi_data.get_end_address() << "]";
 
-            DmiRegionAlias::Ptr alias = m_inst.get_dmi_manager().get_new_region_alias(dmi_data, shm_fd);
+            DmiRegionAlias::Ptr alias = m_inst.get_dmi_manager().get_new_region_alias(dmi_data, shm_fd, shm_offset);
 
             m_dmi_aliases[start] = alias;
             add_dmi_mr_alias(m_dmi_aliases[start]);
@@ -571,6 +579,8 @@ protected:
         if (m_finished) return qemu::MemoryRegionOps::MemTxError;
 
         init_payload(trans, command, addr, val, size);
+        QemuMemTxAttrsTlmExtension attrs_ext(attrs);
+        trans.set_extension(&attrs_ext);
 
         if (trans.get_extension<ExclusiveAccessTlmExtension>()) {
             /* in the case of an exclusive access keep the iolock (and assume NO side-effects)
@@ -602,6 +612,7 @@ protected:
             reentrancy--;
             m_inst.g_rec_qemu_io_lock.unlock();
         }
+        trans.clear_extension(&attrs_ext);
         m_initiator.initiator_tidy_tlm_payload(trans);
 
         switch (trans.get_response_status()) {

@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include <cstdlib>
+#include <cstring>
 #include <vector>
 
 #include <cci_configuration>
@@ -23,10 +25,54 @@ class QemuVirtioMMIO : public QemuDevice
 {
     SCP_LOGGER();
 
+    static bool env_flag_enabled(const char* name)
+    {
+        const char* value = std::getenv(name);
+        if (value == nullptr || value[0] == '\0') {
+            return false;
+        }
+
+        return std::strcmp(value, "1") == 0 ||
+               std::strcmp(value, "true") == 0 ||
+               std::strcmp(value, "yes") == 0 ||
+               std::strcmp(value, "on") == 0;
+    }
+
+    static std::string env_string_or(const char* name, const std::string& fallback)
+    {
+        const char* value = std::getenv(name);
+        if (value == nullptr || value[0] == '\0') {
+            return fallback;
+        }
+
+        return std::string(value);
+    }
+
+    static uint64_t env_uint_or(const char* name, uint64_t fallback)
+    {
+        const char* value = std::getenv(name);
+        if (value == nullptr || value[0] == '\0') {
+            return fallback;
+        }
+
+        char* end = nullptr;
+        const uint64_t parsed = std::strtoull(value, &end, 0);
+        if (end == value || *end != '\0') {
+            return fallback;
+        }
+
+        return parsed;
+    }
+
 public:
     QemuTargetSocket<> socket;
     QemuInitiatorSignalSocket irq_out;
     QemuDevice virtio_mmio_device;
+    cci::cci_param<bool> p_trace;
+    cci::cci_param<unsigned int> p_trace_limit;
+    cci::cci_param<std::string> p_trace_file;
+    cci::cci_param<std::string> p_trace_filter;
+    cci::cci_param<bool> p_ioeventfd;
 
     /*
      * qemu qbus hierachy created behind this sc_module:
@@ -41,6 +87,11 @@ public:
         , socket("mem", inst)
         , irq_out("irq_out")
         , virtio_mmio_device("virtio_mmio", inst, "virtio-mmio")
+        , p_trace("trace", false)
+        , p_trace_limit("trace_limit", 256)
+        , p_trace_file("trace_file", std::string(""))
+        , p_trace_filter("trace_filter", "control")
+        , p_ioeventfd("ioeventfd", false)
     {
         SCP_TRACE(())("Constructor");
     }
@@ -71,6 +122,7 @@ public:
         }
 
         virtio_mmio_device.get_qemu_dev().set_prop_bool("force-legacy", true);
+        virtio_mmio_device.get_qemu_dev().set_prop_bool("ioeventfd", p_ioeventfd.get_value());
     }
 
     void end_of_elaboration() override
@@ -87,6 +139,11 @@ public:
          */
         qemu::SysBusDevice sbd(virtio_mmio_device.get_qemu_dev());
         socket.init(sbd, 0);
+        socket.set_trace(name(),
+                         p_trace.get_value() || env_flag_enabled("QBOX_VIRTIO_MMIO_TRACE"),
+                         env_string_or("QBOX_VIRTIO_MMIO_TRACE_FILE", p_trace_file.get_value()),
+                         env_uint_or("QBOX_VIRTIO_MMIO_TRACE_LIMIT", p_trace_limit.get_value()),
+                         env_string_or("QBOX_VIRTIO_MMIO_TRACE_FILTER", p_trace_filter.get_value()));
         irq_out.init_sbd(sbd, 0);
 
         /*

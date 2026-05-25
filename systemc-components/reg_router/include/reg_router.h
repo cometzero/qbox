@@ -19,12 +19,14 @@
 #include <cciutils.h>
 #include <module_factory_registery.h>
 #include <module_factory_container.h>
+#include <tlm-extensions/underlying-dmi.h>
 #include <tlm_sockets_buswidth.h>
 #include <router_if.h>
 #include <vector>
 #include <memory>
 #include <map>
 #include <functional>
+#include <limits>
 
 #define ENABLE_MODULE_NAME_DBG_INFO 1
 namespace gs {
@@ -125,8 +127,80 @@ public:
 
     bool get_direct_mem_ptr(int id, tlm::tlm_generic_payload& trans, tlm::tlm_dmi& dmi_data)
     {
-        SCP_TRACE(()) << "[REG-MEM] call get_direct_mem_ptr (not allowed) [txn]: " << scp::scp_txn_tostring(trans);
-        return false;
+        lazy_initialize();
+
+        sc_dt::uint64 addr = trans.get_address();
+        std::shared_ptr<target_info> ti = decode_address(trans);
+        tlm::tlm_dmi mapped_range;
+
+        if (ti) {
+            mapped_range.set_start_address(ti->address);
+            mapped_range.set_end_address(end_address(*ti));
+        } else {
+            mapped_range.set_start_address(addr);
+            mapped_range.set_end_address(addr);
+        }
+
+        UnderlyingDMITlmExtension* u_dmi = nullptr;
+        trans.get_extension(u_dmi);
+        if (u_dmi) {
+            u_dmi->add_dmi(this, mapped_range, ti ? gs::tlm_dmi_ex::dmi_mapped : gs::tlm_dmi_ex::dmi_nomap);
+        }
+
+        if (!ti) {
+            SCP_TRACE((DMI)) << "[REG-MEM] DMI request to unmapped address 0x" << std::hex << addr;
+            return false;
+        }
+
+        if (ti->use_offset) {
+            trans.set_address(addr - ti->address);
+        }
+
+        SCP_TRACE((DMI)) << "[REG-MEM] call get_direct_mem_ptr [txn]: " << scp::scp_txn_tostring(trans);
+        bool status = initiator_socket[ti->index]->get_direct_mem_ptr(trans, dmi_data);
+
+        if (ti->use_offset) {
+            trans.set_address(addr);
+        }
+
+        if (!status) {
+            return false;
+        }
+
+        if (ti->use_offset) {
+            dmi_data.set_start_address(ti->address + dmi_data.get_start_address());
+            dmi_data.set_end_address(ti->address + dmi_data.get_end_address());
+        }
+
+        if (dmi_data.get_start_address() < mapped_range.get_start_address()) {
+            dmi_data.set_dmi_ptr(dmi_data.get_dmi_ptr() +
+                                 (mapped_range.get_start_address() - dmi_data.get_start_address()));
+            dmi_data.set_start_address(mapped_range.get_start_address());
+        }
+        if (dmi_data.get_end_address() > mapped_range.get_end_address()) {
+            dmi_data.set_end_address(mapped_range.get_end_address());
+        }
+
+        SCP_DEBUG((DMI)) << "[REG-MEM] providing DMI [0x" << std::hex << dmi_data.get_start_address() << " - 0x"
+                         << dmi_data.get_end_address() << "]";
+        return true;
+    }
+
+    void invalidate_direct_mem_ptr(int id, sc_dt::uint64 start, sc_dt::uint64 end)
+    {
+        lazy_initialize();
+
+        if (id >= 0 && static_cast<size_t>(id) < bound_targets.size()) {
+            std::shared_ptr<target_info> ti = bound_targets[id];
+            if (ti && ti->use_offset) {
+                start += ti->address;
+                end += ti->address;
+            }
+        }
+
+        for (unsigned int i = 0; i < target_socket.size(); ++i) {
+            target_socket[i]->invalidate_direct_mem_ptr(start, end);
+        }
     }
 
     std::string txn_to_str(tlm::tlm_generic_payload& trans, bool is_callback = false, bool found_callback = false)
@@ -319,7 +393,7 @@ public:
         target_socket.register_b_transport(this, &reg_router::b_transport);
         target_socket.register_transport_dbg(this, &reg_router::transport_dbg);
         target_socket.register_get_direct_mem_ptr(this, &reg_router::get_direct_mem_ptr);
-        // memory model doesn't implement invalidate_direct_mem_ptr so no need to register it
+        initiator_socket.register_invalidate_direct_mem_ptr(this, &reg_router::invalidate_direct_mem_ptr);
         SCP_DEBUG((DMI)) << "reg_router Initializing DMI SCP reporting";
     }
 
@@ -337,6 +411,20 @@ public:
     cci::cci_param<bool> lazy_init;
 
 private:
+    static sc_dt::uint64 end_address(const target_info& ti)
+    {
+        if (ti.size == 0) {
+            return ti.address;
+        }
+
+        const sc_dt::uint64 max = std::numeric_limits<sc_dt::uint64>::max();
+        if (ti.address > max - (ti.size - 1)) {
+            return max;
+        }
+
+        return ti.address + ti.size - 1;
+    }
+
     std::vector<std::shared_ptr<target_info>> mem_targets;
     std::map<sc_dt::uint64, std::shared_ptr<target_info>> cb_targets;
     std::map<uint64_t, std::pair<uint64_t, std::string>> mod_addr_name_map;

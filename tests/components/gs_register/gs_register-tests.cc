@@ -267,6 +267,14 @@ TEST_BENCH(RegisterTestBench, test_registers)
     m_initiator.do_read<uint64_t>(STATUS64_ADDR, read_value_64);
     ASSERT_EQ(read_value_64, write_value_64); // 0x0ULL mask will be applied in pre_pread callback, so the value of the
                                               // register shouldn't change at write
+
+    SCP_DEBUG(()) << "test reg_router DMI forwarding";
+    ASSERT_TRUE(m_initiator.do_dmi_request(REG_MEM_ADDR));
+    const tlm::tlm_dmi& dmi = m_initiator.get_last_dmi_data();
+    ASSERT_TRUE(dmi.is_read_allowed());
+    ASSERT_TRUE(dmi.is_write_allowed());
+    ASSERT_EQ(dmi.get_start_address(), REG_MEM_ADDR);
+    ASSERT_EQ(dmi.get_end_address(), REG_MEM_ADDR + REG_MEM_SZ - 1);
 }
 
 int sc_main(int argc, char* argv[])

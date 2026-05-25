@@ -29,3 +29,13 @@ SimpleReadData = test_bench;
 SimpleReadELFFile = test_bench;
 SimpleReadBinFile = test_bench;
 SimpleReadCSVFile = test_bench;
+LoadOnResetOnly = {
+    rom1=   { target_socket  = {address=0x0000, size=0x1000}};
+    rom2=   { target_socket  = {address=0x1000, size=0x1000}};
+    rom3=   { target_socket  = {address=0x2000, size=0x1000}};
+
+    load={
+        load_at_elaboration = false;
+        {data={0xdeadbeaf}, address = 0x0500};
+    }
+};

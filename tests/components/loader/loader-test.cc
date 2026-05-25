@@ -44,6 +44,20 @@ TEST_BENCH(LoaderTest, SimpleReadData)
     ASSERT_EQ(data, 0xaf);
 }
 
+TEST_BENCH(LoaderTest, LoadOnResetOnly)
+{
+    uint8_t data;
+
+    ASSERT_EQ(m_initiator.do_read(0x0503, data), tlm::TLM_OK_RESPONSE);
+    ASSERT_NE(data, 0xde);
+
+    m_loader.reset->write(true);
+    sc_core::wait(sc_core::SC_ZERO_TIME);
+
+    ASSERT_EQ(m_initiator.do_read(0x0503, data), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(data, 0xde);
+}
+
 TEST_BENCH(LoaderTest, SimpleReadBinFile)
 {
     uint8_t data;
