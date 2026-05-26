@@ -609,6 +609,34 @@ TEST(StrataFlashJ3Test, DeferredBackingWriteFlushesOnDestruction)
     EXPECT_EQ(persisted[0x120], 0x5a);
 }
 
+TEST(StrataFlashJ3Test, DeferredBackingWriteFlushesAtInterval)
+{
+    std::vector<uint8_t> image(0x200, 0xff);
+    TempImage backing(image);
+
+    strata_flash_j3 dut("strata_flash_defer_backing_interval");
+
+    dut.p_backing_file = backing.path();
+    dut.p_defer_backing_write = true;
+    dut.p_defer_backing_flush_interval = 2;
+    dut.load_image(image.data(), 0, image.size());
+
+    write8(dut, 0x120, CMD_WORD_PROGRAM);
+    write8(dut, 0x120, 0x5a);
+
+    std::vector<uint8_t> before_interval = read_file(backing.path());
+    ASSERT_GT(before_interval.size(), 0x121u);
+    EXPECT_EQ(before_interval[0x120], 0xff);
+
+    write8(dut, 0x121, CMD_WORD_PROGRAM);
+    write8(dut, 0x121, 0xa5);
+
+    const std::vector<uint8_t> persisted = read_file(backing.path());
+    ASSERT_GT(persisted.size(), 0x121u);
+    EXPECT_EQ(persisted[0x120], 0x5a);
+    EXPECT_EQ(persisted[0x121], 0xa5);
+}
+
 TEST(StrataFlashJ3Test, NoopProgramSkipsBackingFileWrite)
 {
     std::vector<uint8_t> image(0x200, 0xff);

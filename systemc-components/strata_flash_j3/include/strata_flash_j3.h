@@ -90,11 +90,14 @@ class strata_flash_j3 : public sc_core::sc_module
     bool m_program_ff_sets_bits_value = false;
     bool m_program_ff_erases_sector_value = false;
     bool m_defer_backing_write_value = false;
+    unsigned int m_defer_backing_flush_interval_value = 1024;
     uint64_t m_sector_size_value = 0x1000;
     std::string m_backing_file_value;
     bool m_backing_dirty = false;
     uint64_t m_backing_dirty_start = 0;
     uint64_t m_backing_dirty_end = 0;
+    uint64_t m_backing_deferred_since_flush = 0;
+    bool m_backing_flushing = false;
     bool m_backing_error_reported = false;
     bool m_stats_error_reported = false;
     uint64_t m_read_accesses = 0;
@@ -327,7 +330,9 @@ class strata_flash_j3 : public sc_core::sc_module
 
     void close_backing_file()
     {
-        flush_deferred_backing();
+        if (!m_backing_flushing) {
+            flush_deferred_backing();
+        }
 #ifdef _WIN32
         if (m_backing_stream.is_open()) {
             m_backing_stream.close();
@@ -382,6 +387,8 @@ class strata_flash_j3 : public sc_core::sc_module
         m_program_ff_sets_bits_value = p_program_ff_sets_bits.get_value();
         m_program_ff_erases_sector_value = p_program_ff_erases_sector.get_value();
         m_defer_backing_write_value = p_defer_backing_write.get_value();
+        m_defer_backing_flush_interval_value =
+            p_defer_backing_flush_interval.get_value();
         m_sector_size_value = p_sector_size.get_value();
         m_backing_file_value = p_backing_file.get_value();
         invalidate_stats_collecting();
@@ -407,6 +414,11 @@ class strata_flash_j3 : public sc_core::sc_module
             [this](const auto& ev) {
                 flush_deferred_backing();
                 m_defer_backing_write_value = ev.new_value;
+            });
+        p_defer_backing_flush_interval.register_post_write_callback(
+            [this](const auto& ev) {
+                flush_deferred_backing();
+                m_defer_backing_flush_interval_value = ev.new_value;
             });
         p_sector_size.register_post_write_callback(
             [this](const auto& ev) { m_sector_size_value = ev.new_value; });
@@ -505,12 +517,20 @@ class strata_flash_j3 : public sc_core::sc_module
 
         const uint64_t offset = m_backing_dirty_start;
         const uint64_t len = m_backing_dirty_end - m_backing_dirty_start + 1;
-        m_backing_dirty = false;
 
-        if (m_backing_file_value.empty() || !write_backing_range_now(offset, len)) {
+        if (m_backing_file_value.empty()) {
             return;
         }
 
+        m_backing_flushing = true;
+        const bool flushed = write_backing_range_now(offset, len);
+        m_backing_flushing = false;
+        if (!flushed) {
+            return;
+        }
+
+        m_backing_dirty = false;
+        m_backing_deferred_since_flush = 0;
         count_stat(m_backing_flush_ops);
         count_stat(m_backing_flush_bytes, len);
     }
@@ -532,6 +552,12 @@ class strata_flash_j3 : public sc_core::sc_module
             count_stat(m_backing_deferred_ranges);
             count_stat(m_backing_deferred_bytes, len);
             mark_backing_dirty(offset, len);
+            ++m_backing_deferred_since_flush;
+            if (m_defer_backing_flush_interval_value != 0 &&
+                m_backing_deferred_since_flush >=
+                    m_defer_backing_flush_interval_value) {
+                flush_deferred_backing();
+            }
             return;
         }
 
@@ -1149,6 +1175,7 @@ public:
     cci::cci_param<bool> p_program_ff_sets_bits;
     cci::cci_param<bool> p_program_ff_erases_sector;
     cci::cci_param<bool> p_defer_backing_write;
+    cci::cci_param<unsigned int> p_defer_backing_flush_interval;
     cci::cci_param<uint64_t> p_size;
     cci::cci_param<uint64_t> p_sector_size;
     cci::cci_param<std::string> p_dmi_ranges;
@@ -1178,6 +1205,7 @@ public:
         , p_program_ff_sets_bits("program_ff_sets_bits", false)
         , p_program_ff_erases_sector("program_ff_erases_sector", false)
         , p_defer_backing_write("defer_backing_write", false)
+        , p_defer_backing_flush_interval("defer_backing_flush_interval", 1024)
         , p_size("size", 0x04000000)
         , p_sector_size("sector_size", 0x1000)
         , p_dmi_ranges("dmi_ranges", "")
