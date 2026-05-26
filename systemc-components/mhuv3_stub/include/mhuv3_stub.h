@@ -776,10 +776,8 @@ private:
     {
         m_frame.refresh_combined_irq_regs();
 
-        if (is_mbx()) {
-            if (irq.size() != 0) {
-                irq->write(m_frame.any_combined_irq());
-            }
+        if (irq.size() != 0) {
+            irq->write(m_frame.any_combined_irq());
         }
     }
 
@@ -1456,10 +1454,16 @@ private:
                 trace_event("doorbell-auto-ack", ack_detail.str());
                 seed_doorbell_ack_memory();
                 mbx->signal_doorbell_channel(ack_channel, ack_value);
+                complete_synthetic_postbox_transfer(channel, value,
+                                                    "doorbell-auto-ack");
                 trace_event("rpmsg-ns-defer-until-host-kick");
             }
         } else if (p_protocol.get_value() == "doorbell") {
             schedule_rpmsg_ns_injection();
+            if (p_rpmsg_ns_enable.get_value()) {
+                complete_synthetic_postbox_transfer(channel, value,
+                                                    "rpmsg-ns-scheduled");
+            }
         }
     }
 
@@ -1467,6 +1471,23 @@ private:
     {
         m_frame.clear_int_status_bits(channel, mask);
         update_combined_irq();
+    }
+
+    void complete_synthetic_postbox_transfer(unsigned int channel,
+                                             uint32_t mask,
+                                             const char* reason)
+    {
+        if (channel >= channel_count() || mask == 0) {
+            return;
+        }
+
+        std::ostringstream detail;
+        detail << "channel=" << channel
+               << " mask=0x" << std::hex << mask
+               << " reason=" << reason << std::dec;
+        trace_event("postbox-synthetic-tx-complete", detail.str());
+
+        clear_postbox_doorbell_channel(channel, mask);
     }
 
     std::vector<uint8_t> read_doorbell_message() const

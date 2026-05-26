@@ -42,6 +42,7 @@ constexpr uint64_t DBCW_ST = 0x1000;
 constexpr uint64_t DBCW_ST_MSK = 0x1004;
 constexpr uint64_t DBCW_CLR = 0x1008;
 constexpr uint64_t DBCW_INT_ST = 0x1010;
+constexpr uint64_t DBCW_INT_CLR = 0x1014;
 constexpr uint64_t DBCW_INT_EN = 0x1018;
 constexpr uint64_t DBCW_STRIDE = 0x20;
 constexpr uint32_t MHU_NOTIFY_VALUE = 1234;
@@ -423,6 +424,7 @@ TEST(Mhuv3StubTest, RseBl2PowerDomainTransportRespondsAndSignalsAckBit)
     ResetSink ap_domain2_reset("ap_domain2_reset");
     ResetSink ap_domain3_reset("ap_domain3_reset");
     ResetSink deferred_domain1_reset("deferred_domain1_reset");
+    ResetSink si_cl1_pbx_irq("si_cl1_pbx_irq");
 
     pbx_bus.initiator_socket.bind(pbx.target_socket);
     mbx_bus.initiator_socket.bind(mbx.target_socket);
@@ -460,6 +462,7 @@ TEST(Mhuv3StubTest, RseBl2PowerDomainTransportRespondsAndSignalsAckBit)
     pbx.power_domain_reset[2].bind(ap_domain2_reset.reset);
     pbx.power_domain_reset[3].bind(ap_domain3_reset.reset);
     deferred_pbx.power_domain_reset[1].bind(deferred_domain1_reset.reset);
+    si_cl1_pbx.irq.bind(si_cl1_pbx_irq.reset);
 
     sc_core::sc_start(sc_core::sc_time(2, sc_core::SC_NS));
     EXPECT_TRUE(ap_reset.reset.read());
@@ -662,7 +665,14 @@ TEST(Mhuv3StubTest, RseBl2PowerDomainTransportRespondsAndSignalsAckBit)
     si_cl1_pbx_unused.write16(0x122, 1);
     si_cl1_pbx_unused.write16(0x124, 0);
 
+    write32(si_cl1_pbx_bus, DBCW_INT_EN, 0x1);
+    EXPECT_FALSE(si_cl1_pbx_irq.reset.read());
+
     write32(si_cl1_pbx_bus, DBCW_SET, 0x8);
+    EXPECT_EQ(read32(si_cl1_pbx_bus, DBCW_ST) & 0x8u, 0u);
+    EXPECT_EQ(read32(si_cl1_pbx_bus, DBCW_INT_ST) & 0x1u, 0x1u);
+    EXPECT_TRUE(si_cl1_pbx_irq.reset.read());
+    EXPECT_TRUE(si_cl1_pbx_irq.saw_asserted);
     EXPECT_EQ(read32(si_cl1_mbx_bus, DBCW_ST) & 0x4u, 0x4u);
     EXPECT_EQ(si_cl1_pbx_unused.read32(0x40), 0x00000001u);
     EXPECT_EQ(si_cl1_pbx_unused.read32(0x44), 0x00000001u);
@@ -674,7 +684,13 @@ TEST(Mhuv3StubTest, RseBl2PowerDomainTransportRespondsAndSignalsAckBit)
     EXPECT_EQ(read32(si_cl1_mbx_bus, DBCW_ST) & 0x1u, 0u);
     EXPECT_EQ(si_cl1_pbx_unused.read32(0x200), 0u);
 
+    write32(si_cl1_pbx_bus, DBCW_INT_CLR, 0x1u);
+    EXPECT_EQ(read32(si_cl1_pbx_bus, DBCW_INT_ST) & 0x1u, 0u);
+    EXPECT_FALSE(si_cl1_pbx_irq.reset.read());
     write32(si_cl1_pbx_bus, DBCW_SET, 0x1);
+    EXPECT_EQ(read32(si_cl1_pbx_bus, DBCW_ST) & 0x1u, 0u);
+    EXPECT_EQ(read32(si_cl1_pbx_bus, DBCW_INT_ST) & 0x1u, 0x1u);
+    EXPECT_TRUE(si_cl1_pbx_irq.reset.read());
     sc_core::sc_start(sc_core::sc_time(2, sc_core::SC_NS));
     EXPECT_EQ(read32(si_cl1_mbx_bus, DBCW_ST) & 0x1u, 0x1u);
     EXPECT_EQ(si_cl1_pbx_unused.read32(0x200), 0x400u);
