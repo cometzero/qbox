@@ -82,6 +82,8 @@ class strata_flash_j3 : public sc_core::sc_module
     bool m_dmi_ranges_error_reported = false;
     bool m_dmi_granted = false;
     std::string m_open_backing_file;
+    bool m_stats_collecting = false;
+    bool m_stats_collecting_known = false;
     bool m_backing_error_reported = false;
     bool m_stats_error_reported = false;
     uint64_t m_read_accesses = 0;
@@ -340,6 +342,24 @@ class strata_flash_j3 : public sc_core::sc_module
         m_backing_error_reported = true;
     }
 
+    bool collect_stats()
+    {
+        if (!m_stats_collecting_known) {
+            m_stats_collecting =
+                p_stats_interval.get_value() != 0 ||
+                !p_stats_file.get_value().empty();
+            m_stats_collecting_known = true;
+        }
+        return m_stats_collecting;
+    }
+
+    void count_stat(uint64_t& counter, uint64_t delta = 1)
+    {
+        if (collect_stats()) {
+            counter += delta;
+        }
+    }
+
     bool ensure_backing_file()
     {
         const std::string path = p_backing_file.get_value();
@@ -401,8 +421,8 @@ class strata_flash_j3 : public sc_core::sc_module
             return;
         }
 
-        ++m_backing_write_ops;
-        m_backing_write_bytes += len;
+        count_stat(m_backing_write_ops);
+        count_stat(m_backing_write_bytes, len);
 
         const std::string path = p_backing_file.get_value();
 #ifdef _WIN32
@@ -463,11 +483,11 @@ class strata_flash_j3 : public sc_core::sc_module
 
     void program(uint64_t offset, const uint8_t* data, unsigned int len)
     {
-        ++m_program_ops;
-        m_program_bytes += len;
+        count_stat(m_program_ops);
+        count_stat(m_program_bytes, len);
 
         if (is_sector_aligned_program_ff_erase(offset, data, len)) {
-            ++m_compat_ff_sector_erase_ops;
+            count_stat(m_compat_ff_sector_erase_ops);
             erase_sector(offset);
             return;
         }
@@ -493,8 +513,8 @@ class strata_flash_j3 : public sc_core::sc_module
             last_changed = i;
         }
 
-        m_program_changed_bytes += changed;
-        m_program_noop_bytes += len - changed;
+        count_stat(m_program_changed_bytes, changed);
+        count_stat(m_program_noop_bytes, len - changed);
         if (first_changed != len) {
             write_backing_range(offset + first_changed,
                                 last_changed - first_changed + 1);
@@ -523,8 +543,8 @@ class strata_flash_j3 : public sc_core::sc_module
         const uint64_t start = (offset / sector_size) * sector_size;
         const uint64_t end = std::min<uint64_t>(start + sector_size, m_data.size());
 
-        ++m_sector_erase_ops;
-        m_sector_erase_bytes += end - start;
+        count_stat(m_sector_erase_ops);
+        count_stat(m_sector_erase_bytes, end - start);
         std::fill(m_data.begin() + start, m_data.begin() + end, 0xff);
         write_backing_range(start, end - start);
         m_status = STATUS_READY;
@@ -542,7 +562,7 @@ class strata_flash_j3 : public sc_core::sc_module
         }
 
         target_socket->invalidate_direct_mem_ptr(0, m_data.size() - 1);
-        ++m_dmi_invalidations;
+        count_stat(m_dmi_invalidations);
         m_dmi_granted = false;
     }
 
@@ -574,7 +594,7 @@ class strata_flash_j3 : public sc_core::sc_module
     {
         const unsigned int count = count_value(data, len);
 
-        ++m_write_buffer_count_writes;
+        count_stat(m_write_buffer_count_writes);
         if (count == 0 || count > WRITE_BUFFER_MAX ||
             offset > m_data.size() || count > m_data.size() - offset) {
             clear_write_buffer();
@@ -617,17 +637,17 @@ class strata_flash_j3 : public sc_core::sc_module
             m_write_buffer[relative + i] = data[i];
             m_write_buffer_written[relative + i] = true;
         }
-        ++m_write_buffer_data_writes;
+        count_stat(m_write_buffer_data_writes);
         m_status = STATUS_READY;
         m_mode = mode::read_status;
     }
 
     void confirm_write_buffer()
     {
-        ++m_write_buffer_confirm_cmds;
+        count_stat(m_write_buffer_confirm_cmds);
         if (write_buffer_complete()) {
-            ++m_write_buffer_ops;
-            m_write_buffer_bytes += m_write_buffer.size();
+            count_stat(m_write_buffer_ops);
+            count_stat(m_write_buffer_bytes, m_write_buffer.size());
             program(m_write_buffer_base,
                     m_write_buffer.data(),
                     static_cast<unsigned int>(m_write_buffer.size()));
@@ -641,43 +661,43 @@ class strata_flash_j3 : public sc_core::sc_module
 
     void record_command(uint8_t command)
     {
-        ++m_command_writes;
+        count_stat(m_command_writes);
         switch (command) {
         case CMD_READ_ARRAY:
-            ++m_read_array_cmds;
+            count_stat(m_read_array_cmds);
             break;
         case CMD_READ_ID_CODE:
-            ++m_read_id_cmds;
+            count_stat(m_read_id_cmds);
             break;
         case CMD_READ_QUERY:
-            ++m_read_query_cmds;
+            count_stat(m_read_query_cmds);
             break;
         case CMD_READ_STATUS_REG:
-            ++m_read_status_cmds;
+            count_stat(m_read_status_cmds);
             break;
         case CMD_CLEAR_STATUS_REG:
-            ++m_clear_status_cmds;
+            count_stat(m_clear_status_cmds);
             break;
         case CMD_WRITE_TO_BUFFER:
-            ++m_write_buffer_cmds;
+            count_stat(m_write_buffer_cmds);
             break;
         case CMD_WORD_PROGRAM:
-            ++m_word_program_cmds;
+            count_stat(m_word_program_cmds);
             break;
         case CMD_BLOCK_ERASE:
-            ++m_block_erase_cmds;
+            count_stat(m_block_erase_cmds);
             break;
         case CMD_BLOCK_ERASE_ACK:
-            ++m_block_erase_ack_cmds;
+            count_stat(m_block_erase_ack_cmds);
             break;
         case CMD_LOCK_UNLOCK:
-            ++m_lock_unlock_cmds;
+            count_stat(m_lock_unlock_cmds);
             break;
         case CMD_LOCK_BLOCK:
-            ++m_lock_block_cmds;
+            count_stat(m_lock_block_cmds);
             break;
         default:
-            ++m_unknown_cmds;
+            count_stat(m_unknown_cmds);
             break;
         }
     }
@@ -792,7 +812,7 @@ class strata_flash_j3 : public sc_core::sc_module
 
         trans.set_dmi_allowed(false);
         if (trans.get_command() == tlm::TLM_READ_COMMAND) {
-            ++m_read_accesses;
+            count_stat(m_read_accesses);
             for (unsigned int i = 0; i < len; ++i) {
                 data[i] = read_byte(offset + i);
             }
@@ -803,11 +823,11 @@ class strata_flash_j3 : public sc_core::sc_module
                 m_pending == pending_command::none &&
                 find_dmi_range(offset, len, range);
             if (dmi_allowed) {
-                ++m_dmi_read_hints;
+                count_stat(m_dmi_read_hints);
             }
             trans.set_dmi_allowed(dmi_allowed);
         } else if (trans.get_command() == tlm::TLM_WRITE_COMMAND) {
-            ++m_write_accesses;
+            count_stat(m_write_accesses);
             write(offset, data, len);
         } else {
             trans.set_response_status(tlm::TLM_COMMAND_ERROR_RESPONSE);
@@ -815,7 +835,9 @@ class strata_flash_j3 : public sc_core::sc_module
         }
 
         trace_access(trans, offset, len, debug);
-        maybe_write_stats();
+        if (collect_stats()) {
+            maybe_write_stats();
+        }
         trans.set_response_status(tlm::TLM_OK_RESPONSE);
         return true;
     }
@@ -1062,27 +1084,35 @@ public:
         dmi_range range {};
 
         ensure_storage();
-        ++m_dmi_requests;
+        count_stat(m_dmi_requests);
         if (!p_enable_dmi.get_value()) {
-            ++m_dmi_reject_disabled;
-            maybe_write_dmi_stats(false);
+            count_stat(m_dmi_reject_disabled);
+            if (collect_stats()) {
+                maybe_write_dmi_stats(false);
+            }
             return false;
         }
         if (m_mode != mode::read_array ||
             m_pending != pending_command::none) {
-            ++m_dmi_reject_state;
-            maybe_write_dmi_stats(false);
+            count_stat(m_dmi_reject_state);
+            if (collect_stats()) {
+                maybe_write_dmi_stats(false);
+            }
             return false;
         }
         if (trans.get_command() != tlm::TLM_READ_COMMAND &&
             trans.get_command() != tlm::TLM_IGNORE_COMMAND) {
-            ++m_dmi_reject_command;
-            maybe_write_dmi_stats(false);
+            count_stat(m_dmi_reject_command);
+            if (collect_stats()) {
+                maybe_write_dmi_stats(false);
+            }
             return false;
         }
         if (!find_dmi_range(offset, len, range)) {
-            ++m_dmi_reject_range;
-            maybe_write_dmi_stats(false);
+            count_stat(m_dmi_reject_range);
+            if (collect_stats()) {
+                maybe_write_dmi_stats(false);
+            }
             return false;
         }
 
@@ -1092,8 +1122,10 @@ public:
         dmi_data.set_read_latency(sc_core::SC_ZERO_TIME);
         dmi_data.set_write_latency(sc_core::SC_ZERO_TIME);
         dmi_data.allow_read();
-        ++m_dmi_grants;
-        maybe_write_dmi_stats(m_dmi_grants == 1);
+        count_stat(m_dmi_grants);
+        if (collect_stats()) {
+            maybe_write_dmi_stats(m_dmi_grants == 1);
+        }
         m_dmi_granted = true;
         return true;
     }
