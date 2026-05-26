@@ -9,6 +9,7 @@
 #include <cctype>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <fstream>
 #include <iostream>
 #include <mutex>
@@ -393,9 +394,16 @@ private:
     cci::cci_param<uint64_t> p_rpmsg_ns_signal_delay_ns;
     cci::cci_param<uint64_t> p_rpmsg_ns_poll_period_ns;
     cci::cci_param<unsigned int> p_rpmsg_ns_max_polls;
+    cci::cci_param<uint64_t> p_synthetic_txdone_delay_ns;
     cci::cci_param<bool> p_trace;
     cci::cci_param<unsigned int> p_trace_limit;
     cci::cci_param<std::string> p_trace_file;
+
+    struct synthetic_postbox_completion {
+        unsigned int channel;
+        uint32_t mask;
+        std::string reason;
+    };
 
     mhuv3_frame_model m_frame;
     std::array<uint32_t, 256> m_power_domain_states {};
@@ -416,6 +424,8 @@ private:
     sc_core::sc_event m_rpmsg_ns_event;
     unsigned int m_trace_count = 0;
     std::vector<unsigned int> m_doorbell_ack_seed_words;
+    std::deque<synthetic_postbox_completion> m_synthetic_postbox_completions;
+    sc_core::sc_event m_synthetic_postbox_completion_event;
     std::ofstream m_trace_stream;
     std::mutex m_trace_lock;
 
@@ -1133,8 +1143,13 @@ private:
             return;
         }
 
+        const bool had_pending_transfer = (m_frame.status(channel) & mask) != 0;
+        const bool ack_empty_transfer = p_pair.get_value() != "ap_si_cl1" ||
+                                        p_protocol.get_value() != "doorbell";
         m_frame.clear_status_bits(channel, mask);
-        m_frame.set_int_status_bits(channel, 1);
+        if (had_pending_transfer || ack_empty_transfer) {
+            m_frame.set_int_status_bits(channel, 1);
+        }
         update_combined_irq();
     }
 
@@ -1481,13 +1496,38 @@ private:
             return;
         }
 
+        m_synthetic_postbox_completions.push_back(
+            { channel, mask, std::string(reason) });
+
         std::ostringstream detail;
         detail << "channel=" << channel
                << " mask=0x" << std::hex << mask
-               << " reason=" << reason << std::dec;
-        trace_event("postbox-synthetic-tx-complete", detail.str());
+               << " reason=" << reason
+               << std::dec << " delay_ns="
+               << p_synthetic_txdone_delay_ns.get_value();
+        trace_event("postbox-synthetic-tx-complete-scheduled", detail.str());
 
-        clear_postbox_doorbell_channel(channel, mask);
+        const uint64_t delay_ns = p_synthetic_txdone_delay_ns.get_value();
+        m_synthetic_postbox_completion_event.notify(
+            delay_ns == 0 ? sc_core::SC_ZERO_TIME
+                          : sc_core::sc_time(delay_ns, sc_core::SC_NS));
+    }
+
+    void emit_synthetic_postbox_completions()
+    {
+        while (!m_synthetic_postbox_completions.empty()) {
+            const auto completion = m_synthetic_postbox_completions.front();
+            m_synthetic_postbox_completions.pop_front();
+
+            std::ostringstream detail;
+            detail << "channel=" << completion.channel
+                   << " mask=0x" << std::hex << completion.mask
+                   << " reason=" << completion.reason << std::dec;
+            trace_event("postbox-synthetic-tx-complete", detail.str());
+
+            clear_postbox_doorbell_channel(completion.channel,
+                                           completion.mask);
+        }
     }
 
     std::vector<uint8_t> read_doorbell_message() const
@@ -1763,6 +1803,7 @@ public:
         , p_rpmsg_ns_signal_delay_ns("rpmsg_ns_signal_delay_ns", 0)
         , p_rpmsg_ns_poll_period_ns("rpmsg_ns_poll_period_ns", 100000)
         , p_rpmsg_ns_max_polls("rpmsg_ns_max_polls", 1000)
+        , p_synthetic_txdone_delay_ns("synthetic_txdone_delay_ns", 1000)
         , p_trace("trace", false)
         , p_trace_limit("trace_limit", 256)
         , p_trace_file("trace_file", std::string(""))
@@ -1778,6 +1819,10 @@ public:
 
         SC_METHOD(emit_power_on_reset);
         sensitive << m_power_on_reset_event;
+        dont_initialize();
+
+        SC_METHOD(emit_synthetic_postbox_completions);
+        sensitive << m_synthetic_postbox_completion_event;
         dont_initialize();
 
         SC_THREAD(emit_power_domain_reset);
