@@ -86,6 +86,14 @@ class strata_flash_j3 : public sc_core::sc_module
     bool m_stats_error_reported = false;
     uint64_t m_read_accesses = 0;
     uint64_t m_write_accesses = 0;
+    uint64_t m_dmi_read_hints = 0;
+    uint64_t m_dmi_requests = 0;
+    uint64_t m_dmi_grants = 0;
+    uint64_t m_dmi_reject_disabled = 0;
+    uint64_t m_dmi_reject_state = 0;
+    uint64_t m_dmi_reject_command = 0;
+    uint64_t m_dmi_reject_range = 0;
+    uint64_t m_dmi_invalidations = 0;
     uint64_t m_command_writes = 0;
     uint64_t m_read_array_cmds = 0;
     uint64_t m_read_id_cmds = 0;
@@ -533,6 +541,7 @@ class strata_flash_j3 : public sc_core::sc_module
         }
 
         target_socket->invalidate_direct_mem_ptr(0, m_data.size() - 1);
+        ++m_dmi_invalidations;
         m_dmi_granted = false;
     }
 
@@ -787,10 +796,15 @@ class strata_flash_j3 : public sc_core::sc_module
                 data[i] = read_byte(offset + i);
             }
             dmi_range range {};
-            trans.set_dmi_allowed(p_enable_dmi.get_value() &&
-                                  m_mode == mode::read_array &&
-                                  m_pending == pending_command::none &&
-                                  find_dmi_range(offset, len, range));
+            const bool dmi_allowed =
+                p_enable_dmi.get_value() &&
+                m_mode == mode::read_array &&
+                m_pending == pending_command::none &&
+                find_dmi_range(offset, len, range);
+            if (dmi_allowed) {
+                ++m_dmi_read_hints;
+            }
+            trans.set_dmi_allowed(dmi_allowed);
         } else if (trans.get_command() == tlm::TLM_WRITE_COMMAND) {
             ++m_write_accesses;
             write(offset, data, len);
@@ -851,6 +865,14 @@ class strata_flash_j3 : public sc_core::sc_module
             << "  \"module\": \"" << name() << "\",\n"
             << "  \"read_accesses\": " << m_read_accesses << ",\n"
             << "  \"write_accesses\": " << m_write_accesses << ",\n"
+            << "  \"dmi_read_hints\": " << m_dmi_read_hints << ",\n"
+            << "  \"dmi_requests\": " << m_dmi_requests << ",\n"
+            << "  \"dmi_grants\": " << m_dmi_grants << ",\n"
+            << "  \"dmi_reject_disabled\": " << m_dmi_reject_disabled << ",\n"
+            << "  \"dmi_reject_state\": " << m_dmi_reject_state << ",\n"
+            << "  \"dmi_reject_command\": " << m_dmi_reject_command << ",\n"
+            << "  \"dmi_reject_range\": " << m_dmi_reject_range << ",\n"
+            << "  \"dmi_invalidations\": " << m_dmi_invalidations << ",\n"
             << "  \"command_writes\": " << m_command_writes << ",\n"
             << "  \"read_array_cmds\": " << m_read_array_cmds << ",\n"
             << "  \"read_id_cmds\": " << m_read_id_cmds << ",\n"
@@ -1022,12 +1044,23 @@ public:
         dmi_range range {};
 
         ensure_storage();
-        if (!p_enable_dmi.get_value() ||
-            m_mode != mode::read_array ||
-            m_pending != pending_command::none ||
-            (trans.get_command() != tlm::TLM_READ_COMMAND &&
-             trans.get_command() != tlm::TLM_IGNORE_COMMAND) ||
-            !find_dmi_range(offset, len, range)) {
+        ++m_dmi_requests;
+        if (!p_enable_dmi.get_value()) {
+            ++m_dmi_reject_disabled;
+            return false;
+        }
+        if (m_mode != mode::read_array ||
+            m_pending != pending_command::none) {
+            ++m_dmi_reject_state;
+            return false;
+        }
+        if (trans.get_command() != tlm::TLM_READ_COMMAND &&
+            trans.get_command() != tlm::TLM_IGNORE_COMMAND) {
+            ++m_dmi_reject_command;
+            return false;
+        }
+        if (!find_dmi_range(offset, len, range)) {
+            ++m_dmi_reject_range;
             return false;
         }
 
@@ -1037,6 +1070,7 @@ public:
         dmi_data.set_read_latency(sc_core::SC_ZERO_TIME);
         dmi_data.set_write_latency(sc_core::SC_ZERO_TIME);
         dmi_data.allow_read();
+        ++m_dmi_grants;
         m_dmi_granted = true;
         return true;
     }

@@ -633,6 +633,54 @@ TEST(StrataFlashJ3Test, StatsFileRecordsWriteBufferCounters)
     EXPECT_NE(text.find("\"write_buffer_bytes\": 4"), std::string::npos);
 }
 
+TEST(StrataFlashJ3Test, StatsFileRecordsDmiCounters)
+{
+    std::vector<uint8_t> image(0x400, 0xff);
+    TempImage stats({});
+    tlm::tlm_generic_payload trans;
+    tlm::tlm_dmi dmi;
+    uint8_t value = 0;
+
+    {
+        strata_flash_j3 dut("strata_flash_stats_dmi");
+        InitiatorTester initiator("strata_flash_stats_dmi_initiator");
+
+        image[0x110] = 0x5a;
+        dut.p_stats_file = stats.path();
+        dut.p_stats_interval = 1;
+        dut.p_enable_dmi = true;
+        dut.p_dmi_ranges = "0x100:0x80";
+        dut.load_image(image.data(), 0, image.size());
+        initiator.socket.bind(dut.target_socket);
+
+        trans.set_command(tlm::TLM_READ_COMMAND);
+        trans.set_address(0x110);
+        trans.set_data_length(sizeof(value));
+        trans.set_streaming_width(sizeof(value));
+        trans.set_data_ptr(&value);
+        EXPECT_EQ(access(dut, 0x110, tlm::TLM_READ_COMMAND, &value,
+                         sizeof(value)),
+                  tlm::TLM_OK_RESPONSE);
+        EXPECT_EQ(value, 0x5a);
+        EXPECT_TRUE(initiator.socket->get_direct_mem_ptr(trans, dmi));
+
+        trans.set_address(0x200);
+        EXPECT_FALSE(initiator.socket->get_direct_mem_ptr(trans, dmi));
+
+        write8(dut, 0, CMD_READ_STATUS_REG);
+        trans.set_address(0x110);
+        EXPECT_FALSE(initiator.socket->get_direct_mem_ptr(trans, dmi));
+    }
+
+    const std::string text = read_text_file(stats.path());
+    EXPECT_NE(text.find("\"dmi_read_hints\": 1"), std::string::npos);
+    EXPECT_NE(text.find("\"dmi_requests\": 3"), std::string::npos);
+    EXPECT_NE(text.find("\"dmi_grants\": 1"), std::string::npos);
+    EXPECT_NE(text.find("\"dmi_reject_state\": 1"), std::string::npos);
+    EXPECT_NE(text.find("\"dmi_reject_range\": 1"), std::string::npos);
+    EXPECT_NE(text.find("\"dmi_invalidations\": 1"), std::string::npos);
+}
+
 TEST(StrataFlashJ3Test, EraseWritesThroughToBackingFile)
 {
     std::vector<uint8_t> image(0x200, 0x00);
