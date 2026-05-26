@@ -84,6 +84,13 @@ class strata_flash_j3 : public sc_core::sc_module
     std::string m_open_backing_file;
     bool m_stats_collecting = false;
     bool m_stats_collecting_known = false;
+    bool m_trace_enabled = false;
+    unsigned int m_trace_limit_value = 64;
+    bool m_enable_dmi_value = false;
+    bool m_program_ff_sets_bits_value = false;
+    bool m_program_ff_erases_sector_value = false;
+    uint64_t m_sector_size_value = 0x1000;
+    std::string m_backing_file_value;
     bool m_backing_error_reported = false;
     bool m_stats_error_reported = false;
     uint64_t m_read_accesses = 0;
@@ -353,6 +360,49 @@ class strata_flash_j3 : public sc_core::sc_module
         return m_stats_collecting;
     }
 
+    void invalidate_stats_collecting()
+    {
+        m_stats_collecting_known = false;
+    }
+
+    void refresh_hot_params()
+    {
+        m_trace_enabled = p_trace.get_value();
+        m_trace_limit_value = p_trace_limit.get_value();
+        m_enable_dmi_value = p_enable_dmi.get_value();
+        m_program_ff_sets_bits_value = p_program_ff_sets_bits.get_value();
+        m_program_ff_erases_sector_value = p_program_ff_erases_sector.get_value();
+        m_sector_size_value = p_sector_size.get_value();
+        m_backing_file_value = p_backing_file.get_value();
+        invalidate_stats_collecting();
+    }
+
+    void register_hot_param_callbacks()
+    {
+        p_trace.register_post_write_callback(
+            [this](const auto& ev) { m_trace_enabled = ev.new_value; });
+        p_trace_limit.register_post_write_callback(
+            [this](const auto& ev) { m_trace_limit_value = ev.new_value; });
+        p_enable_dmi.register_post_write_callback(
+            [this](const auto& ev) { m_enable_dmi_value = ev.new_value; });
+        p_program_ff_sets_bits.register_post_write_callback(
+            [this](const auto& ev) {
+                m_program_ff_sets_bits_value = ev.new_value;
+            });
+        p_program_ff_erases_sector.register_post_write_callback(
+            [this](const auto& ev) {
+                m_program_ff_erases_sector_value = ev.new_value;
+            });
+        p_sector_size.register_post_write_callback(
+            [this](const auto& ev) { m_sector_size_value = ev.new_value; });
+        p_backing_file.register_post_write_callback(
+            [this](const auto& ev) { m_backing_file_value = ev.new_value; });
+        p_stats_file.register_post_write_callback(
+            [this](const auto&) { invalidate_stats_collecting(); });
+        p_stats_interval.register_post_write_callback(
+            [this](const auto&) { invalidate_stats_collecting(); });
+    }
+
     void count_stat(uint64_t& counter, uint64_t delta = 1)
     {
         if (collect_stats()) {
@@ -362,7 +412,7 @@ class strata_flash_j3 : public sc_core::sc_module
 
     bool ensure_backing_file()
     {
-        const std::string path = p_backing_file.get_value();
+        const std::string& path = m_backing_file_value;
 
         if (path.empty()) {
             close_backing_file();
@@ -499,7 +549,7 @@ class strata_flash_j3 : public sc_core::sc_module
             const uint8_t old_value = m_data[offset + i];
             uint8_t new_value = old_value & data[i];
 
-            if (p_program_ff_sets_bits.get_value() && data[i] == 0xff) {
+            if (m_program_ff_sets_bits_value && data[i] == 0xff) {
                 new_value = 0xff;
             }
 
@@ -528,9 +578,9 @@ class strata_flash_j3 : public sc_core::sc_module
                                             const uint8_t* data,
                                             unsigned int len) const
     {
-        const uint64_t sector_size = p_sector_size.get_value();
+        const uint64_t sector_size = m_sector_size_value;
 
-        return p_program_ff_erases_sector.get_value() &&
+        return m_program_ff_erases_sector_value &&
                len == 1 &&
                data[0] == 0xff &&
                sector_size != 0 &&
@@ -539,7 +589,7 @@ class strata_flash_j3 : public sc_core::sc_module
 
     void erase_sector(uint64_t offset)
     {
-        const uint64_t sector_size = p_sector_size.get_value();
+        const uint64_t sector_size = m_sector_size_value;
         const uint64_t start = (offset / sector_size) * sector_size;
         const uint64_t end = std::min<uint64_t>(start + sector_size, m_data.size());
 
@@ -555,7 +605,7 @@ class strata_flash_j3 : public sc_core::sc_module
     void invalidate_dmi()
     {
         if (!m_dmi_granted ||
-            !p_enable_dmi.get_value() ||
+            !m_enable_dmi_value ||
             m_data.empty() ||
             target_socket.size() == 0) {
             return;
@@ -818,7 +868,7 @@ class strata_flash_j3 : public sc_core::sc_module
             }
             dmi_range range {};
             const bool dmi_allowed =
-                p_enable_dmi.get_value() &&
+                m_enable_dmi_value &&
                 m_mode == mode::read_array &&
                 m_pending == pending_command::none &&
                 find_dmi_range(offset, len, range);
@@ -953,7 +1003,7 @@ class strata_flash_j3 : public sc_core::sc_module
     void trace_access(tlm::tlm_generic_payload& trans, uint64_t offset,
                       unsigned int len, bool debug)
     {
-        if (!p_trace.get_value() || m_trace_count >= p_trace_limit.get_value()) {
+        if (!m_trace_enabled || m_trace_count >= m_trace_limit_value) {
             return;
         }
 
@@ -1058,6 +1108,8 @@ public:
         target_socket.register_b_transport(this, &strata_flash_j3::b_transport);
         target_socket.register_transport_dbg(this, &strata_flash_j3::transport_dbg);
         target_socket.register_get_direct_mem_ptr(this, &strata_flash_j3::get_direct_mem_ptr);
+        refresh_hot_params();
+        register_hot_param_callbacks();
     }
 
     ~strata_flash_j3() override
@@ -1085,7 +1137,7 @@ public:
 
         ensure_storage();
         count_stat(m_dmi_requests);
-        if (!p_enable_dmi.get_value()) {
+        if (!m_enable_dmi_value) {
             count_stat(m_dmi_reject_disabled);
             if (collect_stats()) {
                 maybe_write_dmi_stats(false);

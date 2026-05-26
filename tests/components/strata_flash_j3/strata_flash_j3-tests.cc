@@ -215,6 +215,25 @@ TEST(StrataFlashJ3Test, OptionalProgramFfCanRestoreErasedBytes)
     EXPECT_EQ(read8(dut, 0x180), 0xff);
 }
 
+TEST(StrataFlashJ3Test, ProgramFfParameterChangeUpdatesFastPath)
+{
+    strata_flash_j3 dut("strata_flash_program_ff_param_change");
+    const uint8_t image[] = {0x00, 0x00};
+
+    dut.load_image(image, 0x190, sizeof(image));
+
+    write8(dut, 0x190, CMD_WORD_PROGRAM);
+    write8(dut, 0x190, 0xff);
+    write8(dut, 0, CMD_READ_ARRAY);
+    EXPECT_EQ(read8(dut, 0x190), 0x00);
+
+    dut.p_program_ff_sets_bits = true;
+    write8(dut, 0x191, CMD_WORD_PROGRAM);
+    write8(dut, 0x191, 0xff);
+    write8(dut, 0, CMD_READ_ARRAY);
+    EXPECT_EQ(read8(dut, 0x191), 0xff);
+}
+
 TEST(StrataFlashJ3Test, OptionalSectorAlignedProgramFfCanEraseSector)
 {
     strata_flash_j3 dut("strata_flash_program_ff_erases_sector");
@@ -372,6 +391,33 @@ TEST(StrataFlashJ3Test, ArrayReadMarksPayloadDmiAllowed)
 
     EXPECT_EQ(trans.get_response_status(), tlm::TLM_OK_RESPONSE);
     EXPECT_FALSE(trans.is_dmi_allowed());
+}
+
+TEST(StrataFlashJ3Test, DmiParameterChangeUpdatesFastPath)
+{
+    strata_flash_j3 dut("strata_flash_dmi_param_change");
+    const uint8_t image[] = {0x12, 0x34};
+    uint8_t value = 0;
+    tlm::tlm_generic_payload trans;
+    sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+
+    dut.load_image(image, 0, sizeof(image));
+
+    trans.set_command(tlm::TLM_READ_COMMAND);
+    trans.set_address(0);
+    trans.set_data_length(sizeof(value));
+    trans.set_streaming_width(sizeof(value));
+    trans.set_data_ptr(&value);
+
+    dut.b_transport(trans, delay);
+    EXPECT_EQ(trans.get_response_status(), tlm::TLM_OK_RESPONSE);
+    EXPECT_FALSE(trans.is_dmi_allowed());
+
+    trans.set_dmi_allowed(false);
+    dut.p_enable_dmi = true;
+    dut.b_transport(trans, delay);
+    EXPECT_EQ(trans.get_response_status(), tlm::TLM_OK_RESPONSE);
+    EXPECT_TRUE(trans.is_dmi_allowed());
 }
 
 TEST(StrataFlashJ3Test, IgnoreCommandCanQueryArrayDmiForQemuMap)
@@ -580,6 +626,30 @@ TEST(StrataFlashJ3Test, StatsFileRecordsProgramAndNoopCounters)
     EXPECT_NE(text.find("\"program_bytes\": 2"), std::string::npos);
     EXPECT_NE(text.find("\"program_changed_bytes\": 1"), std::string::npos);
     EXPECT_NE(text.find("\"program_noop_bytes\": 1"), std::string::npos);
+}
+
+TEST(StrataFlashJ3Test, StatsParameterChangeUpdatesFastPath)
+{
+    std::vector<uint8_t> image(0x200, 0xff);
+    TempImage stats({});
+
+    {
+        strata_flash_j3 dut("strata_flash_stats_param_change");
+
+        dut.load_image(image.data(), 0, image.size());
+
+        write8(dut, 0x120, CMD_WORD_PROGRAM);
+        write8(dut, 0x120, 0x5a);
+
+        dut.p_stats_file = stats.path();
+        write8(dut, 0x121, CMD_WORD_PROGRAM);
+        write8(dut, 0x121, 0xa5);
+    }
+
+    const std::string text = read_text_file(stats.path());
+    EXPECT_NE(text.find("\"word_program_cmds\": 1"), std::string::npos);
+    EXPECT_NE(text.find("\"program_ops\": 1"), std::string::npos);
+    EXPECT_NE(text.find("\"program_changed_bytes\": 1"), std::string::npos);
 }
 
 TEST(StrataFlashJ3Test, StatsFileRecordsSectorEraseCompatibility)
