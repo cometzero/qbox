@@ -663,6 +663,8 @@ TEST(StrataFlashJ3Test, StatsFileRecordsDmiCounters)
                   tlm::TLM_OK_RESPONSE);
         EXPECT_EQ(value, 0x5a);
         EXPECT_TRUE(initiator.socket->get_direct_mem_ptr(trans, dmi));
+        const std::string grant_text = read_text_file(stats.path());
+        EXPECT_NE(grant_text.find("\"dmi_grants\": 1"), std::string::npos);
 
         trans.set_address(0x200);
         EXPECT_FALSE(initiator.socket->get_direct_mem_ptr(trans, dmi));

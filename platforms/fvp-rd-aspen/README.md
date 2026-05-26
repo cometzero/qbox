@@ -135,13 +135,15 @@ negative offset magnitude, avoiding physical-address wraparound.
 RSE boot-flash read-array DMI exists as a separate experiment. Full-device
 boot-flash DMI can still hide CFI command-write side effects from the
 `strata_flash_j3` model, so keep `QBOX_RDASPEN_BOOT_FLASH_DMI=false` for
-unrestricted TF-M storage debugging. For bounded debug runs that need faster
-image reads, use range-limited DMI instead:
-`QBOX_RDASPEN_BOOT_FLASH_DMI_RANGES=0x7000:0x260000` covers the current
-primary BL2/RSE-runtime/SI image slots while leaving metadata, ITS, PS, and
-FWU update slots on the command-state SystemC/TLM flash path. AP flash has a
-matching range knob, for example
-`QBOX_RDASPEN_AP_FLASH_DMI_RANGES=0x7000:0x240000` for the primary AP FIP.
+unrestricted TF-M storage debugging. Even range-limited boot-flash DMI is a
+diagnostic-only shortcut: a 2026-05-27 stats run with
+`QBOX_RDASPEN_BOOT_FLASH_DMI_RANGES=0x7000:0x260000` granted one DMI mapping
+and then recorded `write_accesses=0` and `command_writes=0`, proving the CFI
+command-state model was bypassed after the grant. Use it only to split image
+read throughput from CFI fidelity; do not use it as pass/fail evidence for
+ITS, PS, UEFI variables, or FWU. AP flash has a matching range knob, for
+example `QBOX_RDASPEN_AP_FLASH_DMI_RANGES=0x7000:0x240000` for the primary AP
+FIP, with the same caveat.
 Two RSE-local co-location knobs are enabled by default after the 2026-05-24
 short-timeout validation: `QBOX_RDASPEN_RSE_LOCAL_CRYPTO=true` places KMU and
 CC3XX in the RSE `RemoteCPU` process, and
@@ -392,7 +394,9 @@ For RSE/AP Strata flash transaction counts in the same GDB workflow, add
 `--flash-stats --flash-stats-interval 512`. The helper writes
 `rse-strata-stats.json` and `ap-strata-stats.json` under the run directory and
 records the effective `QBOX_RDASPEN_*_FLASH_STATS_FILE` environment in
-`debug-env.json`. This is the preferred way to inspect whether a short run is
+`debug-env.json`. The stats include DMI hint/request/grant/reject counters, so
+they also show when a boot-flash DMI experiment bypasses firmware-visible CFI
+command traffic. This is the preferred way to inspect whether a short run is
 spending time in firmware-visible CFI byte-program/status-poll traffic without
 turning on verbose per-access tracing.
 

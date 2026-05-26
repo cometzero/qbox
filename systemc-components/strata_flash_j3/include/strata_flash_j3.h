@@ -122,6 +122,7 @@ class strata_flash_j3 : public sc_core::sc_module
     uint64_t m_backing_write_ops = 0;
     uint64_t m_backing_write_bytes = 0;
     uint64_t m_last_stats_write_access = 0;
+    uint64_t m_last_stats_dmi_request = 0;
     uint64_t m_write_buffer_base = 0;
     std::vector<uint8_t> m_write_buffer;
     std::vector<bool> m_write_buffer_written;
@@ -835,6 +836,23 @@ class strata_flash_j3 : public sc_core::sc_module
         write_stats_file();
     }
 
+    void maybe_write_dmi_stats(bool force)
+    {
+        const unsigned int interval = p_stats_interval.get_value();
+
+        if (interval == 0 ||
+            p_stats_file.get_value().empty() ||
+            m_dmi_requests == 0 ||
+            (!force &&
+             (m_dmi_requests == m_last_stats_dmi_request ||
+              (m_dmi_requests % interval) != 0))) {
+            return;
+        }
+
+        m_last_stats_dmi_request = m_dmi_requests;
+        write_stats_file();
+    }
+
     void report_stats_error_once(const std::string& action,
                                  const std::string& path)
     {
@@ -1047,20 +1065,24 @@ public:
         ++m_dmi_requests;
         if (!p_enable_dmi.get_value()) {
             ++m_dmi_reject_disabled;
+            maybe_write_dmi_stats(false);
             return false;
         }
         if (m_mode != mode::read_array ||
             m_pending != pending_command::none) {
             ++m_dmi_reject_state;
+            maybe_write_dmi_stats(false);
             return false;
         }
         if (trans.get_command() != tlm::TLM_READ_COMMAND &&
             trans.get_command() != tlm::TLM_IGNORE_COMMAND) {
             ++m_dmi_reject_command;
+            maybe_write_dmi_stats(false);
             return false;
         }
         if (!find_dmi_range(offset, len, range)) {
             ++m_dmi_reject_range;
+            maybe_write_dmi_stats(false);
             return false;
         }
 
@@ -1071,6 +1093,7 @@ public:
         dmi_data.set_write_latency(sc_core::SC_ZERO_TIME);
         dmi_data.allow_read();
         ++m_dmi_grants;
+        maybe_write_dmi_stats(m_dmi_grants == 1);
         m_dmi_granted = true;
         return true;
     }
