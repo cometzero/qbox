@@ -848,6 +848,56 @@ TEST(Cc3xxTest, DmaTraceCanFilterBelowAddressThreshold)
     EXPECT_NE(log.find("offset=0xc28 len=0x4 value=0x70000040"), std::string::npos);
 }
 
+TEST(Cc3xxTest, PkaTraceSkipCanGateEarlyOpcodes)
+{
+    cc3xx dut("cc3xx_trace_pka_skip");
+
+    dut.p_trace = true;
+    dut.p_trace_filter = std::string("pka-opcode");
+    dut.p_trace_skip = 1;
+    dut.p_trace_limit = 1;
+
+    std::stringstream captured;
+    auto* old_cerr = std::cerr.rdbuf(captured.rdbuf());
+
+    write32(dut, PKA_OPCODE, 0x210e10c0);
+    write32(dut, PKA_OPCODE, 0x290e10c0);
+    write32(dut, PKA_OPCODE, 0x490e0000);
+
+    std::cerr.rdbuf(old_cerr);
+
+    const auto log = captured.str();
+    EXPECT_EQ(log.find("value=0x210e10c0"), std::string::npos);
+    EXPECT_NE(log.find("value=0x290e10c0"), std::string::npos);
+    EXPECT_EQ(log.find("value=0x490e0000"), std::string::npos);
+}
+
+TEST(Cc3xxTest, PkaModulusCacheInvalidatesOnModulusRewrite)
+{
+    cc3xx dut("cc3xx_pka_modulus_cache");
+
+    write32(dut, PKA_L_BASE, 32);
+    pka_map_reg(dut, 0, 0x20);
+    pka_map_reg(dut, 1, 0x30);
+    pka_map_reg(dut, 2, 0x40);
+    pka_map_reg(dut, 3, 0x50);
+
+    pka_write_words(dut, 0x20, {17});
+    pka_write_words(dut, 0x30, {13});
+    pka_write_words(dut, 0x40, {8});
+
+    write32(dut, PKA_OPCODE,
+            pka_opcode(CC3XX_PKA_OPCODE_MODADD_MODINC,
+                       PKA_OP_SIZE_N, false, 1, false, 2, false, 3));
+    EXPECT_EQ(pka_read_words(dut, 0x50, 1)[0], 4u);
+
+    pka_write_words(dut, 0x20, {19});
+    write32(dut, PKA_OPCODE,
+            pka_opcode(CC3XX_PKA_OPCODE_MODADD_MODINC,
+                       PKA_OP_SIZE_N, false, 1, false, 2, false, 3));
+    EXPECT_EQ(pka_read_words(dut, 0x50, 1)[0], 2u);
+}
+
 TEST(Cc3xxTest, AesCmacFinishExposesTagThroughIvRegisters)
 {
     cc3xx dut("cc3xx_cmac");

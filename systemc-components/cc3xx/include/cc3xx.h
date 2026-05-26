@@ -138,13 +138,17 @@ class cc3xx : public sc_core::sc_module
     static constexpr uint32_t PKA_STATUS_DIV_BY_ZERO = 1u << 14;
     static constexpr size_t PKA_SRAM_WORDS = 0x1800 / sizeof(uint32_t);
 
+    using pka_int = boost::multiprecision::cpp_int;
+
     std::array<uint8_t, REG_BYTES> m_regs{};
     std::array<uint32_t, PKA_SRAM_WORDS> m_pka_sram{};
     uint32_t m_pka_write_addr = 0;
     uint32_t m_pka_read_addr = 0;
+    mutable bool m_pka_modulus_cache_valid = false;
+    mutable size_t m_pka_modulus_cache_words = 0;
+    mutable pka_int m_pka_modulus_cache = 0;
+    unsigned int m_trace_seen_count = 0;
     unsigned int m_trace_count = 0;
-
-    using pka_int = boost::multiprecision::cpp_int;
 
     using initiator_socket_type = tlm_utils::simple_initiator_socket_b<
         cc3xx, DEFAULT_TLM_BUSWIDTH, tlm::tlm_base_protocol_types, sc_core::SC_ZERO_OR_MORE_BOUND>;
@@ -211,10 +215,20 @@ class cc3xx : public sc_core::sc_module
         return m_pka_sram[word_addr];
     }
 
-    void pka_sram_write(uint32_t word_addr, uint32_t value)
+    void pka_invalidate_modulus_cache()
+    {
+        m_pka_modulus_cache_valid = false;
+        m_pka_modulus_cache_words = 0;
+        m_pka_modulus_cache = 0;
+    }
+
+    void pka_sram_write(uint32_t word_addr, uint32_t value, bool invalidate_modulus = true)
     {
         if (word_addr < m_pka_sram.size()) {
             m_pka_sram[word_addr] = value;
+            if (invalidate_modulus) {
+                pka_invalidate_modulus_cache();
+            }
         }
     }
 
@@ -257,9 +271,13 @@ class cc3xx : public sc_core::sc_module
     void pka_store_operand(uint32_t phys_reg, const std::vector<uint32_t>& data)
     {
         const uint32_t base = pka_phys_reg_base(phys_reg);
+        const uint32_t n_base = pka_phys_reg_base(0);
+        const bool writes_modulus =
+            base < n_base + data.size() &&
+            n_base < base + data.size();
 
         for (size_t i = 0; i < data.size(); ++i) {
-            pka_sram_write(base + static_cast<uint32_t>(i), data[i]);
+            pka_sram_write(base + static_cast<uint32_t>(i), data[i], writes_modulus);
         }
     }
 
@@ -315,7 +333,14 @@ class cc3xx : public sc_core::sc_module
 
     pka_int pka_modulus_value(size_t words) const
     {
-        return pka_words_to_int(pka_load_operand(false, 0, words, false));
+        if (m_pka_modulus_cache_valid && m_pka_modulus_cache_words == words) {
+            return m_pka_modulus_cache;
+        }
+
+        m_pka_modulus_cache = pka_words_to_int(pka_load_operand(false, 0, words, false));
+        m_pka_modulus_cache_words = words;
+        m_pka_modulus_cache_valid = true;
+        return m_pka_modulus_cache;
     }
 
     static pka_int pka_positive_mod(pka_int value, const pka_int& modulus)
@@ -1408,6 +1433,7 @@ class cc3xx : public sc_core::sc_module
         m_pka_sram.fill(0);
         m_pka_write_addr = 0;
         m_pka_read_addr = 0;
+        pka_invalidate_modulus_cache();
         m_sha256 = sha256_state{};
         m_engine = CC3XX_ENGINE_NONE;
         m_cmac_data.clear();
@@ -1662,6 +1688,7 @@ class cc3xx : public sc_core::sc_module
             m_pka_sram.fill(0);
             m_pka_write_addr = 0;
             m_pka_read_addr = 0;
+            pka_invalidate_modulus_cache();
             store32(PKA_STATUS, 0x00000001);
             store32(PKA_PIPE_RDY, 0x00000001);
             store32(PKA_DONE, 0x00000001);
@@ -1729,6 +1756,9 @@ class cc3xx : public sc_core::sc_module
             if (offset >= HASH_H && offset < HASH_H + m_sha256.h.size() * sizeof(uint32_t)) {
                 update_hash_after_write(offset, value);
             } else {
+                if (offset == 0) {
+                    pka_invalidate_modulus_cache();
+                }
                 store32(offset, value);
             }
             break;
@@ -1870,8 +1900,13 @@ class cc3xx : public sc_core::sc_module
     void trace_access(tlm::tlm_generic_payload& trans, uint64_t offset, unsigned int len, bool debug)
     {
         if (!p_trace.get_value() ||
-            m_trace_count >= p_trace_limit.get_value() ||
             !trace_filter_matches(offset)) {
+            return;
+        }
+
+        ++m_trace_seen_count;
+        if (m_trace_seen_count <= p_trace_skip.get_value() ||
+            m_trace_count >= p_trace_limit.get_value()) {
             return;
         }
 
@@ -1893,6 +1928,7 @@ class cc3xx : public sc_core::sc_module
 public:
     cci::cci_param<bool> p_trace;
     cci::cci_param<unsigned int> p_trace_limit;
+    cci::cci_param<unsigned int> p_trace_skip;
     cci::cci_param<std::string> p_trace_filter;
     cci::cci_param<uint64_t> p_trace_address_min;
     initiator_socket_type initiator_socket;
@@ -1903,6 +1939,7 @@ public:
         : sc_core::sc_module(name)
         , p_trace("trace", false)
         , p_trace_limit("trace_limit", 64)
+        , p_trace_skip("trace_skip", 0)
         , p_trace_filter("trace_filter", "all")
         , p_trace_address_min("trace_address_min", 0)
         , initiator_socket("initiator_socket")
