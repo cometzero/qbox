@@ -584,6 +584,31 @@ TEST(StrataFlashJ3Test, ProgramWritesThroughToBackingFile)
     EXPECT_EQ(persisted[0x120], 0x5a);
 }
 
+TEST(StrataFlashJ3Test, DeferredBackingWriteFlushesOnDestruction)
+{
+    std::vector<uint8_t> image(0x200, 0xff);
+    TempImage backing(image);
+
+    {
+        strata_flash_j3 dut("strata_flash_defer_backing");
+
+        dut.p_backing_file = backing.path();
+        dut.p_defer_backing_write = true;
+        dut.load_image(image.data(), 0, image.size());
+
+        write8(dut, 0x120, CMD_WORD_PROGRAM);
+        write8(dut, 0x120, 0x5a);
+
+        const std::vector<uint8_t> before_flush = read_file(backing.path());
+        ASSERT_GT(before_flush.size(), 0x120u);
+        EXPECT_EQ(before_flush[0x120], 0xff);
+    }
+
+    const std::vector<uint8_t> persisted = read_file(backing.path());
+    ASSERT_GT(persisted.size(), 0x120u);
+    EXPECT_EQ(persisted[0x120], 0x5a);
+}
+
 TEST(StrataFlashJ3Test, NoopProgramSkipsBackingFileWrite)
 {
     std::vector<uint8_t> image(0x200, 0xff);
@@ -701,6 +726,34 @@ TEST(StrataFlashJ3Test, StatsFileRecordsWriteBufferCounters)
               std::string::npos);
     EXPECT_NE(text.find("\"write_buffer_ops\": 1"), std::string::npos);
     EXPECT_NE(text.find("\"write_buffer_bytes\": 4"), std::string::npos);
+}
+
+TEST(StrataFlashJ3Test, StatsFileRecordsDeferredBackingCounters)
+{
+    std::vector<uint8_t> image(0x200, 0xff);
+    TempImage backing(image);
+    TempImage stats({});
+
+    {
+        strata_flash_j3 dut("strata_flash_stats_defer_backing");
+
+        dut.p_backing_file = backing.path();
+        dut.p_defer_backing_write = true;
+        dut.p_stats_file = stats.path();
+        dut.p_stats_interval = 1;
+        dut.load_image(image.data(), 0, image.size());
+
+        write8(dut, 0x120, CMD_WORD_PROGRAM);
+        write8(dut, 0x120, 0x5a);
+        write8(dut, 0x121, CMD_WORD_PROGRAM);
+        write8(dut, 0x121, 0xa5);
+    }
+
+    const std::string text = read_text_file(stats.path());
+    EXPECT_NE(text.find("\"backing_write_ops\": 2"), std::string::npos);
+    EXPECT_NE(text.find("\"backing_deferred_ranges\": 2"), std::string::npos);
+    EXPECT_NE(text.find("\"backing_flush_ops\": 1"), std::string::npos);
+    EXPECT_NE(text.find("\"backing_flush_bytes\": 2"), std::string::npos);
 }
 
 TEST(StrataFlashJ3Test, StatsFileRecordsDmiCounters)

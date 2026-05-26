@@ -89,8 +89,12 @@ class strata_flash_j3 : public sc_core::sc_module
     bool m_enable_dmi_value = false;
     bool m_program_ff_sets_bits_value = false;
     bool m_program_ff_erases_sector_value = false;
+    bool m_defer_backing_write_value = false;
     uint64_t m_sector_size_value = 0x1000;
     std::string m_backing_file_value;
+    bool m_backing_dirty = false;
+    uint64_t m_backing_dirty_start = 0;
+    uint64_t m_backing_dirty_end = 0;
     bool m_backing_error_reported = false;
     bool m_stats_error_reported = false;
     uint64_t m_read_accesses = 0;
@@ -130,6 +134,10 @@ class strata_flash_j3 : public sc_core::sc_module
     uint64_t m_sector_erase_bytes = 0;
     uint64_t m_backing_write_ops = 0;
     uint64_t m_backing_write_bytes = 0;
+    uint64_t m_backing_deferred_ranges = 0;
+    uint64_t m_backing_deferred_bytes = 0;
+    uint64_t m_backing_flush_ops = 0;
+    uint64_t m_backing_flush_bytes = 0;
     uint64_t m_last_stats_write_access = 0;
     uint64_t m_last_stats_dmi_request = 0;
     uint64_t m_write_buffer_base = 0;
@@ -319,6 +327,7 @@ class strata_flash_j3 : public sc_core::sc_module
 
     void close_backing_file()
     {
+        flush_deferred_backing();
 #ifdef _WIN32
         if (m_backing_stream.is_open()) {
             m_backing_stream.close();
@@ -372,6 +381,7 @@ class strata_flash_j3 : public sc_core::sc_module
         m_enable_dmi_value = p_enable_dmi.get_value();
         m_program_ff_sets_bits_value = p_program_ff_sets_bits.get_value();
         m_program_ff_erases_sector_value = p_program_ff_erases_sector.get_value();
+        m_defer_backing_write_value = p_defer_backing_write.get_value();
         m_sector_size_value = p_sector_size.get_value();
         m_backing_file_value = p_backing_file.get_value();
         invalidate_stats_collecting();
@@ -393,10 +403,18 @@ class strata_flash_j3 : public sc_core::sc_module
             [this](const auto& ev) {
                 m_program_ff_erases_sector_value = ev.new_value;
             });
+        p_defer_backing_write.register_post_write_callback(
+            [this](const auto& ev) {
+                flush_deferred_backing();
+                m_defer_backing_write_value = ev.new_value;
+            });
         p_sector_size.register_post_write_callback(
             [this](const auto& ev) { m_sector_size_value = ev.new_value; });
         p_backing_file.register_post_write_callback(
-            [this](const auto& ev) { m_backing_file_value = ev.new_value; });
+            [this](const auto& ev) {
+                flush_deferred_backing();
+                m_backing_file_value = ev.new_value;
+            });
         p_stats_file.register_post_write_callback(
             [this](const auto&) { invalidate_stats_collecting(); });
         p_stats_interval.register_post_write_callback(
@@ -461,9 +479,45 @@ class strata_flash_j3 : public sc_core::sc_module
         return true;
     }
 
+    void mark_backing_dirty(uint64_t offset, uint64_t len)
+    {
+        if (len == 0) {
+            return;
+        }
+
+        const uint64_t end = offset + len - 1;
+        if (!m_backing_dirty) {
+            m_backing_dirty_start = offset;
+            m_backing_dirty_end = end;
+            m_backing_dirty = true;
+            return;
+        }
+
+        m_backing_dirty_start = std::min(m_backing_dirty_start, offset);
+        m_backing_dirty_end = std::max(m_backing_dirty_end, end);
+    }
+
+    void flush_deferred_backing()
+    {
+        if (!m_backing_dirty) {
+            return;
+        }
+
+        const uint64_t offset = m_backing_dirty_start;
+        const uint64_t len = m_backing_dirty_end - m_backing_dirty_start + 1;
+        m_backing_dirty = false;
+
+        if (m_backing_file_value.empty() || !write_backing_range_now(offset, len)) {
+            return;
+        }
+
+        count_stat(m_backing_flush_ops);
+        count_stat(m_backing_flush_bytes, len);
+    }
+
     void write_backing_range(uint64_t offset, uint64_t len)
     {
-        if (len == 0 || !ensure_backing_file()) {
+        if (len == 0 || m_backing_file_value.empty()) {
             return;
         }
 
@@ -474,12 +528,32 @@ class strata_flash_j3 : public sc_core::sc_module
         count_stat(m_backing_write_ops);
         count_stat(m_backing_write_bytes, len);
 
+        if (m_defer_backing_write_value) {
+            count_stat(m_backing_deferred_ranges);
+            count_stat(m_backing_deferred_bytes, len);
+            mark_backing_dirty(offset, len);
+            return;
+        }
+
+        write_backing_range_now(offset, len);
+    }
+
+    bool write_backing_range_now(uint64_t offset, uint64_t len)
+    {
+        if (len == 0 || !ensure_backing_file()) {
+            return false;
+        }
+
+        if (offset > m_data.size() || len > m_data.size() - offset) {
+            return false;
+        }
+
         const std::string path = p_backing_file.get_value();
 #ifdef _WIN32
         m_backing_stream.seekp(static_cast<std::streamoff>(offset), std::ios::beg);
         if (!m_backing_stream) {
             report_backing_error_once("seek", path);
-            return;
+            return false;
         }
 
         m_backing_stream.write(reinterpret_cast<const char*>(m_data.data() + offset),
@@ -487,17 +561,19 @@ class strata_flash_j3 : public sc_core::sc_module
         m_backing_stream.flush();
         if (!m_backing_stream) {
             report_backing_error_once("write", path);
+            return false;
         }
 #else
         if (m_backing_map == nullptr ||
             offset > m_backing_size ||
             len > m_backing_size - offset) {
             report_backing_error_once("range", path);
-            return;
+            return false;
         }
 
         std::memcpy(m_backing_map + offset, m_data.data() + offset, len);
 #endif
+        return true;
     }
 
     uint8_t read_byte(uint64_t offset)
@@ -993,7 +1069,13 @@ class strata_flash_j3 : public sc_core::sc_module
             << "  \"sector_erase_ops\": " << m_sector_erase_ops << ",\n"
             << "  \"sector_erase_bytes\": " << m_sector_erase_bytes << ",\n"
             << "  \"backing_write_ops\": " << m_backing_write_ops << ",\n"
-            << "  \"backing_write_bytes\": " << m_backing_write_bytes << "\n"
+            << "  \"backing_write_bytes\": " << m_backing_write_bytes << ",\n"
+            << "  \"backing_deferred_ranges\": "
+            << m_backing_deferred_ranges << ",\n"
+            << "  \"backing_deferred_bytes\": "
+            << m_backing_deferred_bytes << ",\n"
+            << "  \"backing_flush_ops\": " << m_backing_flush_ops << ",\n"
+            << "  \"backing_flush_bytes\": " << m_backing_flush_bytes << "\n"
             << "}\n";
         if (!out) {
             report_stats_error_once("write", path);
@@ -1066,6 +1148,7 @@ public:
     cci::cci_param<bool> p_enable_dmi;
     cci::cci_param<bool> p_program_ff_sets_bits;
     cci::cci_param<bool> p_program_ff_erases_sector;
+    cci::cci_param<bool> p_defer_backing_write;
     cci::cci_param<uint64_t> p_size;
     cci::cci_param<uint64_t> p_sector_size;
     cci::cci_param<std::string> p_dmi_ranges;
@@ -1094,6 +1177,7 @@ public:
         , p_enable_dmi("enable_dmi", false)
         , p_program_ff_sets_bits("program_ff_sets_bits", false)
         , p_program_ff_erases_sector("program_ff_erases_sector", false)
+        , p_defer_backing_write("defer_backing_write", false)
         , p_size("size", 0x04000000)
         , p_sector_size("sector_size", 0x1000)
         , p_dmi_ranges("dmi_ranges", "")
@@ -1114,6 +1198,7 @@ public:
 
     ~strata_flash_j3() override
     {
+        flush_deferred_backing();
         write_stats_file();
         close_backing_file();
     }
