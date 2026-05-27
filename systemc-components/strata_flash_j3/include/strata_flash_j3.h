@@ -1109,6 +1109,13 @@ class strata_flash_j3 : public sc_core::sc_module
 
     bool access(tlm::tlm_generic_payload& trans, bool debug)
     {
+        if (!debug &&
+            !stats_enabled() &&
+            !m_trace_enabled &&
+            !m_enable_dmi_value) {
+            return fast_access(trans);
+        }
+
         const uint64_t offset = trans.get_address();
         const unsigned int len = trans.get_data_length();
         uint8_t* data = trans.get_data_ptr();
@@ -1152,6 +1159,39 @@ class strata_flash_j3 : public sc_core::sc_module
         if (stats_enabled()) {
             maybe_write_stats();
         }
+        trans.set_response_status(tlm::TLM_OK_RESPONSE);
+        return true;
+    }
+
+    bool fast_access(tlm::tlm_generic_payload& trans)
+    {
+        const uint64_t offset = trans.get_address();
+        const unsigned int len = trans.get_data_length();
+        uint8_t* data = trans.get_data_ptr();
+
+        if (data == nullptr || len == 0 || !in_range(offset, len)) {
+            trans.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
+            return false;
+        }
+
+        trans.set_dmi_allowed(false);
+        if (trans.get_command() == tlm::TLM_READ_COMMAND) {
+            if (m_mode == mode::read_array) {
+                std::memcpy(data, m_data.data() + offset, len);
+            } else if (m_mode == mode::read_status) {
+                std::memset(data, m_status, len);
+            } else {
+                for (unsigned int i = 0; i < len; ++i) {
+                    data[i] = read_byte(offset + i);
+                }
+            }
+        } else if (trans.get_command() == tlm::TLM_WRITE_COMMAND) {
+            write(offset, data, len);
+        } else {
+            trans.set_response_status(tlm::TLM_COMMAND_ERROR_RESPONSE);
+            return false;
+        }
+
         trans.set_response_status(tlm::TLM_OK_RESPONSE);
         return true;
     }
