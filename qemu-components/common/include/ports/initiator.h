@@ -501,7 +501,15 @@ protected:
             SCP_INFO(()) << "Adding DMI for range [0x" << std::hex << dmi_data.get_start_address() << "-0x" << std::hex
                          << dmi_data.get_end_address() << "]";
 
-            DmiRegionAlias::Ptr alias = m_inst.get_dmi_manager().get_new_region_alias(dmi_data, shm_fd, shm_offset);
+            QemuInstanceDmiManager::DmiWriteCallback write_cb;
+            if (dmi_data.is_read_allowed() && !dmi_data.is_write_allowed()) {
+                write_cb = [this](uint64_t addr, uint64_t data, unsigned int size, MemTxAttrs attrs) {
+                    return qemu_io_write(addr, data, size, attrs);
+                };
+            }
+
+            DmiRegionAlias::Ptr alias =
+                m_inst.get_dmi_manager().get_new_region_alias(dmi_data, shm_fd, shm_offset, write_cb);
 
             m_dmi_aliases[start] = alias;
             add_dmi_mr_alias(m_dmi_aliases[start]);

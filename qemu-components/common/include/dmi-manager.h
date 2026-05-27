@@ -13,6 +13,9 @@
 #include <mutex>
 #include <limits>
 #include <cassert>
+#include <cstdint>
+#include <cstring>
+#include <functional>
 #include <memory>
 
 #include <tlm>
@@ -46,6 +49,10 @@ std::ostream& operator<<(std::ostream& os, const tlm::tlm_dmi& region);
 class QemuInstanceDmiManager
 {
 public:
+    using DmiWriteCallback =
+        std::function<qemu::MemoryRegionOps::MemTxResult(uint64_t, uint64_t, unsigned int,
+                                                         qemu::MemoryRegionOps::MemTxAttrs)>;
+
     /* Simple container object used to parent the memory regions we create */
     class QemuContainer : public qemu::Object
     {
@@ -149,6 +156,7 @@ public:
 
         QemuContainer m_container;
         qemu::MemoryRegion m_alias;
+        qemu::MemoryRegionOpsPtr m_ops;
 
         bool m_installed = false;
 
@@ -172,6 +180,41 @@ public:
              * when "overlap-adding" the RAM regions to the DMI-manager root container. */
             uint64_t offset = DmiRegion::key_from_tlm_dmi(info);
             m_alias.init_alias(m_container, "dmi-alias", root, offset, (m_end - m_start) + 1);
+        }
+
+        DmiRegionAlias(const tlm::tlm_dmi& info, qemu::LibQemu& inst, DmiWriteCallback write_cb)
+            : m_start(info.get_start_address())
+            , m_end(info.get_end_address())
+            , m_ptr(info.get_dmi_ptr())
+            , m_container(inst.object_new_unparented<QemuContainer>())
+            , m_alias(inst.object_new_unparented<qemu::MemoryRegion>())
+            , m_ops(inst.memory_region_ops_new())
+        {
+            const uint64_t size = get_size();
+            const uint64_t start = m_start;
+            unsigned char* ptr = m_ptr;
+
+            SCP_INFO("DMI.Libqbox") << "Creating read-only IO Alias " << *this;
+            m_ops->set_read_callback([ptr, size](uint64_t addr, uint64_t* data, unsigned int len,
+                                                 qemu::MemoryRegionOps::MemTxAttrs) {
+                if (data == nullptr || len > sizeof(*data) || addr > size || len > size - addr) {
+                    return qemu::MemoryRegionOps::MemTxDecodeError;
+                }
+
+                *data = 0;
+                std::memcpy(data, ptr + addr, len);
+                return qemu::MemoryRegionOps::MemTxOK;
+            });
+            m_ops->set_write_callback([start, size, write_cb](uint64_t addr, uint64_t data, unsigned int len,
+                                                              qemu::MemoryRegionOps::MemTxAttrs attrs) {
+                if (!write_cb || len > sizeof(data) || addr > size || len > size - addr) {
+                    return qemu::MemoryRegionOps::MemTxDecodeError;
+                }
+
+                return write_cb(start + addr, data, len, attrs);
+            });
+            m_ops->set_max_access_size(8);
+            m_alias.init_io(m_container, "dmi-readonly-alias", size, m_ops);
         }
 
         /* helpful for debugging */
@@ -285,8 +328,13 @@ public:
     /**
      * @brief Create a new alias for the DMI region designated by `info`
      */
-    DmiRegionAlias::Ptr get_new_region_alias(const tlm::tlm_dmi& info, int fd = -1, uint64_t fd_offset = 0)
+    DmiRegionAlias::Ptr get_new_region_alias(const tlm::tlm_dmi& info, int fd = -1, uint64_t fd_offset = 0,
+                                             DmiWriteCallback write_cb = {})
     {
+        if (write_cb && info.is_read_allowed() && !info.is_write_allowed()) {
+            return std::make_shared<DmiRegionAlias>(info, m_inst, write_cb);
+        }
+
         get_region(info, fd, fd_offset);
         return std::make_shared<DmiRegionAlias>(m_root, info, m_inst);
     }

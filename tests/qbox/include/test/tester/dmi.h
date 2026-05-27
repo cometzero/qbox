@@ -42,6 +42,7 @@ protected:
     size_t m_cur_buf = 0;
 
     bool m_dmi_enabled = true;
+    bool m_dmi_write_enabled = true;
 
     void dmi_b_transport(tlm::tlm_generic_payload& txn, sc_core::sc_time& delay)
     {
@@ -105,7 +106,11 @@ protected:
         TEST_ASSERT(dmi.get_start_address() < DMI_SIZE);
         TEST_ASSERT(dmi.get_end_address() < DMI_SIZE);
 
-        dmi.allow_read_write();
+        if (m_dmi_write_enabled) {
+            dmi.allow_read_write();
+        } else {
+            dmi.allow_read();
+        }
         dmi.set_dmi_ptr(m_buf[m_cur_buf] + dmi.get_start_address());
         m_lock.unlock();
         return true;
@@ -147,6 +152,7 @@ public:
 
     void enable_dmi_hint() { m_dmi_enabled = true; }
     void disable_dmi_hint() { m_dmi_enabled = false; }
+    void disable_dmi_write() { m_dmi_write_enabled = false; }
 
     uint64_t get_buf_value(int cpuid)
     {
