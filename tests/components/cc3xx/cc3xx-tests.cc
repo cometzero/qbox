@@ -712,6 +712,53 @@ TEST(Cc3xxTest, AesCtrMemToMemDmaDecryptsInPlace)
     EXPECT_EQ(std::memcmp(memory.bytes.data() + 0x20, plaintext, sizeof(plaintext)), 0);
 }
 
+TEST(Cc3xxTest, AesCtrMemToMemDmaCoversLargeInPlaceTransfer)
+{
+    cc3xx dut("cc3xx_ctr_large_in_place");
+    TestMemory memory("ctr_large_in_place_memory", 0x3000);
+
+    dut.initiator_socket.bind(memory.target_socket);
+
+    const uint8_t key[] = {
+        0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6,
+        0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c,
+    };
+    const uint8_t counter[] = {
+        0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7,
+        0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff,
+    };
+    constexpr uint64_t buffer = 0x400;
+    constexpr size_t transfer_size = 8192;
+    std::vector<uint8_t> original(transfer_size);
+
+    for (size_t i = 0; i < transfer_size; ++i) {
+        original[i] = static_cast<uint8_t>((i * 37u + 11u) & 0xffu);
+    }
+    std::memcpy(memory.bytes.data() + buffer, original.data(), original.size());
+
+    write_reg_bytes(dut, AES_KEY_0, key, sizeof(key));
+    write_reg_bytes(dut, AES_CTR_0, counter, sizeof(counter));
+    write32(dut, AES_CONTROL, (CC3XX_AES_KEYSIZE_128 << 12) | (CC3XX_AES_MODE_CTR << 2));
+    write32(dut, CRYPTO_CTL, CC3XX_ENGINE_AES);
+    write32(dut, DOUT_DST_LLI_WORD0, buffer);
+    write32(dut, DOUT_DST_LLI_WORD1, transfer_size);
+    write32(dut, HOST_RGF_ICR, SYM_DMA_COMPLETED | DOUT_TO_MEM_INT);
+    write32(dut, DIN_SRC_LLI_WORD0, buffer);
+    write32(dut, DIN_SRC_LLI_WORD1, transfer_size);
+
+    EXPECT_NE(std::memcmp(memory.bytes.data() + buffer, original.data(), original.size()), 0);
+
+    write_reg_bytes(dut, AES_CTR_0, counter, sizeof(counter));
+    write32(dut, HOST_RGF_ICR, SYM_DMA_COMPLETED | MEM_TO_DIN_INT);
+    write32(dut, DOUT_DST_LLI_WORD0, buffer);
+    write32(dut, DOUT_DST_LLI_WORD1, transfer_size);
+    write32(dut, HOST_RGF_ICR, SYM_DMA_COMPLETED | DOUT_TO_MEM_INT);
+    write32(dut, DIN_SRC_LLI_WORD0, buffer);
+    write32(dut, DIN_SRC_LLI_WORD1, transfer_size);
+
+    EXPECT_EQ(std::memcmp(memory.bytes.data() + buffer, original.data(), original.size()), 0);
+}
+
 TEST(Cc3xxTest, AesEcbMemToMemDmaDecryptsIntoOutputBuffer)
 {
     cc3xx dut("cc3xx_ecb");

@@ -556,6 +556,12 @@ TF-M BL1_1/BL1_2 SHA-256 source-address checks. The `pka` filter is useful
 when checking whether later CRYPTOCELL PKA traffic appears, because it avoids
 exhausting the trace budget on non-PKA CC3XX traffic:
 
+The RSE runner also classifies PC-trace timeouts against the TF-M BL1_1 map.
+Short pre-AP timeouts in the shared CC3XX/CFI path are reported as
+`rse_bl1_1_cc3xx_crypto_timeout:*` or
+`rse_bl1_1_cfi_flash_io_timeout:*`, which is more useful than a generic
+platform timeout when iterating on RSE image validation and Strata traffic.
+
 ```bash
 QBOX_RDASPEN_CC3XX_TRACE=true \
 QBOX_RDASPEN_CC3XX_TRACE_FILTER=pka \

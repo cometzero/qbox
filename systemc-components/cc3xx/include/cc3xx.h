@@ -137,6 +137,7 @@ class cc3xx : public sc_core::sc_module
     static constexpr uint32_t PKA_STATUS_ALU_OUT_ZERO = 1u << 12;
     static constexpr uint32_t PKA_STATUS_DIV_BY_ZERO = 1u << 14;
     static constexpr size_t PKA_SRAM_WORDS = 0x1800 / sizeof(uint32_t);
+    static constexpr size_t DMA_CHUNK_BYTES = 1024;
 
     using pka_int = boost::multiprecision::cpp_int;
 
@@ -1294,8 +1295,8 @@ class cc3xx : public sc_core::sc_module
         std::array<uint8_t, 32> key{};
         std::array<uint8_t, 16> counter{};
         std::array<uint8_t, 16> stream{};
-        std::array<uint8_t, 256> input{};
-        std::array<uint8_t, 256> output{};
+        std::array<uint8_t, DMA_CHUNK_BYTES> input{};
+        std::array<uint8_t, DMA_CHUNK_BYTES> output{};
 
         std::copy(m_regs.begin() + AES_KEY_0, m_regs.begin() + AES_KEY_0 + key_len, key.begin());
         std::copy(m_regs.begin() + AES_CTR_0, m_regs.begin() + AES_CTR_0 + counter.size(), counter.begin());
@@ -1344,8 +1345,8 @@ class cc3xx : public sc_core::sc_module
         const size_t key_len = aes_key_size_bytes();
         const bool decrypt = aes_decrypt();
         std::array<uint8_t, 32> key{};
-        std::array<uint8_t, 256> input{};
-        std::array<uint8_t, 256> output{};
+        std::array<uint8_t, DMA_CHUNK_BYTES> input{};
+        std::array<uint8_t, DMA_CHUNK_BYTES> output{};
 
         std::copy(m_regs.begin() + AES_KEY_0, m_regs.begin() + AES_KEY_0 + key_len, key.begin());
 
@@ -1394,7 +1395,7 @@ class cc3xx : public sc_core::sc_module
 
         uint64_t source = load32(DIN_SRC_LLI_WORD0);
         uint64_t remaining = load32(DIN_SRC_LLI_WORD1);
-        std::array<uint8_t, 256> chunk{};
+        std::array<uint8_t, DMA_CHUNK_BYTES> chunk{};
 
         while (remaining != 0) {
             const auto len = static_cast<unsigned int>(std::min<uint64_t>(remaining, chunk.size()));
@@ -1593,7 +1594,7 @@ class cc3xx : public sc_core::sc_module
 
         uint64_t source = load32(DIN_SRC_LLI_WORD0);
         uint64_t remaining = load32(DIN_SRC_LLI_WORD1);
-        std::array<uint8_t, 256> chunk{};
+        std::array<uint8_t, DMA_CHUNK_BYTES> chunk{};
 
         while (remaining != 0) {
             const auto len = static_cast<unsigned int>(std::min<uint64_t>(remaining, chunk.size()));
