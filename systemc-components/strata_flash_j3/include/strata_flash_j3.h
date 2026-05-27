@@ -83,7 +83,6 @@ class strata_flash_j3 : public sc_core::sc_module
     bool m_dmi_granted = false;
     std::string m_open_backing_file;
     bool m_stats_collecting = false;
-    bool m_stats_collecting_known = false;
     bool m_trace_enabled = false;
     unsigned int m_trace_limit_value = 64;
     bool m_enable_dmi_value = false;
@@ -363,20 +362,16 @@ class strata_flash_j3 : public sc_core::sc_module
         m_backing_error_reported = true;
     }
 
-    bool collect_stats()
+    bool stats_enabled() const
     {
-        if (!m_stats_collecting_known) {
-            m_stats_collecting =
-                p_stats_interval.get_value() != 0 ||
-                !p_stats_file.get_value().empty();
-            m_stats_collecting_known = true;
-        }
         return m_stats_collecting;
     }
 
-    void invalidate_stats_collecting()
+    void refresh_stats_collecting()
     {
-        m_stats_collecting_known = false;
+        m_stats_collecting =
+            p_stats_interval.get_value() != 0 ||
+            !p_stats_file.get_value().empty();
     }
 
     void refresh_hot_params()
@@ -391,7 +386,7 @@ class strata_flash_j3 : public sc_core::sc_module
             p_defer_backing_flush_interval.get_value();
         m_sector_size_value = p_sector_size.get_value();
         m_backing_file_value = p_backing_file.get_value();
-        invalidate_stats_collecting();
+        refresh_stats_collecting();
     }
 
     void register_hot_param_callbacks()
@@ -428,14 +423,14 @@ class strata_flash_j3 : public sc_core::sc_module
                 m_backing_file_value = ev.new_value;
             });
         p_stats_file.register_post_write_callback(
-            [this](const auto&) { invalidate_stats_collecting(); });
+            [this](const auto&) { refresh_stats_collecting(); });
         p_stats_interval.register_post_write_callback(
-            [this](const auto&) { invalidate_stats_collecting(); });
+            [this](const auto&) { refresh_stats_collecting(); });
     }
 
     void count_stat(uint64_t& counter, uint64_t delta = 1)
     {
-        if (collect_stats()) {
+        if (stats_enabled()) {
             counter += delta;
         }
     }
@@ -987,7 +982,7 @@ class strata_flash_j3 : public sc_core::sc_module
         }
 
         trace_access(trans, offset, len, debug);
-        if (collect_stats()) {
+        if (stats_enabled()) {
             maybe_write_stats();
         }
         trans.set_response_status(tlm::TLM_OK_RESPONSE);
@@ -1252,7 +1247,7 @@ public:
         count_stat(m_dmi_requests);
         if (!m_enable_dmi_value) {
             count_stat(m_dmi_reject_disabled);
-            if (collect_stats()) {
+            if (stats_enabled()) {
                 maybe_write_dmi_stats(false);
             }
             return false;
@@ -1260,7 +1255,7 @@ public:
         if (m_mode != mode::read_array ||
             m_pending != pending_command::none) {
             count_stat(m_dmi_reject_state);
-            if (collect_stats()) {
+            if (stats_enabled()) {
                 maybe_write_dmi_stats(false);
             }
             return false;
@@ -1268,14 +1263,14 @@ public:
         if (trans.get_command() != tlm::TLM_READ_COMMAND &&
             trans.get_command() != tlm::TLM_IGNORE_COMMAND) {
             count_stat(m_dmi_reject_command);
-            if (collect_stats()) {
+            if (stats_enabled()) {
                 maybe_write_dmi_stats(false);
             }
             return false;
         }
         if (!find_dmi_range(offset, len, range)) {
             count_stat(m_dmi_reject_range);
-            if (collect_stats()) {
+            if (stats_enabled()) {
                 maybe_write_dmi_stats(false);
             }
             return false;
@@ -1288,7 +1283,7 @@ public:
         dmi_data.set_write_latency(sc_core::SC_ZERO_TIME);
         dmi_data.allow_read();
         count_stat(m_dmi_grants);
-        if (collect_stats()) {
+        if (stats_enabled()) {
             maybe_write_dmi_stats(m_dmi_grants == 1);
         }
         m_dmi_granted = true;
