@@ -145,7 +145,7 @@ class strata_flash_j3 : public sc_core::sc_module
     uint64_t m_write_buffer_base = 0;
     std::vector<uint8_t> m_write_buffer;
     std::vector<bool> m_write_buffer_written;
-    std::vector<bool> m_sector_erased;
+    std::vector<uint8_t> m_sector_erased;
     uint64_t m_sector_erased_map_size = 0;
 #ifdef _WIN32
     std::fstream m_backing_stream;
@@ -456,7 +456,7 @@ class strata_flash_j3 : public sc_core::sc_module
     void initialize_sector_erased_map()
     {
         m_sector_erased_map_size = m_sector_size_value;
-        m_sector_erased.assign(sector_count(), true);
+        m_sector_erased.assign(sector_count(), 1);
     }
 
     void rebuild_sector_erased_map()
@@ -465,7 +465,7 @@ class strata_flash_j3 : public sc_core::sc_module
         const size_t sectors = sector_count();
 
         m_sector_erased_map_size = sector_size;
-        m_sector_erased.assign(sectors, true);
+        m_sector_erased.assign(sectors, 1);
         if (sector_size == 0 || m_data.empty()) {
             return;
         }
@@ -475,9 +475,10 @@ class strata_flash_j3 : public sc_core::sc_module
             const uint64_t end =
                 std::min<uint64_t>(start + sector_size, m_data.size());
 
-            m_sector_erased[index] =
+            const bool erased =
                 std::all_of(m_data.begin() + start, m_data.begin() + end,
                             [](uint8_t value) { return value == 0xff; });
+            m_sector_erased[index] = erased ? 1 : 0;
         }
     }
 
@@ -507,9 +508,25 @@ class strata_flash_j3 : public sc_core::sc_module
             const uint64_t end =
                 std::min<uint64_t>(start + sector_size, m_data.size());
 
-            m_sector_erased[index] =
+            const bool erased =
                 std::all_of(m_data.begin() + start, m_data.begin() + end,
                             [](uint8_t value) { return value == 0xff; });
+            m_sector_erased[index] = erased ? 1 : 0;
+        }
+    }
+
+    void mark_programmed_byte(uint64_t offset)
+    {
+        const uint64_t sector_size = m_sector_size_value;
+
+        if (sector_size == 0 || m_data.empty() || m_data[offset] == 0xff) {
+            return;
+        }
+
+        ensure_sector_erased_map();
+        const size_t index = static_cast<size_t>(offset / sector_size);
+        if (index < m_sector_erased.size()) {
+            m_sector_erased[index] = 0;
         }
     }
 
@@ -529,7 +546,7 @@ class strata_flash_j3 : public sc_core::sc_module
 
             const size_t index = static_cast<size_t>(pos / sector_size);
             if (index < m_sector_erased.size()) {
-                m_sector_erased[index] = false;
+                m_sector_erased[index] = 0;
             }
         }
     }
@@ -544,7 +561,7 @@ class strata_flash_j3 : public sc_core::sc_module
 
         ensure_sector_erased_map();
         const size_t index = static_cast<size_t>(start / sector_size);
-        return index < m_sector_erased.size() && m_sector_erased[index];
+        return index < m_sector_erased.size() && m_sector_erased[index] != 0;
     }
 
     void mark_sector_erased(uint64_t start)
@@ -558,7 +575,7 @@ class strata_flash_j3 : public sc_core::sc_module
         ensure_sector_erased_map();
         const size_t index = static_cast<size_t>(start / sector_size);
         if (index < m_sector_erased.size()) {
-            m_sector_erased[index] = true;
+            m_sector_erased[index] = 1;
         }
     }
 
@@ -774,7 +791,7 @@ class strata_flash_j3 : public sc_core::sc_module
             }
             if (new_value != old_value) {
                 m_data[offset] = new_value;
-                mark_programmed_range(offset, 1);
+                mark_programmed_byte(offset);
                 write_backing_range(offset, 1);
             }
             m_status = STATUS_READY;
