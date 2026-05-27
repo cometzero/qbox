@@ -255,6 +255,26 @@ TEST(StrataFlashJ3Test, OptionalSectorAlignedProgramFfCanEraseSector)
     EXPECT_EQ(read8(dut, 0x0ff), 0x00);
 }
 
+TEST(StrataFlashJ3Test, ProgramFfDoesNotEraseSectorWhenCompatibilityDisabled)
+{
+    strata_flash_j3 dut("strata_flash_program_ff_no_sector_erase");
+    uint8_t image[0x200];
+
+    std::memset(image, 0x00, sizeof(image));
+    dut.p_sector_size = 0x100;
+    dut.p_program_ff_sets_bits = true;
+    dut.load_image(image, 0, sizeof(image));
+
+    write8(dut, 0x100, CMD_CLEAR_STATUS_REG);
+    write8(dut, 0x100, CMD_WORD_PROGRAM);
+    write8(dut, 0x100, 0xff);
+
+    write8(dut, 0, CMD_READ_ARRAY);
+    EXPECT_EQ(read8(dut, 0x100), 0xff);
+    EXPECT_EQ(read8(dut, 0x101), 0x00);
+    EXPECT_EQ(read8(dut, 0x17f), 0x00);
+}
+
 TEST(StrataFlashJ3Test, SectorEraseCompatibilityRequiresSectorAlignment)
 {
     strata_flash_j3 dut("strata_flash_program_ff_requires_alignment");
