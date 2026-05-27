@@ -43,6 +43,8 @@ protected:
 
     bool m_dmi_enabled = true;
     bool m_dmi_write_enabled = true;
+    bool m_dmi_write_hint_enabled = true;
+    bool m_dmi_read_callback_value_enabled = false;
 
     void dmi_b_transport(tlm::tlm_generic_payload& txn, sc_core::sc_time& delay)
     {
@@ -65,7 +67,12 @@ protected:
         switch (txn.get_command()) {
         case tlm::TLM_READ_COMMAND:
             std::memcpy(ptr, m_buf[m_cur_buf] + addr, len);
-            m_cbs.mmio_read(SOCKET_DMI, addr, len);
+            if (m_dmi_read_callback_value_enabled) {
+                data = m_cbs.mmio_read(SOCKET_DMI, addr, len);
+                std::memcpy(ptr, &data, len);
+            } else {
+                m_cbs.mmio_read(SOCKET_DMI, addr, len);
+            }
             break;
 
         case tlm::TLM_WRITE_COMMAND:
@@ -77,7 +84,8 @@ protected:
             TEST_FAIL("TLM command not supported");
         }
 
-        txn.set_dmi_allowed(m_dmi_enabled);
+        txn.set_dmi_allowed(m_dmi_enabled &&
+                            (txn.get_command() == tlm::TLM_READ_COMMAND || m_dmi_write_hint_enabled));
         txn.set_response_status(tlm::TLM_OK_RESPONSE);
     }
 
@@ -153,6 +161,9 @@ public:
     void enable_dmi_hint() { m_dmi_enabled = true; }
     void disable_dmi_hint() { m_dmi_enabled = false; }
     void disable_dmi_write() { m_dmi_write_enabled = false; }
+    void disable_dmi_write_hint() { m_dmi_write_hint_enabled = false; }
+    void enable_dmi_read_callback_value() { m_dmi_read_callback_value_enabled = true; }
+    void disable_dmi_read_callback_value() { m_dmi_read_callback_value_enabled = false; }
 
     uint64_t get_buf_value(int cpuid)
     {

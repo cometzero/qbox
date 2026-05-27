@@ -52,6 +52,15 @@ public:
             mov w3, #0x3c
             strb w3, [x1, #3]
 
+            /*
+             * The write fallback must invalidate the read-only DMI alias before
+             * this read. A stateful flash device would now be in status mode, so
+             * stale array reads are wrong even though the write reached TLM.
+             */
+            ldrb w5, [x1, #0]
+            cmp w5, #0x77
+            b.ne fail_status
+
             ldrb w5, [x1, #0]
             cmp w5, #0xa5
             b.ne fail0
@@ -83,6 +92,9 @@ public:
         fail3:
             mov x4, #4
             b fail
+        fail_status:
+            mov x4, #5
+            b fail
 
         fail:
             lsl x0, x4, #8
@@ -97,6 +109,7 @@ public:
         char buf[4096];
 
         this->m_tester.disable_dmi_write();
+        this->m_tester.disable_dmi_write_hint();
         std::snprintf(buf, sizeof(buf), FIRMWARE, CpuTesterDmi::DMI_ADDR, CpuTesterDmi::MMIO_ADDR);
         set_firmware(buf);
     }
@@ -107,7 +120,9 @@ public:
             TEST_ASSERT(addr < PATTERN.size());
             TEST_ASSERT(len == 1);
             TEST_ASSERT(data == PATTERN[addr]);
-            ++m_dmi_writes;
+            if (++m_dmi_writes == PATTERN.size()) {
+                this->m_tester.enable_dmi_read_callback_value();
+            }
             return;
         }
 
@@ -122,7 +137,10 @@ public:
     virtual uint64_t mmio_read(int id, uint64_t addr, size_t len) override
     {
         if (id == CpuTesterDmi::SOCKET_DMI) {
-            return 0;
+            TEST_ASSERT(addr == 0);
+            TEST_ASSERT(len == 1);
+            this->m_tester.disable_dmi_read_callback_value();
+            return 0x77;
         }
 
         TEST_FAIL("Unexpected MMIO read");

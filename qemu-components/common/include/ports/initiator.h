@@ -100,6 +100,8 @@ protected:
 
     // we use an ordered map to find and combine elements
     std::map<DmiRegionAliasKey, DmiRegionAlias::Ptr> m_dmi_aliases;
+    std::vector<DmiRegionAlias::Ptr> m_retired_dmi_aliases;
+    std::vector<std::shared_ptr<qemu::DmiRegionBase>> m_retired_iommu_aliases;
     using AliasesIterator = std::map<DmiRegionAliasKey, DmiRegionAlias::Ptr>::iterator;
 
     // Mutable overload: ordered map (std::map-like) floor lookup
@@ -150,6 +152,47 @@ protected:
         }
         SCP_INFO(()) << "Removing " << *alias;
         m_r->m_root->del_subregion(alias->get_alias_mr());
+        alias->clear_installed();
+    }
+
+    void clear_retired_aliases_locked()
+    {
+        m_retired_dmi_aliases.clear();
+        m_retired_iommu_aliases.clear();
+    }
+
+    void invalidate_readonly_alias_after_write(uint64_t addr, unsigned int size)
+    {
+        if (size == 0) {
+            return;
+        }
+
+        uint64_t end = addr + size - 1;
+        if (end < addr) {
+            end = std::numeric_limits<uint64_t>::max();
+        }
+
+        std::lock_guard<std::mutex> lock(m_mutex);
+        invalidate_single_range(addr, end);
+    }
+
+    void remove_iommu_io_alias(std::shared_ptr<qemu::IOMMUMemoryRegion> iommumr, uint64_t alias_start)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto it = iommumr->m_dmi_aliases_io.find(alias_start);
+        if (it == iommumr->m_dmi_aliases_io.end()) {
+            return;
+        }
+
+        DmiRegionAlias::Ptr alias = std::static_pointer_cast<DmiRegionAlias>(it->second);
+        if (alias->is_installed()) {
+            SCP_INFO(()) << "Removing " << *alias;
+            iommumr->m_root_io.del_subregion(alias->get_alias_mr());
+            alias->clear_installed();
+        }
+
+        m_retired_iommu_aliases.push_back(it->second);
+        iommumr->m_dmi_aliases_io.erase(it);
     }
 
     /**
@@ -179,6 +222,7 @@ protected:
          */
         {
             std::lock_guard<std::mutex> lock(m_mutex);
+            clear_retired_aliases_locked();
 
             auto it = find_region(iommumr->m_mapped_te, addr);
             if (it != iommumr->m_mapped_te.end()) {
@@ -246,7 +290,18 @@ protected:
                 // no underlying DMI, add a 1-1 passthrough to normal address space
                 if (0 == iommumr->m_dmi_aliases_io.count(ldmi_data.get_start_address())) {
                     qemu::RcuReadLock l_rcu_read_lock = m_inst.get().rcu_read_lock_new();
-                    DmiRegionAlias::Ptr alias = m_inst.get_dmi_manager().get_new_region_alias(ldmi_data);
+                    QemuInstanceDmiManager::DmiWriteCallback write_cb;
+                    if (ldmi_data.is_read_allowed() && !ldmi_data.is_write_allowed()) {
+                        uint64_t alias_start = ldmi_data.get_start_address();
+                        write_cb = [this, iommumr, alias_start](uint64_t addr, uint64_t data, unsigned int size,
+                                                                MemTxAttrs attrs) {
+                            MemTxResult result = qemu_io_write(addr, data, size, attrs);
+                            remove_iommu_io_alias(iommumr, alias_start);
+                            return result;
+                        };
+                    }
+                    DmiRegionAlias::Ptr alias =
+                        m_inst.get_dmi_manager().get_new_region_alias(ldmi_data, -1, 0, write_cb);
                     SCP_DEBUG(()) << "Adding DMI Region alias " << *alias;
                     qemu::MemoryRegion alias_mr = alias->get_alias_mr();
                     iommumr->m_root_io.add_subregion(alias_mr, alias->get_start());
@@ -345,6 +400,10 @@ protected:
         int shm_fd = -1;
         uint64_t shm_offset = 0;
         auto addr = trans.get_address();
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            clear_retired_aliases_locked();
+        }
         /* We got a DMI hint, lets just make sure this isn't in an existing m_mmio_mrs region
          * Because if it is, what probably happened is that we took the MMIO path
          * rather than getting a translation done. We should invalidate any mmio 1-1 mapping
@@ -504,7 +563,9 @@ protected:
             QemuInstanceDmiManager::DmiWriteCallback write_cb;
             if (dmi_data.is_read_allowed() && !dmi_data.is_write_allowed()) {
                 write_cb = [this](uint64_t addr, uint64_t data, unsigned int size, MemTxAttrs attrs) {
-                    return qemu_io_write(addr, data, size, attrs);
+                    MemTxResult result = qemu_io_write(addr, data, size, attrs);
+                    invalidate_readonly_alias_after_write(addr, size);
+                    return result;
                 };
             }
 
@@ -596,7 +657,8 @@ protected:
              */
             do_direct_access(trans);
         } else {
-            if (!m_inst.g_rec_qemu_io_lock.try_lock() && !is_on_sysc()) {
+            bool qemu_io_locked = m_inst.g_rec_qemu_io_lock.try_lock();
+            if (!qemu_io_locked && !is_on_sysc()) {
                 /* Allow only a single access, but handle re-entrant code,
                  * while allowing side-effects in SystemC (e.g. calling wait)
                  * [NB re-entrant code caused via memory listeners to
@@ -604,6 +666,7 @@ protected:
                  */
                 m_inst.get().unlock_iothread();
                 m_inst.g_rec_qemu_io_lock.lock();
+                qemu_io_locked = true;
                 m_inst.get().lock_iothread();
             }
             reentrancy++;
@@ -618,7 +681,9 @@ protected:
             }
 
             reentrancy--;
-            m_inst.g_rec_qemu_io_lock.unlock();
+            if (qemu_io_locked) {
+                m_inst.g_rec_qemu_io_lock.unlock();
+            }
         }
         trans.clear_extension(&attrs_ext);
         m_initiator.initiator_tidy_tlm_payload(trans);

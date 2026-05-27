@@ -240,6 +240,13 @@ public:
         void set_installed() { m_installed = true; }
 
         /**
+         * @brief Mark the alias as unmapped from QEMU root MR
+         *
+         * @note Must be called with the DMI manager lock held
+         */
+        void clear_installed() { m_installed = false; }
+
+        /**
          * @brief Return true if the alias is mapped onto QEMU root MR
          *
          * @note Must be called with the DMI manager lock held
