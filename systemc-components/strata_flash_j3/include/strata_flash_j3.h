@@ -630,14 +630,33 @@ class strata_flash_j3 : public sc_core::sc_module
 
     void program(uint64_t offset, const uint8_t* data, unsigned int len)
     {
-        count_stat(m_program_ops);
-        count_stat(m_program_bytes, len);
-
         if (is_sector_aligned_program_ff_erase(offset, data, len)) {
+            count_stat(m_program_ops);
+            count_stat(m_program_bytes, len);
             count_stat(m_compat_ff_sector_erase_ops);
             erase_sector(offset);
             return;
         }
+
+        if (!stats_enabled() && len == 1) {
+            const uint8_t old_value = m_data[offset];
+            uint8_t new_value = old_value & data[0];
+
+            if (m_program_ff_sets_bits_value && data[0] == 0xff) {
+                new_value = 0xff;
+            }
+            if (new_value != old_value) {
+                m_data[offset] = new_value;
+                write_backing_range(offset, 1);
+            }
+            m_status = STATUS_READY;
+            m_mode = mode::read_status;
+            m_pending = pending_command::none;
+            return;
+        }
+
+        count_stat(m_program_ops);
+        count_stat(m_program_bytes, len);
 
         uint64_t first_changed = len;
         uint64_t last_changed = 0;
@@ -808,6 +827,10 @@ class strata_flash_j3 : public sc_core::sc_module
 
     void record_command(uint8_t command)
     {
+        if (!stats_enabled()) {
+            return;
+        }
+
         count_stat(m_command_writes);
         switch (command) {
         case CMD_READ_ARRAY:
@@ -960,8 +983,14 @@ class strata_flash_j3 : public sc_core::sc_module
         trans.set_dmi_allowed(false);
         if (trans.get_command() == tlm::TLM_READ_COMMAND) {
             count_stat(m_read_accesses);
-            for (unsigned int i = 0; i < len; ++i) {
-                data[i] = read_byte(offset + i);
+            if (m_mode == mode::read_array) {
+                std::memcpy(data, m_data.data() + offset, len);
+            } else if (m_mode == mode::read_status) {
+                std::memset(data, m_status, len);
+            } else {
+                for (unsigned int i = 0; i < len; ++i) {
+                    data[i] = read_byte(offset + i);
+                }
             }
             dmi_range range {};
             const bool dmi_allowed =
