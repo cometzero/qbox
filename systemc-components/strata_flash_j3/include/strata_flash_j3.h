@@ -145,6 +145,8 @@ class strata_flash_j3 : public sc_core::sc_module
     uint64_t m_write_buffer_base = 0;
     std::vector<uint8_t> m_write_buffer;
     std::vector<bool> m_write_buffer_written;
+    std::vector<bool> m_sector_erased;
+    uint64_t m_sector_erased_map_size = 0;
 #ifdef _WIN32
     std::fstream m_backing_stream;
 #else
@@ -160,6 +162,7 @@ class strata_flash_j3 : public sc_core::sc_module
         }
 
         m_data.assign(p_size.get_value(), 0xff);
+        initialize_sector_erased_map();
     }
 
     bool in_range(uint64_t offset, unsigned int len)
@@ -416,7 +419,10 @@ class strata_flash_j3 : public sc_core::sc_module
                 m_defer_backing_flush_interval_value = ev.new_value;
             });
         p_sector_size.register_post_write_callback(
-            [this](const auto& ev) { m_sector_size_value = ev.new_value; });
+            [this](const auto& ev) {
+                m_sector_size_value = ev.new_value;
+                rebuild_sector_erased_map();
+            });
         p_backing_file.register_post_write_callback(
             [this](const auto& ev) {
                 flush_deferred_backing();
@@ -432,6 +438,127 @@ class strata_flash_j3 : public sc_core::sc_module
     {
         if (stats_enabled()) {
             counter += delta;
+        }
+    }
+
+    size_t sector_count() const
+    {
+        const uint64_t sector_size = m_sector_size_value;
+
+        if (sector_size == 0 || m_data.empty()) {
+            return 0;
+        }
+
+        return static_cast<size_t>((m_data.size() + sector_size - 1) /
+                                   sector_size);
+    }
+
+    void initialize_sector_erased_map()
+    {
+        m_sector_erased_map_size = m_sector_size_value;
+        m_sector_erased.assign(sector_count(), true);
+    }
+
+    void rebuild_sector_erased_map()
+    {
+        const uint64_t sector_size = m_sector_size_value;
+        const size_t sectors = sector_count();
+
+        m_sector_erased_map_size = sector_size;
+        m_sector_erased.assign(sectors, true);
+        if (sector_size == 0 || m_data.empty()) {
+            return;
+        }
+
+        for (size_t index = 0; index < sectors; ++index) {
+            const uint64_t start = index * sector_size;
+            const uint64_t end =
+                std::min<uint64_t>(start + sector_size, m_data.size());
+
+            m_sector_erased[index] =
+                std::all_of(m_data.begin() + start, m_data.begin() + end,
+                            [](uint8_t value) { return value == 0xff; });
+        }
+    }
+
+    void ensure_sector_erased_map()
+    {
+        if (m_sector_erased_map_size != m_sector_size_value ||
+            m_sector_erased.size() != sector_count()) {
+            rebuild_sector_erased_map();
+        }
+    }
+
+    void refresh_sector_erased_range(uint64_t offset, uint64_t len)
+    {
+        const uint64_t sector_size = m_sector_size_value;
+
+        if (len == 0 || sector_size == 0 || m_data.empty()) {
+            return;
+        }
+
+        ensure_sector_erased_map();
+        const size_t first = static_cast<size_t>(offset / sector_size);
+        const size_t last = static_cast<size_t>((offset + len - 1) / sector_size);
+        for (size_t index = first;
+             index <= last && index < m_sector_erased.size();
+             ++index) {
+            const uint64_t start = index * sector_size;
+            const uint64_t end =
+                std::min<uint64_t>(start + sector_size, m_data.size());
+
+            m_sector_erased[index] =
+                std::all_of(m_data.begin() + start, m_data.begin() + end,
+                            [](uint8_t value) { return value == 0xff; });
+        }
+    }
+
+    void mark_programmed_range(uint64_t offset, uint64_t len)
+    {
+        const uint64_t sector_size = m_sector_size_value;
+
+        if (len == 0 || sector_size == 0 || m_data.empty()) {
+            return;
+        }
+
+        ensure_sector_erased_map();
+        for (uint64_t pos = offset; pos < offset + len; ++pos) {
+            if (m_data[pos] == 0xff) {
+                continue;
+            }
+
+            const size_t index = static_cast<size_t>(pos / sector_size);
+            if (index < m_sector_erased.size()) {
+                m_sector_erased[index] = false;
+            }
+        }
+    }
+
+    bool sector_is_erased(uint64_t start)
+    {
+        const uint64_t sector_size = m_sector_size_value;
+
+        if (sector_size == 0 || m_data.empty()) {
+            return false;
+        }
+
+        ensure_sector_erased_map();
+        const size_t index = static_cast<size_t>(start / sector_size);
+        return index < m_sector_erased.size() && m_sector_erased[index];
+    }
+
+    void mark_sector_erased(uint64_t start)
+    {
+        const uint64_t sector_size = m_sector_size_value;
+
+        if (sector_size == 0 || m_data.empty()) {
+            return;
+        }
+
+        ensure_sector_erased_map();
+        const size_t index = static_cast<size_t>(start / sector_size);
+        if (index < m_sector_erased.size()) {
+            m_sector_erased[index] = true;
         }
     }
 
@@ -647,6 +774,7 @@ class strata_flash_j3 : public sc_core::sc_module
             }
             if (new_value != old_value) {
                 m_data[offset] = new_value;
+                mark_programmed_range(offset, 1);
                 write_backing_range(offset, 1);
             }
             m_status = STATUS_READY;
@@ -682,6 +810,8 @@ class strata_flash_j3 : public sc_core::sc_module
         count_stat(m_program_changed_bytes, changed);
         count_stat(m_program_noop_bytes, len - changed);
         if (first_changed != len) {
+            mark_programmed_range(offset + first_changed,
+                                  last_changed - first_changed + 1);
             write_backing_range(offset + first_changed,
                                 last_changed - first_changed + 1);
         }
@@ -711,8 +841,7 @@ class strata_flash_j3 : public sc_core::sc_module
 
         count_stat(m_sector_erase_ops);
         count_stat(m_sector_erase_bytes, end - start);
-        if (std::all_of(m_data.begin() + start, m_data.begin() + end,
-                        [](uint8_t value) { return value == 0xff; })) {
+        if (sector_is_erased(start)) {
             m_status = STATUS_READY;
             m_mode = mode::read_status;
             m_pending = pending_command::none;
@@ -720,6 +849,7 @@ class strata_flash_j3 : public sc_core::sc_module
         }
 
         std::fill(m_data.begin() + start, m_data.begin() + end, 0xff);
+        mark_sector_erased(start);
         write_backing_range(start, end - start);
         m_status = STATUS_READY;
         m_mode = mode::read_status;
@@ -1227,6 +1357,7 @@ public:
             return;
         }
         std::memcpy(m_data.data() + offset, data, len);
+        refresh_sector_erased_range(offset, len);
     }
 
     explicit strata_flash_j3(sc_core::sc_module_name name)
