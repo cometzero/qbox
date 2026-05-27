@@ -67,6 +67,8 @@ local rse_flash = getenv_or("QBOX_RDASPEN_RSE_FLASH", deploy.."rse-flash-image.i
 local rse_otp = getenv_or("QBOX_RDASPEN_RSE_OTP", deploy.."rse-otp-image.img")
 local ap_flash = getenv_or("QBOX_RDASPEN_AP_FLASH", deploy.."ap-flash-image.img")
 flash_writeback = getenv_or("QBOX_RDASPEN_FLASH_WRITEBACK", "false") == "true"
+flash_defer_backing_flush_interval =
+    getenv_number_or("QBOX_RDASPEN_FLASH_DEFER_FLUSH_INTERVAL", 1024)
 AP_BL2_ELF = getenv_or(
     "QBOX_RDASPEN_AP_BL2_ELF",
     root.."build/tmp_baremetal/work/fvp_rd_aspen-poky-linux/trusted-firmware-a/2.14.0+git/build/rdaspen/debug/bl2/bl2.elf")
@@ -627,6 +629,7 @@ platform = {
         sector_size = 0x1000;
         backing_file = flash_writeback and rse_flash or "";
         defer_backing_write = true;
+        defer_backing_flush_interval = flash_defer_backing_flush_interval;
         stats_file = rse_boot_flash_stats_file;
         stats_interval = flash_stats_interval;
         target_socket = {
@@ -1024,6 +1027,7 @@ platform = {
         sector_size = 0x1000;
         backing_file = flash_writeback and ap_flash or "";
         defer_backing_write = true;
+        defer_backing_flush_interval = flash_defer_backing_flush_interval;
         stats_file = ap_flash_stats_file;
         stats_interval = flash_stats_interval;
         target_socket = {
@@ -2048,6 +2052,7 @@ platform = {
             sector_size = 0x1000;
             backing_file = flash_writeback and rse_flash or "";
             defer_backing_write = true;
+            defer_backing_flush_interval = flash_defer_backing_flush_interval;
             stats_file = rse_boot_flash_stats_file;
             stats_interval = flash_stats_interval;
             target_socket = {
