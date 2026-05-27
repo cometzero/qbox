@@ -657,6 +657,28 @@ TEST(StrataFlashJ3Test, NoopProgramSkipsBackingFileWrite)
     EXPECT_EQ(read8(dut, 0x180), 0xff);
 }
 
+TEST(StrataFlashJ3Test, ErasedSectorSkipsBackingFileWrite)
+{
+    std::vector<uint8_t> image(0x200, 0xff);
+    TempImage backing(std::vector<uint8_t>(0x100, 0xff));
+    strata_flash_j3 dut("strata_flash_noop_sector_erase_backing");
+
+    dut.p_backing_file = backing.path();
+    dut.p_sector_size = 0x100;
+    dut.p_program_ff_erases_sector = true;
+    dut.load_image(image.data(), 0, image.size());
+
+    write8(dut, 0x100, CMD_WORD_PROGRAM);
+    testing::internal::CaptureStderr();
+    write8(dut, 0x100, 0xff);
+    const std::string stderr_output = testing::internal::GetCapturedStderr();
+
+    EXPECT_TRUE(stderr_output.empty());
+    write8(dut, 0, CMD_READ_ARRAY);
+    EXPECT_EQ(read8(dut, 0x100), 0xff);
+    EXPECT_EQ(read8(dut, 0x1ff), 0xff);
+}
+
 TEST(StrataFlashJ3Test, StatsFileRecordsProgramAndNoopCounters)
 {
     std::vector<uint8_t> image(0x200, 0xff);

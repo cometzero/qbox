@@ -711,6 +711,14 @@ class strata_flash_j3 : public sc_core::sc_module
 
         count_stat(m_sector_erase_ops);
         count_stat(m_sector_erase_bytes, end - start);
+        if (std::all_of(m_data.begin() + start, m_data.begin() + end,
+                        [](uint8_t value) { return value == 0xff; })) {
+            m_status = STATUS_READY;
+            m_mode = mode::read_status;
+            m_pending = pending_command::none;
+            return;
+        }
+
         std::fill(m_data.begin() + start, m_data.begin() + end, 0xff);
         write_backing_range(start, end - start);
         m_status = STATUS_READY;
