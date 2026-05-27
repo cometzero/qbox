@@ -121,13 +121,14 @@ only for per-run copied writable OTP images and keeps it disabled when
 AP secure flash are `strata_flash_j3` CFI/Strata command-state models backed
 by the runner's per-run raw `rse-flash-image.img` and `ap-flash-image.img`
 copies. The active TF-M FVP Strata driver implements its erase helper by issuing
-byte-program operations with value `0xff`, so QBox models `0xff` byte programs
-as byte-wise bit-set operations and does not promote aligned `0xff` writes into
-a wider sector erase. This avoids corrupting normal payload writes that contain
-`0xff` at aligned offsets. `QBOX_RDASPEN_FLASH_WRITEBACK=true` enables
-program/erase write-through to those raw copies only for normal copied runs; the
-runner sets it to `false` for `--no-copy-writable-flash` so deploy images are not
-modified. The ATU model
+byte-program operations with value `0xff`, so the RD-Aspen platform keeps the
+QBox Strata compatibility path that promotes a sector-aligned `0xff` byte
+program into a modeled sector erase. A byte-scoped `0xff` experiment was
+rejected because the persisted-flash second boot reached RSE BL_33 but U-Boot
+could not initialize the UEFI subsystem and fell back to network boot.
+`QBOX_RDASPEN_FLASH_WRITEBACK=true` enables program/erase write-through to those
+raw copies only for normal copied runs; the runner sets it to `false` for
+`--no-copy-writable-flash` so deploy images are not modified. The ATU model
 is a translation model for the secure and non-secure host windows, with
 translated DMI available only as an opt-in experiment through
 `QBOX_RDASPEN_ATU_DMI=true`; selected host-memory DMI is also opt-in through
