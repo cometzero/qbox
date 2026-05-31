@@ -14,8 +14,9 @@ print("Apollo FVP QBox config running...")
 
 INITIAL_DDR_SPACE = 0x80000000
 
-_KERNEL64_LOAD_ADDR = INITIAL_DDR_SPACE + 0x01200000
-_DTB_LOAD_ADDR      = INITIAL_DDR_SPACE + 0x07600000
+_KERNEL64_LOAD_ADDR = 0x80080000
+_DTB_LOAD_ADDR      = 0x8fc00000
+_INITRAMFS_LOAD_ADDR = 0x94000000
 
 dofile(top().."../ubuntu/fw/arm64_bootloader.lua")
 
@@ -34,9 +35,8 @@ local kernel_image = getenv_or(
 local dtb_image = getenv_or(
     "QBOX_APOLLO_DTB",
     root.."build/qbox-apollo-fvp/apollo-fvp-primary-compute.dtb")
-local disk_image = getenv_or(
-    "QBOX_APOLLO_ROOTFS",
-    root.."build/tmp_baremetal/deploy/images/apollo-fvp/baremetal-image-apollo-fvp.wic")
+local initramfs_image = os.getenv("QBOX_APOLLO_INITRAMFS")
+local disk_image = os.getenv("QBOX_APOLLO_ROOTFS")
 local extra_disk_images = {
     getenv_or("QBOX_APOLLO_EXTRA_BLK1", root.."build/qbox-apollo-fvp/apollo-extra-blk1.raw"),
     getenv_or("QBOX_APOLLO_EXTRA_BLK2", root.."build/qbox-apollo-fvp/apollo-extra-blk2.raw"),
@@ -205,18 +205,6 @@ platform = {
         };
     };
 
-    virtioblk_0 = {
-        moduletype = "virtio_mmio_blk",
-        args = {"&platform.qemu_inst"};
-        mem = {
-            address = 0x30020000,
-            size = 0x10000,
-            bind = "&router.initiator_socket"
-        },
-        irq_out = {bind = "&gic_0.spi_in_257"},
-        blkdev_str = "file="..disk_image..",format=raw,if=none,cache=writeback"
-    };
-
     virtioblk_1 = {
         moduletype = "virtio_mmio_blk",
         args = {"&platform.qemu_inst"};
@@ -347,11 +335,40 @@ platform = {
     };
 };
 
+if initramfs_image ~= nil and initramfs_image ~= "" then
+    table.insert(platform.load, {
+        bin_file = initramfs_image,
+        address = _INITRAMFS_LOAD_ADDR
+    })
+end
+
+if disk_image ~= nil and disk_image ~= "" then
+    platform.virtioblk_0 = {
+        moduletype = "virtio_mmio_blk",
+        args = {"&platform.qemu_inst"};
+        mem = {
+            address = 0x30020000,
+            size = 0x10000,
+            bind = "&router.initiator_socket"
+        },
+        irq_out = {bind = "&gic_0.spi_in_257"},
+        blkdev_str = "file="..disk_image..",format=raw,if=none,cache=writeback"
+    };
+end
+
 print("kernel is loaded at: 0x"..string.format("%x", _KERNEL64_LOAD_ADDR));
 print("dtb is loaded at:    0x"..string.format("%x", _DTB_LOAD_ADDR));
+if initramfs_image ~= nil and initramfs_image ~= "" then
+    print("initramfs is loaded at: 0x"..string.format("%x", _INITRAMFS_LOAD_ADDR));
+end
 print("kernel image: "..kernel_image);
 print("dtb image:    "..dtb_image);
-print("disk image:   "..disk_image);
+if initramfs_image ~= nil and initramfs_image ~= "" then
+    print("initramfs:    "..initramfs_image);
+end
+if disk_image ~= nil and disk_image ~= "" then
+    print("disk image:   "..disk_image);
+end
 for i=1,#extra_disk_images do
     print("extra disk "..i..": "..extra_disk_images[i]);
 end
