@@ -101,6 +101,8 @@ class strata_flash_j3 : public sc_core::sc_module
     bool m_stats_error_reported = false;
     uint64_t m_read_accesses = 0;
     uint64_t m_write_accesses = 0;
+    uint64_t m_read_bytes = 0;
+    uint64_t m_write_bytes = 0;
     uint64_t m_dmi_read_hints = 0;
     uint64_t m_dmi_requests = 0;
     uint64_t m_dmi_grants = 0;
@@ -140,7 +142,7 @@ class strata_flash_j3 : public sc_core::sc_module
     uint64_t m_backing_deferred_bytes = 0;
     uint64_t m_backing_flush_ops = 0;
     uint64_t m_backing_flush_bytes = 0;
-    uint64_t m_last_stats_write_access = 0;
+    uint64_t m_last_stats_access = 0;
     uint64_t m_last_stats_dmi_request = 0;
     uint64_t m_write_buffer_base = 0;
     std::vector<uint8_t> m_write_buffer;
@@ -1145,6 +1147,7 @@ class strata_flash_j3 : public sc_core::sc_module
         trans.set_dmi_allowed(false);
         if (trans.get_command() == tlm::TLM_READ_COMMAND) {
             count_stat(m_read_accesses);
+            count_stat(m_read_bytes, len);
             if (m_mode == mode::read_array) {
                 std::memcpy(data, m_data.data() + offset, len);
             } else if (m_mode == mode::read_status) {
@@ -1166,6 +1169,7 @@ class strata_flash_j3 : public sc_core::sc_module
             trans.set_dmi_allowed(dmi_allowed);
         } else if (trans.get_command() == tlm::TLM_WRITE_COMMAND) {
             count_stat(m_write_accesses);
+            count_stat(m_write_bytes, len);
             write(offset, data, len);
         } else {
             trans.set_response_status(tlm::TLM_COMMAND_ERROR_RESPONSE);
@@ -1216,16 +1220,17 @@ class strata_flash_j3 : public sc_core::sc_module
     void maybe_write_stats()
     {
         const unsigned int interval = p_stats_interval.get_value();
+        const uint64_t total_accesses = m_read_accesses + m_write_accesses;
 
         if (interval == 0 ||
             p_stats_file.get_value().empty() ||
-            m_write_accesses == 0 ||
-            m_write_accesses == m_last_stats_write_access ||
-            (m_write_accesses % interval) != 0) {
+            total_accesses == 0 ||
+            total_accesses == m_last_stats_access ||
+            (total_accesses % interval) != 0) {
             return;
         }
 
-        m_last_stats_write_access = m_write_accesses;
+        m_last_stats_access = total_accesses;
         write_stats_file();
     }
 
@@ -1274,8 +1279,12 @@ class strata_flash_j3 : public sc_core::sc_module
 
         out << "{\n"
             << "  \"module\": \"" << name() << "\",\n"
+            << "  \"total_accesses\": "
+            << (m_read_accesses + m_write_accesses) << ",\n"
             << "  \"read_accesses\": " << m_read_accesses << ",\n"
             << "  \"write_accesses\": " << m_write_accesses << ",\n"
+            << "  \"read_bytes\": " << m_read_bytes << ",\n"
+            << "  \"write_bytes\": " << m_write_bytes << ",\n"
             << "  \"dmi_read_hints\": " << m_dmi_read_hints << ",\n"
             << "  \"dmi_requests\": " << m_dmi_requests << ",\n"
             << "  \"dmi_grants\": " << m_dmi_grants << ",\n"

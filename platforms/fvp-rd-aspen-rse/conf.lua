@@ -147,6 +147,9 @@ local sysctrl_trace = getenv_or("QBOX_RDASPEN_SYSCTRL_TRACE", "false") == "true"
 local sysctrl_trace_limit = tonumber(getenv_or("QBOX_RDASPEN_SYSCTRL_TRACE_LIMIT", "64"))
 local lcm_trace = getenv_or("QBOX_RDASPEN_LCM_TRACE", "false") == "true"
 local lcm_trace_limit = tonumber(getenv_or("QBOX_RDASPEN_LCM_TRACE_LIMIT", "64"))
+rse_lcm_lcs = getenv_number_or("QBOX_RDASPEN_RSE_LCM_LCS", "4008617381")
+rse_lcm_tp_mode = getenv_number_or("QBOX_RDASPEN_RSE_LCM_TP_MODE", "286348714")
+rse_lcm_sp_enable = getenv_number_or("QBOX_RDASPEN_RSE_LCM_SP_ENABLE", "0")
 local boot_flash_trace = getenv_or("QBOX_RDASPEN_BOOT_FLASH_TRACE", "false") == "true"
 local boot_flash_trace_limit = tonumber(getenv_or("QBOX_RDASPEN_BOOT_FLASH_TRACE_LIMIT", "64"))
 local boot_flash_dmi = getenv_or("QBOX_RDASPEN_BOOT_FLASH_DMI", "false") == "true"
@@ -755,9 +758,9 @@ platform = {
         trace = lcm_trace;
         trace_limit = lcm_trace_limit;
         otp_image = rse_otp;
-        lcs = 0xEEEEA5A5;
-        tp_mode = 0x111155AA;
-        sp_enable = 0x00000000;
+        lcs = rse_lcm_lcs;
+        tp_mode = rse_lcm_tp_mode;
+        sp_enable = rse_lcm_sp_enable;
         otp_size = 0x00010000;
         otp_writeback = getenv_or("QBOX_RDASPEN_RSE_OTP_WRITEBACK", "false") == "true";
         otp_lock_after_provision =

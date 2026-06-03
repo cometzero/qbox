@@ -34,6 +34,13 @@ class rse_lcm : public sc_core::sc_module
     static constexpr uint32_t DCU_EN = 0x100;
     static constexpr uint32_t DCU_LOCK = 0x110;
     static constexpr uint32_t OTP_WINDOW = 0x1000;
+    static constexpr uint32_t LCS_CM = 0xcccc3c3c;
+    static constexpr uint32_t LCS_DM = 0xdddd5a5a;
+    static constexpr uint32_t LCS_SE = 0xeeeea5a5;
+    static constexpr uint32_t LCM_TRUE = 0xffffffff;
+    static constexpr uint32_t SP_ENABLE_MAGIC = 0x5ec10e1e;
+    static constexpr uint32_t OTP_CM_CONFIG_2 = 0x0e8;
+    static constexpr uint32_t OTP_DM_CONFIG = 0x0ec;
 
     std::array<uint8_t, REG_BYTES> m_regs{};
     bool m_otp_locked = false;
@@ -66,6 +73,27 @@ class rse_lcm : public sc_core::sc_module
     bool is_otp_access(uint64_t offset, unsigned int len) const
     {
         return offset >= OTP_WINDOW && offset + len <= otp_limit();
+    }
+
+    static bool range_includes(uint64_t offset, unsigned int len, uint32_t word_offset)
+    {
+        return offset <= word_offset && offset + len >= word_offset + sizeof(uint32_t);
+    }
+
+    void update_lcs_from_otp_write(uint64_t otp_offset, unsigned int len)
+    {
+        if (range_includes(otp_offset, len, OTP_CM_CONFIG_2) &&
+            load32(LCS_VALUE) == LCS_CM) {
+            store32(LCS_VALUE, LCS_DM);
+        }
+
+        if (range_includes(otp_offset, len, OTP_DM_CONFIG) &&
+            load32(LCS_VALUE) == LCS_DM) {
+            store32(LCS_VALUE, LCS_SE);
+            if (p_otp_lock_after_provision.get_value()) {
+                m_otp_locked = true;
+            }
+        }
     }
 
     void flush_otp_image()
@@ -117,7 +145,10 @@ class rse_lcm : public sc_core::sc_module
             return true;
         }
 
-        std::memcpy(&m_regs[offset], data, len);
+        for (unsigned int i = 0; i < len; ++i) {
+            m_regs[offset + i] |= data[i];
+        }
+        update_lcs_from_otp_write(offset - OTP_WINDOW, len);
         flush_otp_image();
         return true;
     }
@@ -170,11 +201,8 @@ class rse_lcm : public sc_core::sc_module
         case GPPC:
             break;
         case SP_ENABLE:
-            if (value == 0x5ec10e1e) {
-                store32(SP_ENABLE, 0xffffffff);
-                if (p_otp_lock_after_provision.get_value()) {
-                    m_otp_locked = true;
-                }
+            if (value == SP_ENABLE_MAGIC) {
+                store32(SP_ENABLE, LCM_TRUE);
             } else {
                 store32(SP_ENABLE, value);
             }
