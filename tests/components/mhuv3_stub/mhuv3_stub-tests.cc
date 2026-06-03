@@ -48,6 +48,7 @@ constexpr uint64_t DBCW_STRIDE = 0x20;
 constexpr uint32_t MHU_NOTIFY_VALUE = 1234;
 constexpr uint32_t SCMI_PROTOCOL_POWER_DOMAIN = 0x11;
 constexpr uint32_t SCMI_PROTOCOL_SYS_POWER = 0x12;
+constexpr uint32_t SCMI_PROTOCOL_PFDI_MONITOR = 0x90;
 constexpr uint32_t SCMI_MESSAGE_PROTOCOL_VERSION = 0x0;
 constexpr uint32_t SCMI_MESSAGE_PROTOCOL_MESSAGE_ATTRIBUTES = 0x2;
 constexpr uint32_t SCMI_MESSAGE_POWER_STATE_SET = 0x4;
@@ -55,6 +56,7 @@ constexpr uint32_t SCMI_MESSAGE_POWER_STATE_GET = 0x5;
 constexpr uint32_t SCMI_MESSAGE_SYS_POWER_STATE_SET = 0x3;
 constexpr uint32_t SCMI_MESSAGE_SYS_POWER_STATE_NOTIFY = 0x5;
 constexpr uint32_t SCMI_SYS_POWER_COLD_RESET = 0x1;
+constexpr uint32_t SCMI_PFDI_MONITOR_VERSION = 0x00020000;
 
 uint32_t scmi_header(uint32_t protocol, uint32_t message)
 {
@@ -262,6 +264,8 @@ TEST(Mhuv3StubTest, RseBl2PowerDomainTransportRespondsAndSignalsAckBit)
     broker.set_preset_cci_value("si_cl1_pbx.pair", cci::cci_value(std::string("ap_si_cl1")));
     broker.set_preset_cci_value("si_cl1_pbx.frame", cci::cci_value(std::string("pbx")));
     broker.set_preset_cci_value("si_cl1_pbx.protocol", cci::cci_value(std::string("doorbell")));
+    broker.set_preset_cci_value("si_cl1_pbx.channel_count",
+                                cci::cci_value(32u));
     broker.set_preset_cci_value("si_cl1_pbx.doorbell_ack_trigger_channel",
                                 cci::cci_value(0u));
     broker.set_preset_cci_value("si_cl1_pbx.doorbell_ack_trigger_value",
@@ -313,6 +317,8 @@ TEST(Mhuv3StubTest, RseBl2PowerDomainTransportRespondsAndSignalsAckBit)
     broker.set_preset_cci_value("si_cl1_mbx.pair", cci::cci_value(std::string("ap_si_cl1")));
     broker.set_preset_cci_value("si_cl1_mbx.frame", cci::cci_value(std::string("mbx")));
     broker.set_preset_cci_value("si_cl1_mbx.protocol", cci::cci_value(std::string("doorbell")));
+    broker.set_preset_cci_value("si_cl1_mbx.channel_count",
+                                cci::cci_value(32u));
     broker.set_preset_cci_value("deferred_pbx.pair", cci::cci_value(std::string("deferred")));
     broker.set_preset_cci_value("deferred_pbx.frame", cci::cci_value(std::string("pbx")));
     broker.set_preset_cci_value("deferred_pbx.tx_shmem", cci::cci_value(SHMEM_BASE));
@@ -372,6 +378,24 @@ TEST(Mhuv3StubTest, RseBl2PowerDomainTransportRespondsAndSignalsAckBit)
                                 cci::cci_value(std::string("mbx")));
     broker.set_preset_cci_value("strict_mbx.protocol",
                                 cci::cci_value(std::string("doorbell")));
+    broker.set_preset_cci_value("pfdi_pbx.pair",
+                                cci::cci_value(std::string("pfdi")));
+    broker.set_preset_cci_value("pfdi_pbx.frame",
+                                cci::cci_value(std::string("pbx")));
+    broker.set_preset_cci_value("pfdi_pbx.protocol",
+                                cci::cci_value(std::string("scmi")));
+    broker.set_preset_cci_value("pfdi_pbx.scmi_transport",
+                                cci::cci_value(std::string("pfdi-monitor")));
+    broker.set_preset_cci_value("pfdi_pbx.tx_shmem",
+                                cci::cci_value(SHMEM_BASE));
+    broker.set_preset_cci_value("pfdi_pbx.rx_shmem",
+                                cci::cci_value(SHMEM_BASE));
+    broker.set_preset_cci_value("pfdi_pbx.scmi_channel_stride",
+                                cci::cci_value(40u));
+    broker.set_preset_cci_value("pfdi_pbx.scmi_channel_base_index",
+                                cci::cci_value(2u));
+    broker.set_preset_cci_value("pfdi_pbx.scmi_channel_count",
+                                cci::cci_value(4u));
 
     TestMemory shmem("si_scmi_shmem");
     TestMemory unused("unused_shmem");
@@ -388,6 +412,7 @@ TEST(Mhuv3StubTest, RseBl2PowerDomainTransportRespondsAndSignalsAckBit)
     TestMemory limited_unused("limited_unused_shmem");
     TestMemory strict_pbx_unused("strict_pbx_unused_shmem");
     TestMemory strict_mbx_unused("strict_mbx_unused_shmem");
+    TestMemory pfdi_shmem("pfdi_shmem");
     TestInitiator pbx_bus("pbx_bus");
     TestInitiator mbx_bus("mbx_bus");
     TestInitiator ap_pbx_bus("ap_pbx_bus");
@@ -403,6 +428,7 @@ TEST(Mhuv3StubTest, RseBl2PowerDomainTransportRespondsAndSignalsAckBit)
     TestInitiator limited_bus("limited_bus");
     TestInitiator strict_pbx_bus("strict_pbx_bus");
     TestInitiator strict_mbx_bus("strict_mbx_bus");
+    TestInitiator pfdi_bus("pfdi_bus");
     mhuv3_stub pbx("rse_si_pbx");
     mhuv3_stub mbx("rse_si_mbx");
     mhuv3_stub ap_pbx("ap_rse_pbx");
@@ -418,6 +444,7 @@ TEST(Mhuv3StubTest, RseBl2PowerDomainTransportRespondsAndSignalsAckBit)
     mhuv3_stub limited_pbx("limited_pbx");
     mhuv3_stub strict_pbx("strict_pbx");
     mhuv3_stub strict_mbx("strict_mbx");
+    mhuv3_stub pfdi_pbx("pfdi_pbx");
     ResetSink ap_reset("ap_reset");
     ResetSink system_reset("system_reset");
     ResetSink ap_domain1_reset("ap_domain1_reset");
@@ -441,6 +468,7 @@ TEST(Mhuv3StubTest, RseBl2PowerDomainTransportRespondsAndSignalsAckBit)
     limited_bus.initiator_socket.bind(limited_pbx.target_socket);
     strict_pbx_bus.initiator_socket.bind(strict_pbx.target_socket);
     strict_mbx_bus.initiator_socket.bind(strict_mbx.target_socket);
+    pfdi_bus.initiator_socket.bind(pfdi_pbx.target_socket);
     pbx.initiator_socket.bind(shmem.target_socket);
     mbx.initiator_socket.bind(unused.target_socket);
     ap_pbx.initiator_socket.bind(ap_pbx_unused.target_socket);
@@ -456,6 +484,7 @@ TEST(Mhuv3StubTest, RseBl2PowerDomainTransportRespondsAndSignalsAckBit)
     limited_pbx.initiator_socket.bind(limited_unused.target_socket);
     strict_pbx.initiator_socket.bind(strict_pbx_unused.target_socket);
     strict_mbx.initiator_socket.bind(strict_mbx_unused.target_socket);
+    pfdi_pbx.initiator_socket.bind(pfdi_shmem.target_socket);
     pbx.power_on_reset.bind(ap_reset.reset);
     pbx.system_reset.bind(system_reset.reset);
     pbx.power_domain_reset[1].bind(ap_domain1_reset.reset);
@@ -475,6 +504,49 @@ TEST(Mhuv3StubTest, RseBl2PowerDomainTransportRespondsAndSignalsAckBit)
     EXPECT_EQ(read32(limited_bus, CTRL_FEAT_SPT1), 0xaa55u);
     EXPECT_EQ(read32(limited_bus, CTRL_IIDR), 0x11223344u);
     EXPECT_EQ(read32(limited_bus, CTRL_AIDR), 0x55667788u);
+    EXPECT_EQ(read32(si_cl1_pbx_bus, DBCH_CFG0), 31u);
+    EXPECT_EQ(read32(si_cl1_mbx_bus, DBCH_CFG0), 31u);
+    const uint64_t si_cl1_last_channel = 0x1000 + (31 * DBCW_STRIDE);
+    const uint64_t si_cl1_out_of_model_channel = 0x1000 + (32 * DBCW_STRIDE);
+    write32(si_cl1_pbx_bus,
+            si_cl1_last_channel + (DBCW_INT_EN - DBCW_ST),
+            0x1u);
+    write32(si_cl1_pbx_bus,
+            si_cl1_last_channel + (DBCW_SET - DBCW_ST),
+            0x10u);
+    EXPECT_EQ(read32(si_cl1_pbx_bus, si_cl1_last_channel), 0x10u);
+    write32(si_cl1_mbx_bus,
+            si_cl1_last_channel + (DBCW_CLR - DBCW_ST),
+            0x10u);
+    EXPECT_EQ(read32(si_cl1_pbx_bus, si_cl1_last_channel), 0u);
+    EXPECT_EQ(read32(si_cl1_pbx_bus,
+                     si_cl1_last_channel + (DBCW_INT_ST - DBCW_ST)) &
+                  0x1u,
+              0x1u);
+    EXPECT_EQ(read32(si_cl1_pbx_bus, CTRL_DBCH_INT_ST0), 0x80000000u);
+    write32(si_cl1_pbx_bus,
+            si_cl1_last_channel + (DBCW_INT_CLR - DBCW_ST),
+            0x1u);
+    EXPECT_EQ(read32(si_cl1_pbx_bus, CTRL_DBCH_INT_ST0), 0u);
+    write32(si_cl1_pbx_bus,
+            si_cl1_out_of_model_channel + (DBCW_SET - DBCW_ST),
+            0x20u);
+    EXPECT_EQ(read32(si_cl1_pbx_bus, si_cl1_out_of_model_channel), 0u);
+    pfdi_shmem.write32(SCMI_STATUS, 0);
+    pfdi_shmem.write32(SCMI_LENGTH, sizeof(uint32_t));
+    pfdi_shmem.write32(SCMI_HEADER,
+                       scmi_header(SCMI_PROTOCOL_PFDI_MONITOR,
+                                   SCMI_MESSAGE_PROTOCOL_VERSION));
+    write32(pfdi_bus, 0x1000 + (2 * DBCW_STRIDE) + (DBCW_SET - DBCW_ST),
+            0x1u);
+    EXPECT_EQ(pfdi_shmem.read32(SCMI_STATUS), 1u);
+    EXPECT_EQ(pfdi_shmem.read32(SCMI_LENGTH), 12u);
+    EXPECT_EQ(pfdi_shmem.read32(SCMI_HEADER),
+              scmi_header(SCMI_PROTOCOL_PFDI_MONITOR,
+                          SCMI_MESSAGE_PROTOCOL_VERSION));
+    EXPECT_EQ(pfdi_shmem.read32(SCMI_PAYLOAD), 0u);
+    EXPECT_EQ(pfdi_shmem.read32(SCMI_PAYLOAD + sizeof(uint32_t)),
+              SCMI_PFDI_MONITOR_VERSION);
     const uint32_t strict_notify_channel = read32(strict_pbx_bus, DBCH_CFG0);
     const uint64_t strict_notify_base = 0x1000 +
                                         (strict_notify_channel * DBCW_STRIDE);

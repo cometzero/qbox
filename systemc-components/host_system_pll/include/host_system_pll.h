@@ -17,20 +17,9 @@
 #include <tlm_sockets_buswidth.h>
 #include <tlm_utils/simple_target_socket.h>
 
-class host_ppu : public sc_core::sc_module
+class host_system_pll : public sc_core::sc_module
 {
     static constexpr uint64_t REG_BYTES = 0x1000;
-    static constexpr uint32_t PPU_PWPR = 0x000;
-    static constexpr uint32_t PPU_PMER = 0x004;
-    static constexpr uint32_t PPU_PWSR = 0x008;
-    static constexpr uint32_t PPU_POWER_MASK = 0x0000000f;
-    static constexpr uint32_t PPU_POWER_DYN_ENABLE = 0x00000100;
-    static constexpr uint32_t PPU_POWER_DYN_STATUS = 0x00000100;
-    static constexpr uint32_t PPU_OFF_LOCK_ENABLE = 0x00001000;
-    static constexpr uint32_t PPU_OFF_LOCK_STATUS = 0x00001000;
-    static constexpr uint32_t PPU_OP_POLICY_MASK = 0x000f0000;
-    static constexpr uint32_t PPU_OP_DYN_ENABLE = 0x01000000;
-    static constexpr uint32_t PPU_OP_DYN_STATUS = 0x01000000;
 
     std::array<uint8_t, REG_BYTES> m_regs{};
     unsigned int m_trace_count = 0;
@@ -55,42 +44,11 @@ class host_ppu : public sc_core::sc_module
     void reset_registers()
     {
         m_regs.fill(0);
-        store32(PPU_PWSR, p_initial_power_status.get_value() & PPU_POWER_MASK);
     }
 
     void write32(uint32_t offset, uint32_t value)
     {
-        switch (offset) {
-        case PPU_PWPR:
-        {
-            uint32_t status = load32(PPU_PWSR);
-
-            store32(PPU_PWPR, value);
-            status &= ~(PPU_POWER_MASK | PPU_POWER_DYN_STATUS |
-                        PPU_OFF_LOCK_STATUS | PPU_OP_POLICY_MASK |
-                        PPU_OP_DYN_STATUS);
-            status |= value & (PPU_POWER_MASK | PPU_OP_POLICY_MASK);
-            if ((value & PPU_POWER_DYN_ENABLE) != 0) {
-                status |= PPU_POWER_DYN_STATUS;
-            }
-            if ((value & PPU_OFF_LOCK_ENABLE) != 0) {
-                status |= PPU_OFF_LOCK_STATUS;
-            }
-            if ((value & PPU_OP_DYN_ENABLE) != 0) {
-                status |= PPU_OP_DYN_STATUS;
-            }
-            store32(PPU_PWSR, status);
-            break;
-        }
-        case PPU_PMER:
-            store32(PPU_PMER, value);
-            break;
-        case PPU_PWSR:
-            break;
-        default:
-            store32(offset, value);
-            break;
-        }
+        store32(offset, value | p_lock_mask.get_value());
     }
 
     bool access(tlm::tlm_generic_payload& trans, bool debug)
@@ -99,7 +57,8 @@ class host_ppu : public sc_core::sc_module
         const unsigned int len = trans.get_data_length();
         uint8_t* data = trans.get_data_ptr();
 
-        if (data == nullptr || !is_supported_length(len) || offset + len > m_regs.size()) {
+        if (data == nullptr || !is_supported_length(len) ||
+            offset + len > m_regs.size()) {
             trans.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
             return false;
         }
@@ -125,21 +84,21 @@ class host_ppu : public sc_core::sc_module
         return true;
     }
 
-    void trace_access(tlm::tlm_generic_payload& trans, uint64_t offset, unsigned int len, bool debug)
+    void trace_access(tlm::tlm_generic_payload& trans, uint64_t offset,
+                      unsigned int len, bool debug)
     {
-        if (!p_trace.get_value() || m_trace_count >= p_trace_limit.get_value()) {
+        if (!p_trace.get_value() || m_trace_count >= p_trace_limit.get_value())
             return;
-        }
 
         ++m_trace_count;
         uint32_t value = 0;
-        if (len <= sizeof(value)) {
+        if (len <= sizeof(value))
             std::memcpy(&value, trans.get_data_ptr(), len);
-        }
 
         std::cerr << name() << " "
                   << (debug ? "dbg_" : "")
-                  << (trans.get_command() == tlm::TLM_READ_COMMAND ? "read" : "write")
+                  << (trans.get_command() == tlm::TLM_READ_COMMAND ? "read" :
+                                                                      "write")
                   << " offset=0x" << std::hex << offset
                   << " len=0x" << len
                   << " value=0x" << value
@@ -149,19 +108,21 @@ class host_ppu : public sc_core::sc_module
 public:
     cci::cci_param<bool> p_trace;
     cci::cci_param<unsigned int> p_trace_limit;
-    cci::cci_param<uint32_t> p_initial_power_status;
-    tlm_utils::simple_target_socket<host_ppu, DEFAULT_TLM_BUSWIDTH> target_socket;
+    cci::cci_param<uint32_t> p_lock_mask;
+    tlm_utils::simple_target_socket<host_system_pll, DEFAULT_TLM_BUSWIDTH>
+        target_socket;
 
-    explicit host_ppu(sc_core::sc_module_name name)
+    explicit host_system_pll(sc_core::sc_module_name name)
         : sc_core::sc_module(name)
         , p_trace("trace", false)
         , p_trace_limit("trace_limit", 64)
-        , p_initial_power_status("initial_power_status", 0x00000000)
+        , p_lock_mask("lock_mask", 0x00000001)
         , target_socket("target_socket")
     {
         reset_registers();
-        target_socket.register_b_transport(this, &host_ppu::b_transport);
-        target_socket.register_transport_dbg(this, &host_ppu::transport_dbg);
+        target_socket.register_b_transport(this, &host_system_pll::b_transport);
+        target_socket.register_transport_dbg(this,
+                                             &host_system_pll::transport_dbg);
     }
 
     void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)

@@ -24,6 +24,13 @@ class host_scr : public sc_core::sc_module
     static constexpr uint32_t SID_SOC_ID = 0x050;
     static constexpr uint32_t SID_CHIP_ID = 0x060;
     static constexpr uint32_t SID_SYSTEM_CFG = 0x070;
+    static constexpr uint32_t CL0_CONFIG_0 = 0x000;
+    static constexpr uint32_t CL0_CONFIG_1 = 0x004;
+    static constexpr uint32_t CL0_CONFIG_2 = 0x008;
+    static constexpr uint32_t CL0_C0_CONFIG_0 = 0x010;
+    static constexpr uint32_t CL0_C0_CONFIG_1 = 0x014;
+    static constexpr uint32_t CL0_C0_CONFIG_2 = 0x018;
+    static constexpr uint32_t CL0_C0_CONFIG_3 = 0x01c;
     static constexpr uint32_t CPUHALT = 0x300;
     static constexpr uint32_t MEMPROTCTLR = 0x500;
     static constexpr uint32_t SAFECTLR = 0x600;
@@ -68,6 +75,13 @@ class host_scr : public sc_core::sc_module
     void reset_registers()
     {
         m_regs.fill(0);
+        store32(CL0_CONFIG_0, p_cl0_config_0.get_value());
+        store32(CL0_CONFIG_1, p_cl0_config_1.get_value());
+        store32(CL0_CONFIG_2, p_cl0_config_2.get_value());
+        store32(CL0_C0_CONFIG_0, p_cl0_c0_config_0.get_value());
+        store32(CL0_C0_CONFIG_1, p_cl0_c0_config_1.get_value());
+        store32(CL0_C0_CONFIG_2, p_cl0_c0_config_2.get_value());
+        store32(CL0_C0_CONFIG_3, p_cl0_c0_config_3.get_value());
         store32(SID_SYSTEM_ID, p_system_id.get_value());
         store32(SID_SOC_ID, p_soc_id.get_value());
         store32(SID_CHIP_ID, p_chip_id.get_value());
@@ -76,20 +90,27 @@ class host_scr : public sc_core::sc_module
         store32(MEMPROTCTLR, p_initial_memprotctlr.get_value());
         store32(SAFECTLR, p_initial_safectlr.get_value());
 
-        store32(SID_PIDR4, 0x00000004);
-        store32(SID_PIDR0, 0x00000000);
-        store32(SID_PIDR1, 0x00000000);
-        store32(SID_PIDR2, 0x00000000);
-        store32(SID_PIDR3, 0x00000000);
-        store32(SID_CIDR0, 0x0000000d);
-        store32(SID_CIDR1, 0x000000f0);
-        store32(SID_CIDR2, 0x00000005);
-        store32(SID_CIDR3, 0x000000b1);
+        store32(SID_PIDR4, p_pidr4.get_value());
+        store32(SID_PIDR0, p_pidr0.get_value());
+        store32(SID_PIDR1, p_pidr1.get_value());
+        store32(SID_PIDR2, p_pidr2.get_value());
+        store32(SID_PIDR3, p_pidr3.get_value());
+        store32(SID_CIDR0, p_cidr0.get_value());
+        store32(SID_CIDR1, p_cidr1.get_value());
+        store32(SID_CIDR2, p_cidr2.get_value());
+        store32(SID_CIDR3, p_cidr3.get_value());
     }
 
     void write32(uint32_t offset, uint32_t value)
     {
         switch (offset) {
+        case CL0_CONFIG_0:
+        case CL0_CONFIG_1:
+        case CL0_CONFIG_2:
+        case CL0_C0_CONFIG_0:
+        case CL0_C0_CONFIG_1:
+        case CL0_C0_CONFIG_2:
+        case CL0_C0_CONFIG_3:
         case SID_SYSTEM_ID:
         case SID_SOC_ID:
         case SID_CHIP_ID:
@@ -172,9 +193,25 @@ public:
     cci::cci_param<uint32_t> p_system_id;
     cci::cci_param<uint32_t> p_soc_id;
     cci::cci_param<uint32_t> p_chip_id;
+    cci::cci_param<uint32_t> p_cl0_config_0;
+    cci::cci_param<uint32_t> p_cl0_config_1;
+    cci::cci_param<uint32_t> p_cl0_config_2;
+    cci::cci_param<uint32_t> p_cl0_c0_config_0;
+    cci::cci_param<uint32_t> p_cl0_c0_config_1;
+    cci::cci_param<uint32_t> p_cl0_c0_config_2;
+    cci::cci_param<uint32_t> p_cl0_c0_config_3;
     cci::cci_param<uint32_t> p_initial_cpuhalt;
     cci::cci_param<uint32_t> p_initial_memprotctlr;
     cci::cci_param<uint32_t> p_initial_safectlr;
+    cci::cci_param<uint32_t> p_pidr4;
+    cci::cci_param<uint32_t> p_pidr0;
+    cci::cci_param<uint32_t> p_pidr1;
+    cci::cci_param<uint32_t> p_pidr2;
+    cci::cci_param<uint32_t> p_pidr3;
+    cci::cci_param<uint32_t> p_cidr0;
+    cci::cci_param<uint32_t> p_cidr1;
+    cci::cci_param<uint32_t> p_cidr2;
+    cci::cci_param<uint32_t> p_cidr3;
     tlm_utils::simple_target_socket<host_scr, DEFAULT_TLM_BUSWIDTH> target_socket;
 
     explicit host_scr(sc_core::sc_module_name name)
@@ -187,9 +224,25 @@ public:
         , p_system_id("system_id", 0)
         , p_soc_id("soc_id", 0)
         , p_chip_id("chip_id", 0)
+        , p_cl0_config_0("cl0_config_0", 0)
+        , p_cl0_config_1("cl0_config_1", 0)
+        , p_cl0_config_2("cl0_config_2", 0)
+        , p_cl0_c0_config_0("cl0_c0_config_0", 0)
+        , p_cl0_c0_config_1("cl0_c0_config_1", 0)
+        , p_cl0_c0_config_2("cl0_c0_config_2", 0)
+        , p_cl0_c0_config_3("cl0_c0_config_3", 0)
         , p_initial_cpuhalt("initial_cpuhalt", 0)
         , p_initial_memprotctlr("initial_memprotctlr", 0)
         , p_initial_safectlr("initial_safectlr", 0)
+        , p_pidr4("pidr4", 0x00000004)
+        , p_pidr0("pidr0", 0x0000003c)
+        , p_pidr1("pidr1", 0x000000b7)
+        , p_pidr2("pidr2", 0x0000000b)
+        , p_pidr3("pidr3", 0x00000000)
+        , p_cidr0("cidr0", 0x0000000d)
+        , p_cidr1("cidr1", 0x000000f0)
+        , p_cidr2("cidr2", 0x00000005)
+        , p_cidr3("cidr3", 0x000000b1)
         , target_socket("target_socket")
     {
         reset_registers();

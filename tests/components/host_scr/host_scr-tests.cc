@@ -12,10 +12,26 @@
 
 namespace {
 
+constexpr uint64_t CL0_CONFIG_0 = 0x000;
+constexpr uint64_t CL0_CONFIG_1 = 0x004;
+constexpr uint64_t CL0_CONFIG_2 = 0x008;
+constexpr uint64_t CL0_C0_CONFIG_0 = 0x010;
+constexpr uint64_t CL0_C0_CONFIG_1 = 0x014;
+constexpr uint64_t CL0_C0_CONFIG_2 = 0x018;
+constexpr uint64_t CL0_C0_CONFIG_3 = 0x01c;
 constexpr uint64_t SID_SYSTEM_CFG = 0x070;
 constexpr uint64_t CPUHALT = 0x300;
 constexpr uint64_t MEMPROTCTLR = 0x500;
 constexpr uint64_t SAFECTLR = 0x600;
+constexpr uint64_t SID_PIDR4 = 0xfd0;
+constexpr uint64_t SID_PIDR0 = 0xfe0;
+constexpr uint64_t SID_PIDR1 = 0xfe4;
+constexpr uint64_t SID_PIDR2 = 0xfe8;
+constexpr uint64_t SID_PIDR3 = 0xfec;
+constexpr uint64_t SID_CIDR0 = 0xff0;
+constexpr uint64_t SID_CIDR1 = 0xff4;
+constexpr uint64_t SID_CIDR2 = 0xff8;
+constexpr uint64_t SID_CIDR3 = 0xffc;
 
 uint32_t access32(host_scr& dut, uint64_t offset, tlm::tlm_command command,
                   uint32_t value = 0)
@@ -57,6 +73,27 @@ TEST(HostScrTest, Cl1PresentResetValueIsConfigurable)
     EXPECT_EQ(read32(dut, SID_SYSTEM_CFG) & 0x1u, 0x1u);
 }
 
+TEST(HostScrTest, Cl0ResetConfigValuesAreConfigurable)
+{
+    host_scr dut("host_scr_cl0_config");
+    dut.p_cl0_config_0 = 0x01201717u;
+    dut.p_cl0_config_1 = 0x01100002u;
+    dut.p_cl0_config_2 = 0x00000034u;
+    dut.p_cl0_c0_config_0 = 0x01000001u;
+    dut.p_cl0_c0_config_1 = 0x01001000u;
+    dut.p_cl0_c0_config_2 = 0x01200000u;
+    dut.p_cl0_c0_config_3 = 0x00000000u;
+    dut.before_end_of_elaboration();
+
+    EXPECT_EQ(read32(dut, CL0_CONFIG_0), 0x01201717u);
+    EXPECT_EQ(read32(dut, CL0_CONFIG_1), 0x01100002u);
+    EXPECT_EQ(read32(dut, CL0_CONFIG_2), 0x00000034u);
+    EXPECT_EQ(read32(dut, CL0_C0_CONFIG_0), 0x01000001u);
+    EXPECT_EQ(read32(dut, CL0_C0_CONFIG_1), 0x01001000u);
+    EXPECT_EQ(read32(dut, CL0_C0_CONFIG_2), 0x01200000u);
+    EXPECT_EQ(read32(dut, CL0_C0_CONFIG_3), 0x00000000u);
+}
+
 TEST(HostScrTest, WritableControlRegistersPreserveWrites)
 {
     host_scr dut("host_scr_writes");
@@ -70,6 +107,22 @@ TEST(HostScrTest, WritableControlRegistersPreserveWrites)
     EXPECT_EQ(read32(dut, CPUHALT), 0x00000f01u);
     EXPECT_EQ(read32(dut, MEMPROTCTLR), 0x00000033u);
     EXPECT_EQ(read32(dut, SAFECTLR), 0x00000001u);
+}
+
+TEST(HostScrTest, PcidResetValuesMatchApolloSid)
+{
+    host_scr dut("host_scr_pcid");
+    dut.before_end_of_elaboration();
+
+    EXPECT_EQ(read32(dut, SID_PIDR4), 0x04u);
+    EXPECT_EQ(read32(dut, SID_PIDR0), 0x3cu);
+    EXPECT_EQ(read32(dut, SID_PIDR1), 0xb7u);
+    EXPECT_EQ(read32(dut, SID_PIDR2), 0x0bu);
+    EXPECT_EQ(read32(dut, SID_PIDR3), 0x00u);
+    EXPECT_EQ(read32(dut, SID_CIDR0), 0x0du);
+    EXPECT_EQ(read32(dut, SID_CIDR1), 0xf0u);
+    EXPECT_EQ(read32(dut, SID_CIDR2), 0x05u);
+    EXPECT_EQ(read32(dut, SID_CIDR3), 0xb1u);
 }
 
 TEST(HostScrTest, SystemConfigIsReadOnlyToFirmwareWrites)

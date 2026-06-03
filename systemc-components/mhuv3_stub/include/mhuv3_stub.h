@@ -363,6 +363,7 @@ private:
     cci::cci_param<uint64_t> p_tx_shmem;
     cci::cci_param<uint64_t> p_rx_shmem;
     cci::cci_param<uint64_t> p_scmi_channel_stride;
+    cci::cci_param<unsigned int> p_scmi_channel_base_index;
     cci::cci_param<unsigned int> p_scmi_channel_count;
     cci::cci_param<bool> p_init_shmem;
     cci::cci_param<unsigned int> p_ack_bit;
@@ -437,6 +438,13 @@ private:
     }
 
     unsigned int notify_channel() const { return channel_count() - 1; }
+
+    bool scmi_channel_in_range(unsigned int channel) const
+    {
+        const unsigned int base = p_scmi_channel_base_index.get_value();
+        return channel >= base &&
+               (channel - base) < p_scmi_channel_count.get_value();
+    }
 
     void trace_event(const char* event, const std::string& detail = "")
     {
@@ -810,7 +818,10 @@ private:
 
     uint64_t scmi_shmem(unsigned int channel) const
     {
-        return p_tx_shmem.get_value() + (p_scmi_channel_stride.get_value() * channel);
+        const unsigned int base = p_scmi_channel_base_index.get_value();
+        const unsigned int slot = channel >= base ? channel - base : channel;
+
+        return p_tx_shmem.get_value() + (p_scmi_channel_stride.get_value() * slot);
     }
 
     void write_scmi_response(unsigned int channel, uint32_t header, uint32_t status,
@@ -1623,7 +1634,7 @@ private:
             if (!is_mbx()) {
                 if (reg_offset == DBCW_SET) {
                     if (p_protocol.get_value() == "scmi" &&
-                        channel < p_scmi_channel_count.get_value()) {
+                        scmi_channel_in_range(channel)) {
                         respond_scmi(channel);
                     } else {
                         write_postbox_doorbell(channel, value);
@@ -1738,7 +1749,10 @@ protected:
         if (!is_mbx() && p_init_shmem.get_value()) {
             for (unsigned int channel = 0; channel < p_scmi_channel_count.get_value();
                  ++channel) {
-                mem_write32(scmi_shmem(channel) + SCMI_CHAN_STATUS, SCMI_CHAN_FREE);
+                mem_write32(p_tx_shmem.get_value() +
+                                (p_scmi_channel_stride.get_value() * channel) +
+                                SCMI_CHAN_STATUS,
+                            SCMI_CHAN_FREE);
             }
             mem_write32(p_rx_shmem.get_value() + SCMI_CHAN_STATUS, SCMI_CHAN_FREE);
         }
@@ -1772,6 +1786,7 @@ public:
         , p_tx_shmem("tx_shmem", 0x00180000)
         , p_rx_shmem("rx_shmem", 0x00180100)
         , p_scmi_channel_stride("scmi_channel_stride", 0)
+        , p_scmi_channel_base_index("scmi_channel_base_index", 0)
         , p_scmi_channel_count("scmi_channel_count", 1)
         , p_init_shmem("init_shmem", true)
         , p_ack_bit("ack_bit", 0)

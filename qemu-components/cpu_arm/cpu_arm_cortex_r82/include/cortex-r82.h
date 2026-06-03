@@ -38,6 +38,7 @@ protected:
     }
 
 public:
+    cci::cci_param<unsigned int> p_mp_affinity;
     cci::cci_param<bool> p_start_powered_off;
     cci::cci_param<uint64_t> p_rvbar;
     cci::cci_param<uint64_t> p_cntfrq_hz;
@@ -60,6 +61,7 @@ public:
     }
     cpu_arm_cortexR82(sc_core::sc_module_name name, QemuInstance& inst)
         : QemuCpuArm(name, inst, "cortex-r82-arm")
+        , p_mp_affinity("mp_affinity", 0, "Multi-processor affinity value")
         , p_has_el2("has_el2", true, "ARM virtualization extensions")
         , p_rvbar("rvbar", 0ull, "Reset vector base address register value")
         , p_cntfrq_hz("cntfrq_hz", 0ull, "CPU Generic Timer CNTFRQ in Hz")
@@ -86,8 +88,12 @@ public:
     {
         QemuCpuArm::before_end_of_elaboration();
 
-        qemu::CpuArm cpu(m_dev);
+        qemu::CpuAarch64 cpu(m_cpu);
+        cpu.set_aarch64_mode(true);
 
+        if (!p_mp_affinity.is_default_value()) {
+            cpu.set_prop_int("mp-affinity", p_mp_affinity);
+        }
         cpu.set_prop_bool("start-powered-off", p_start_powered_off);
         cpu.set_prop_int("rvbar", p_rvbar);
         cpu.set_prop_int("psci-conduit", get_psci_conduit_val());

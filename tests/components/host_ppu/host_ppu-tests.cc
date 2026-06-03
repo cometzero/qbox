@@ -16,6 +16,13 @@ namespace {
 constexpr uint64_t PPU_PWPR = 0x000;
 constexpr uint64_t PPU_PMER = 0x004;
 constexpr uint64_t PPU_PWSR = 0x008;
+constexpr uint32_t PPU_PWPR_DYNAMIC_EN = 0x00000100;
+constexpr uint32_t PPU_PWPR_OFF_LOCK_EN = 0x00001000;
+constexpr uint32_t PPU_PWPR_OP_DYN_EN = 0x01000000;
+constexpr uint32_t PPU_PWPR_OP_POLICY = 0x000f0000;
+constexpr uint32_t PPU_PWSR_PWR_DYN_STATUS = 0x00000100;
+constexpr uint32_t PPU_PWSR_OFF_LOCK_STATUS = 0x00001000;
+constexpr uint32_t PPU_PWSR_OP_DYN_STATUS = 0x01000000;
 
 uint32_t access32(host_ppu& dut, uint64_t offset, tlm::tlm_command command,
                   uint32_t value = 0)
@@ -68,6 +75,29 @@ TEST(HostPpuTest, EmulatorRegisterIsWritable)
 
     write32(dut, PPU_PMER, 0x00000001u);
     EXPECT_EQ(read32(dut, PPU_PMER), 0x00000001u);
+}
+
+TEST(HostPpuTest, DynamicPolicyWriteUpdatesStatusBits)
+{
+    host_ppu dut("host_ppu_dynamic");
+
+    write32(dut,
+            PPU_PWPR,
+            PPU_PWPR_DYNAMIC_EN | PPU_PWPR_OFF_LOCK_EN |
+                PPU_PWPR_OP_DYN_EN | (0x5u << 16) | 0x8u);
+
+    const auto status = read32(dut, PPU_PWSR);
+    EXPECT_EQ(status & 0xfu, 0x8u);
+    EXPECT_NE(status & PPU_PWSR_PWR_DYN_STATUS, 0u);
+    EXPECT_NE(status & PPU_PWSR_OFF_LOCK_STATUS, 0u);
+    EXPECT_NE(status & PPU_PWSR_OP_DYN_STATUS, 0u);
+    EXPECT_EQ(status & PPU_PWPR_OP_POLICY, 0x00050000u);
+
+    write32(dut, PPU_PWPR, 0x0u);
+    EXPECT_EQ(read32(dut, PPU_PWSR) &
+                  (PPU_PWSR_PWR_DYN_STATUS | PPU_PWSR_OFF_LOCK_STATUS |
+                   PPU_PWSR_OP_DYN_STATUS | PPU_PWPR_OP_POLICY),
+              0u);
 }
 
 int sc_main(int argc, char* argv[])
