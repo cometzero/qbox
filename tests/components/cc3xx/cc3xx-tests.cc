@@ -3,12 +3,15 @@
  */
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <initializer_list>
 #include <sstream>
 #include <string>
 #include <vector>
+#include <unistd.h>
 
 #include <gtest/gtest.h>
 #include <systemc>
@@ -998,6 +1001,35 @@ TEST(Cc3xxTest, RejectsUnsupportedAndOutOfRangeTransactions)
     trans.set_address(0x10000 - 1);
     dut.b_transport(trans, delay);
     EXPECT_EQ(trans.get_response_status(), tlm::TLM_ADDRESS_ERROR_RESPONSE);
+}
+
+TEST(Cc3xxTest, StatsFileIncludesRegisterOffsetHistograms)
+{
+    const std::string path =
+        "/tmp/qbox-cc3xx-stats-" + std::to_string(getpid()) + ".json";
+    std::remove(path.c_str());
+
+    cc3xx dut("cc3xx_stats_histogram");
+    dut.p_stats_file = path;
+    dut.p_stats_interval = 1;
+
+    write32(dut, CRYPTO_CTL, CC3XX_ENGINE_HASH);
+    EXPECT_EQ(read32(dut, HOST_CC_IS_IDLE), 0x1u);
+    EXPECT_EQ(read32(dut, HOST_CC_IS_IDLE), 0x1u);
+
+    std::ifstream in(path);
+    ASSERT_TRUE(in.good());
+
+    std::stringstream buffer;
+    buffer << in.rdbuf();
+    const auto stats = buffer.str();
+
+    EXPECT_NE(stats.find("\"register_read_count\""), std::string::npos);
+    EXPECT_NE(stats.find("\"register_write_count\""), std::string::npos);
+    EXPECT_NE(stats.find("\"0xa7c\": 2"), std::string::npos);
+    EXPECT_NE(stats.find("\"0x900\": 1"), std::string::npos);
+
+    std::remove(path.c_str());
 }
 
 int sc_main(int argc, char* argv[])

@@ -202,6 +202,21 @@ rse_lcm: otp-backed-writeback-lock-model
 rse_sysctrl: touched-register-model
 ```
 
+The default RSE CC3XX backend remains the SystemC `cc3xx` component. For
+performance experiments, `scripts/run_qbox_fvp_rd_aspen_rse.py` and the Apollo
+full-system wrappers accept `--cc3xx-qemu-native-backend`. That option selects
+`QBOX_RDASPEN_CC3XX_BACKEND=qemu-native` and automatically enables the
+`0x50154000:0x2000` direct MMIO fast path so RSE CPU CC3XX accesses enter the
+QEMU `MemoryRegionOps` wrapper instead of the SystemC scheduler bridge. The
+backend reuses the same `cc3xx_core` model and does not bypass secure boot
+validation. The 2026-06-05 RSE timing bundle at
+`build/qbox-apollo-fvp/cc3xx-qemu-native-20260605-001939/rse/` reduced the BL2
+validation delta from 151.321s to 133.339s while preserving the RSE BL2 and
+runtime handoff markers.
+The full-system bundle
+`build/qbox-apollo-fvp/cc3xx-qemu-native-20260605-003557/full/` reached
+`passed: true` with Linux login and post-login probe evidence.
+
 This is not an RSE boot pass. It is evidence that the platform now progresses
 past the first CC3XX register abort, the observed DMA350 fill writes, the first
 RSE system-control register access, ATU programming, LCM/OTP reads, and KMU
@@ -576,4 +591,17 @@ python3 scripts/run_qbox_fvp_rd_aspen_rse.py \
   --skip-build \
   --timeout 300 \
   --out-dir build/qbox-fvp-rd-aspen/rse-cc3xx-pka-filter-<run-id>
+```
+
+For the QEMU-native CC3XX backend, collect stats and timing with:
+
+```bash
+python3 scripts/run_qbox_fvp_rd_aspen_rse.py \
+  --skip-build \
+  --range-limited-flash-dmi \
+  --cc3xx-stats \
+  --cc3xx-stats-interval 65536 \
+  --cc3xx-qemu-native-backend \
+  --timeout 600 \
+  --out-dir build/qbox-fvp-rd-aspen/rse-cc3xx-qemu-native-<run-id>
 ```

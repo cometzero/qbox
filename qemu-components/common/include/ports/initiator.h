@@ -13,6 +13,12 @@
 #include <limits>
 #include <cassert>
 #include <cinttypes>
+#include <cerrno>
+#include <cstdlib>
+#include <map>
+#include <sstream>
+#include <string>
+#include <vector>
 
 #include <tlm>
 
@@ -135,6 +141,159 @@ protected:
         trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
 
         m_initiator.initiator_customize_tlm_payload(trans);
+    }
+
+    static std::string trim_copy(const std::string& text)
+    {
+        const auto start = text.find_first_not_of(" \t\r\n");
+        if (start == std::string::npos) {
+            return "";
+        }
+
+        const auto end = text.find_last_not_of(" \t\r\n");
+        return text.substr(start, end - start + 1);
+    }
+
+    static bool parse_u64(const std::string& text, uint64_t& value)
+    {
+        const std::string trimmed = trim_copy(text);
+        if (trimmed.empty()) {
+            return false;
+        }
+
+        char* end = nullptr;
+        errno = 0;
+        const auto parsed = std::strtoull(trimmed.c_str(), &end, 0);
+        if (errno != 0 || end == trimmed.c_str() || *end != '\0') {
+            return false;
+        }
+
+        value = static_cast<uint64_t>(parsed);
+        return true;
+    }
+
+    static std::map<uint64_t, uint64_t> parse_mmio_read_fastpath()
+    {
+        std::map<uint64_t, uint64_t> entries;
+        const char* env = std::getenv("QBOX_MMIO_READ_FASTPATH");
+        if (env == nullptr || *env == '\0') {
+            return entries;
+        }
+
+        std::stringstream stream(env);
+        std::string item;
+        while (std::getline(stream, item, ',')) {
+            const auto sep = item.find('=');
+            if (sep == std::string::npos) {
+                continue;
+            }
+
+            uint64_t address = 0;
+            uint64_t value = 0;
+            if (!parse_u64(item.substr(0, sep), address) ||
+                !parse_u64(item.substr(sep + 1), value)) {
+                continue;
+            }
+
+            entries[address] = value;
+        }
+
+        return entries;
+    }
+
+    static const std::map<uint64_t, uint64_t>& mmio_read_fastpath_entries()
+    {
+        static const auto entries = parse_mmio_read_fastpath();
+        return entries;
+    }
+
+    static std::vector<std::pair<uint64_t, uint64_t>> parse_mmio_direct_fastpath_ranges()
+    {
+        std::vector<std::pair<uint64_t, uint64_t>> ranges;
+        const char* env = std::getenv("QBOX_MMIO_DIRECT_FASTPATH_RANGES");
+        if (env == nullptr || *env == '\0') {
+            return ranges;
+        }
+
+        std::stringstream stream(env);
+        std::string item;
+        while (std::getline(stream, item, ',')) {
+            item = trim_copy(item);
+            if (item.empty()) {
+                continue;
+            }
+
+            uint64_t start = 0;
+            uint64_t end = 0;
+            const auto size_sep = item.find(':');
+            const auto end_sep = item.find('-');
+            if (size_sep != std::string::npos) {
+                uint64_t size = 0;
+                if (!parse_u64(item.substr(0, size_sep), start) ||
+                    !parse_u64(item.substr(size_sep + 1), size) ||
+                    size == 0 || start > std::numeric_limits<uint64_t>::max() - (size - 1)) {
+                    continue;
+                }
+                end = start + size - 1;
+            } else if (end_sep != std::string::npos) {
+                if (!parse_u64(item.substr(0, end_sep), start) ||
+                    !parse_u64(item.substr(end_sep + 1), end) ||
+                    end < start) {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+
+            ranges.emplace_back(start, end);
+        }
+
+        return ranges;
+    }
+
+    static const std::vector<std::pair<uint64_t, uint64_t>>& mmio_direct_fastpath_ranges()
+    {
+        static const auto ranges = parse_mmio_direct_fastpath_ranges();
+        return ranges;
+    }
+
+    static bool try_mmio_read_fastpath(tlm::tlm_command command, uint64_t addr, uint64_t* val, unsigned int size,
+                                       MemTxAttrs attrs)
+    {
+        if (command != tlm::TLM_READ_COMMAND || attrs.debug || val == nullptr ||
+            size == 0 || size > sizeof(*val)) {
+            return false;
+        }
+
+        const auto& entries = mmio_read_fastpath_entries();
+        const auto it = entries.find(addr);
+        if (it == entries.end()) {
+            return false;
+        }
+
+        const uint64_t mask = size == sizeof(*val)
+                                  ? std::numeric_limits<uint64_t>::max()
+                                  : ((uint64_t{1} << (size * 8)) - 1);
+        *val = it->second & mask;
+        return true;
+    }
+
+    static bool use_mmio_direct_fastpath(uint64_t addr, unsigned int size, MemTxAttrs attrs)
+    {
+        if (attrs.debug || size == 0) {
+            return false;
+        }
+        if (addr > std::numeric_limits<uint64_t>::max() - (size - 1)) {
+            return false;
+        }
+
+        const uint64_t end = addr + size - 1;
+        for (const auto& range : mmio_direct_fastpath_ranges()) {
+            if (range.first <= addr && end <= range.second) {
+                return true;
+            }
+        }
+        return false;
     }
 
     void add_dmi_mr_alias(DmiRegionAlias::Ptr alias)
@@ -641,12 +800,29 @@ protected:
         (*this)->b_transport(trans, now);
     }
 
+    void do_local_fast_access(TlmPayload& trans)
+    {
+        uint64_t addr = trans.get_address();
+        sc_core::sc_time now = m_initiator.initiator_get_local_time();
+
+        (*this)->b_transport(trans, now);
+        trans.set_address(addr);
+        check_qemu_mr_hint(trans);
+        if (trans.is_dmi_allowed()) {
+            check_dmi_hint_locked(trans);
+        }
+        m_initiator.initiator_set_local_time(now);
+    }
+
     MemTxResult qemu_io_access(tlm::tlm_command command, uint64_t addr, uint64_t* val, unsigned int size,
                                MemTxAttrs attrs)
     {
-        TlmPayload trans;
         if (m_finished) return qemu::MemoryRegionOps::MemTxError;
+        if (try_mmio_read_fastpath(command, addr, val, size, attrs)) {
+            return qemu::MemoryRegionOps::MemTxOK;
+        }
 
+        TlmPayload trans;
         init_payload(trans, command, addr, val, size);
         QemuMemTxAttrsTlmExtension attrs_ext(attrs);
         trans.set_extension(&attrs_ext);
@@ -672,7 +848,9 @@ protected:
             reentrancy++;
 
             /* Force re-entrant code to use a direct access (safe for reentrancy with no side effects) */
-            if (reentrancy > 1) {
+            if (use_mmio_direct_fastpath(addr, size, attrs)) {
+                do_local_fast_access(trans);
+            } else if (reentrancy > 1) {
                 do_direct_access(trans);
             } else if (attrs.debug) {
                 do_debug_access(trans);

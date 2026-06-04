@@ -139,6 +139,11 @@ local cc3xx_trace = getenv_or("QBOX_RDASPEN_CC3XX_TRACE", "false") == "true"
 local cc3xx_trace_limit = tonumber(getenv_or("QBOX_RDASPEN_CC3XX_TRACE_LIMIT", "64"))
 local cc3xx_trace_filter = getenv_or("QBOX_RDASPEN_CC3XX_TRACE_FILTER", "all")
 local cc3xx_trace_address_min = tonumber(getenv_or("QBOX_RDASPEN_CC3XX_TRACE_ADDRESS_MIN", "0"))
+cc3xx_stats_file = getenv_or("QBOX_RDASPEN_CC3XX_STATS_FILE", "")
+cc3xx_stats_interval = tonumber(getenv_or("QBOX_RDASPEN_CC3XX_STATS_INTERVAL", "0"))
+cc3xx_backend = getenv_or("QBOX_RDASPEN_CC3XX_BACKEND", "systemc")
+assert(cc3xx_backend == "systemc" or cc3xx_backend == "qemu-native",
+       "QBOX_RDASPEN_CC3XX_BACKEND must be systemc or qemu-native")
 local dma350_trace = getenv_or("QBOX_RDASPEN_DMA350_TRACE", "false") == "true"
 local dma350_trace_limit = tonumber(getenv_or("QBOX_RDASPEN_DMA350_TRACE_LIMIT", "64"))
 local dma350_trace_filter = getenv_or("QBOX_RDASPEN_DMA350_TRACE_FILTER", "all")
@@ -254,6 +259,33 @@ RSE_MHU0_SENDER_BASE_S = 0x50160000
 RSE_MHU0_RECEIVER_BASE_S = 0x50170000
 RSE_MHU2_SENDER_BASE_S = 0x501A0000
 RSE_MHU2_RECEIVER_BASE_S = 0x501B0000
+
+function rse_cc3xx_component(target_bind, initiator_bind)
+    local component = {
+        moduletype = cc3xx_backend == "qemu-native" and "qemu_cc3xx" or "cc3xx";
+        trace = cc3xx_trace;
+        trace_limit = cc3xx_trace_limit;
+        trace_skip = tonumber(getenv_or("QBOX_RDASPEN_CC3XX_TRACE_SKIP", "0"));
+        trace_filter = cc3xx_trace_filter;
+        trace_address_min = cc3xx_trace_address_min;
+        stats_file = cc3xx_stats_file;
+        stats_interval = cc3xx_stats_interval;
+        target_socket = {
+            address = RSE_CC3XX_BASE_S;
+            size = 0x00002000;
+            bind = target_bind;
+        };
+        initiator_socket = {bind = initiator_bind};
+        log_level = 0;
+    }
+
+    if cc3xx_backend == "qemu-native" then
+        component.args = {"&qemu_inst"}
+        component.size = 0x00002000
+    end
+
+    return component
+end
 RSE_LOCAL_MHU_FRAME_SIZE = 0x00010000
 local RSE_LCM_BASE_S = 0x500A0000
 local RSE_LCM_SIZE = 0x00011000
@@ -885,21 +917,9 @@ platform = {
         log_level = 0;
     },
 
-    rse_cc3xx = (not rse_local_crypto) and {
-        moduletype = "cc3xx";
-        trace = cc3xx_trace;
-        trace_limit = cc3xx_trace_limit;
-        trace_skip = tonumber(getenv_or("QBOX_RDASPEN_CC3XX_TRACE_SKIP", "0"));
-        trace_filter = cc3xx_trace_filter;
-        trace_address_min = cc3xx_trace_address_min;
-        target_socket = {
-            address = RSE_CC3XX_BASE_S;
-            size = 0x00002000;
-            bind = "&rse_router.initiator_socket";
-        };
-        initiator_socket = {bind = "&rse_router.target_socket"};
-        log_level = 0;
-    } or nil,
+    rse_cc3xx = (not rse_local_crypto) and
+        rse_cc3xx_component("&rse_router.initiator_socket",
+                            "&rse_router.target_socket") or nil,
 
     rse_syscntr_cntrl_regs = {
         moduletype = "gs_memory";
@@ -2085,21 +2105,9 @@ platform = {
             log_level = 0;
         } or nil,
 
-        rse_cc3xx = rse_local_crypto and {
-            moduletype = "cc3xx";
-            trace = cc3xx_trace;
-            trace_limit = cc3xx_trace_limit;
-            trace_skip = tonumber(getenv_or("QBOX_RDASPEN_CC3XX_TRACE_SKIP", "0"));
-            trace_filter = cc3xx_trace_filter;
-            trace_address_min = cc3xx_trace_address_min;
-            target_socket = {
-                address = RSE_CC3XX_BASE_S;
-                size = 0x00002000;
-                bind = "&remote_crypto_router.initiator_socket";
-            };
-            initiator_socket = {bind = "&remote_main_router.target_socket"};
-            log_level = 0;
-        } or nil,
+        rse_cc3xx = rse_local_crypto and
+            rse_cc3xx_component("&remote_crypto_router.initiator_socket",
+                                "&remote_main_router.target_socket") or nil,
 
         cpu_0 = {
             moduletype = "RemoteCPU";
