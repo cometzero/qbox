@@ -34,6 +34,11 @@ uint64_t CpuArm::get_v7m_state(V7MStateField field) const
     return m_int->exports().cpu_arm_v7m_get_state(m_obj, static_cast<int>(field));
 }
 
+bool CpuArm::set_v7m_state(V7MStateField field, uint64_t value)
+{
+    return m_int->exports().cpu_arm_v7m_set_state(m_obj, static_cast<int>(field), value);
+}
+
 uint64_t CpuArm::get_aarch64_state(Aarch64StateField field) const
 {
     return m_int->exports().cpu_arm_aarch64_get_state(m_obj, static_cast<int>(field));

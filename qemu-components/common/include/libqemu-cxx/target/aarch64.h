@@ -107,6 +107,7 @@ public:
     int get_power_state() const;
     int power_on_and_reset();
     uint64_t get_v7m_state(V7MStateField field) const;
+    bool set_v7m_state(V7MStateField field, uint64_t value);
     uint64_t get_aarch64_state(Aarch64StateField field) const;
 
     void post_init();

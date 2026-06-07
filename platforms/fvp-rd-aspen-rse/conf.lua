@@ -95,6 +95,9 @@ local ap_virtio = {
 local host_si_cl0_sram_map_file = getenv_or(
     "QBOX_RDASPEN_HOST_SI_CL0_SRAM_MAP_FILE",
     "")
+host_si_cl1_sram_map_file = getenv_or(
+    "QBOX_RDASPEN_HOST_SI_CL1_SRAM_MAP_FILE",
+    "")
 local host_ap_shared_sram_map_file = getenv_or(
     "QBOX_RDASPEN_HOST_AP_SHARED_SRAM_MAP_FILE",
     "")
@@ -135,6 +138,94 @@ local rse_pc_trace_file = getenv_or(
 local rse_pc_trace_interval = tonumber(getenv_or("QBOX_RDASPEN_RSE_PC_TRACE_INTERVAL", "1"))
 local rse_pc_trace_limit = tonumber(getenv_or("QBOX_RDASPEN_RSE_PC_TRACE_LIMIT", "4096"))
 local rse_exception_trace = getenv_or("QBOX_RDASPEN_RSE_EXCEPTION_TRACE", "false") == "true"
+rse_hotpath_accel = getenv_or("QBOX_RDASPEN_RSE_HOTPATH_ACCEL", "false") == "true"
+rse_hotpath_memcpy_addr = tonumber(getenv_or("QBOX_RDASPEN_RSE_HOTPATH_MEMCPY_ADDR", "0x11000488"))
+rse_hotpath_memset_addr = tonumber(getenv_or("QBOX_RDASPEN_RSE_HOTPATH_MEMSET_ADDR", "0x11000448"))
+rse_hotpath_max_bytes = tonumber(getenv_or("QBOX_RDASPEN_RSE_HOTPATH_MAX_BYTES", tostring(16 * 1024 * 1024)))
+rse_hotpath_profile_file = getenv_or("QBOX_RDASPEN_RSE_HOTPATH_PROFILE_FILE", "")
+rse_hotpath_profile_interval = tonumber(getenv_or("QBOX_RDASPEN_RSE_HOTPATH_PROFILE_INTERVAL", "1024"))
+rse_lms_accel = getenv_or("QBOX_RDASPEN_RSE_LMS_ACCEL", "false") == "true"
+rse_lms_verify_addr = tonumber(getenv_or("QBOX_RDASPEN_RSE_LMS_VERIFY_ADDR", "0x11009bad"))
+rse_lms_max_data_bytes = tonumber(getenv_or("QBOX_RDASPEN_RSE_LMS_MAX_DATA_BYTES", tostring(16 * 1024 * 1024)))
+rse_bl2_load_profile =
+    getenv_or("QBOX_RDASPEN_RSE_BL2_LOAD_PROFILE", "false") == "true"
+rse_bl2_boot_go_for_image_id_addr =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOT_GO_FOR_IMAGE_ID_ADDR", "0x3101e288"))
+rse_bl2_boot_load_image_to_sram_addr =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOT_LOAD_IMAGE_TO_SRAM_ADDR", "0x3101e758"))
+rse_bl2_boot_enc_load_addr =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOT_ENC_LOAD_ADDR", "0x3101eeb6"))
+rse_bl2_boot_enc_set_key_addr =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOT_ENC_SET_KEY_ADDR", "0x3101ef52"))
+rse_bl2_boot_enc_decrypt_addr =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOT_ENC_DECRYPT_ADDR", "0x3101ef8c"))
+rse_bl2_bootutil_img_validate_addr =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOTUTIL_IMG_VALIDATE_ADDR", "0x3101f010"))
+rse_bl2_bootutil_img_hash_addr =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOTUTIL_IMG_HASH_ADDR", "0x3101f3aa"))
+rse_bl2_bootutil_verify_sig_addr =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOTUTIL_VERIFY_SIG_ADDR", "0x3101f5bc"))
+rse_bl2_boot_image_count =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOT_IMAGE_COUNT", "5"))
+rse_bl2_boot_state_curr_img_offset =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOT_STATE_CURR_IMG_OFFSET", "0x10c8"))
+rse_bl2_boot_state_imgs_offset =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOT_STATE_IMGS_OFFSET", "0x0"))
+rse_bl2_boot_state_image_stride =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOT_STATE_IMAGE_STRIDE", "88"))
+rse_bl2_boot_state_slot_stride =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOT_STATE_SLOT_STRIDE", "44"))
+rse_bl2_boot_state_slot_usage_offset =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOT_STATE_SLOT_USAGE_OFFSET", "0x10d0"))
+rse_bl2_boot_state_slot_usage_stride =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOT_STATE_SLOT_USAGE_STRIDE", "16"))
+rse_bl2_boot_slot_usage_img_dst_offset =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOT_SLOT_USAGE_IMG_DST_OFFSET", "8"))
+rse_bl2_boot_slot_usage_img_sz_offset =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOT_SLOT_USAGE_IMG_SZ_OFFSET", "12"))
+rse_bl2_load_accel =
+    getenv_or("QBOX_RDASPEN_RSE_BL2_LOAD_ACCEL", "false") == "true"
+rse_bl2_load_accel_max_bytes =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_LOAD_ACCEL_MAX_BYTES", tostring(16 * 1024 * 1024)))
+rse_bl2_boot_enc_accel =
+    getenv_or("QBOX_RDASPEN_RSE_BL2_BOOT_ENC_ACCEL", "false") == "true"
+rse_bl2_img_hash_accel =
+    getenv_or("QBOX_RDASPEN_RSE_BL2_IMG_HASH_ACCEL", "false") == "true"
+rse_bl2_img_hash_max_bytes =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_IMG_HASH_MAX_BYTES", tostring(16 * 1024 * 1024)))
+rse_bl2_img_hash_max_seed_bytes =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_IMG_HASH_MAX_SEED_BYTES", "4096"))
+rse_bl2_verify_sig_accel =
+    getenv_or("QBOX_RDASPEN_RSE_BL2_VERIFY_SIG_ACCEL", "false") == "true"
+rse_bl2_verify_sig_skip =
+    getenv_or("QBOX_RDASPEN_RSE_BL2_VERIFY_SIG_SKIP", "false") == "true"
+rse_bl2_bootutil_keys_addr =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOTUTIL_KEYS_ADDR", "0x31000454"))
+rse_bl2_bootutil_key_cnt_addr =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOTUTIL_KEY_CNT_ADDR", "0x3102b424"))
+rse_bl2_fih_success_addr =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_FIH_SUCCESS_ADDR", "0x310027dc"))
+rse_bl2_verify_sig_max_key_bytes =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_VERIFY_SIG_MAX_KEY_BYTES", "512"))
+rse_bl2_verify_sig_max_sig_bytes =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_VERIFY_SIG_MAX_SIG_BYTES", "128"))
+rse_bl2_boot_status_enckey_offset =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOT_STATUS_ENCKEY_OFFSET", "0x0c"))
+rse_bl2_boot_enc_key_bytes =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOT_ENC_KEY_BYTES", "16"))
+rse_bl2_boot_enc_key_stride =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOT_ENC_KEY_STRIDE", "16"))
+rse_bl2_boot_enc_slots =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOT_ENC_SLOTS", "2"))
+rse_bl2_boot_enc_max_bytes =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOT_ENC_MAX_BYTES", "4096"))
+rse_direct_si_sram_alias =
+    getenv_or("QBOX_RDASPEN_RSE_DIRECT_SI_SRAM_ALIAS", "false") == "true"
+rse_direct_file_aliases =
+    getenv_or("QBOX_RDASPEN_RSE_DIRECT_FILE_ALIASES", "")
+rse_direct_si_sram_code_alias_size = getenv_number_or(
+    "QBOX_RDASPEN_RSE_DIRECT_SI_SRAM_CODE_ALIAS_SIZE",
+    "0x00100000")
 local cc3xx_trace = getenv_or("QBOX_RDASPEN_CC3XX_TRACE", "false") == "true"
 local cc3xx_trace_limit = tonumber(getenv_or("QBOX_RDASPEN_CC3XX_TRACE_LIMIT", "64"))
 local cc3xx_trace_filter = getenv_or("QBOX_RDASPEN_CC3XX_TRACE_FILTER", "all")
@@ -160,6 +251,7 @@ local boot_flash_trace_limit = tonumber(getenv_or("QBOX_RDASPEN_BOOT_FLASH_TRACE
 local boot_flash_dmi = getenv_or("QBOX_RDASPEN_BOOT_FLASH_DMI", "false") == "true"
 boot_flash_dmi_ranges = getenv_or("QBOX_RDASPEN_BOOT_FLASH_DMI_RANGES", "")
 local host_memory_dmi = getenv_or("QBOX_RDASPEN_HOST_MEMORY_DMI", "false") == "true"
+host_si_sram_dmi = getenv_or("QBOX_RDASPEN_HOST_SI_SRAM_DMI", "false") == "true"
 ap_flash_dmi_ranges = getenv_or("QBOX_RDASPEN_AP_FLASH_DMI_RANGES", "")
 rse_boot_flash_stats_file = getenv_or(
     "QBOX_RDASPEN_RSE_BOOT_FLASH_STATS_FILE",
@@ -186,6 +278,8 @@ local mhu_trace_limit = tonumber(getenv_or("QBOX_RDASPEN_MHU_TRACE_LIMIT", "256"
 local mhu_trace_file = getenv_or(
     "QBOX_RDASPEN_MHU_TRACE_FILE",
     root.."build/qbox-fvp-rd-aspen/mhuv3-trace.log")
+remotepass_dmi_cache =
+    getenv_or("QBOX_RDASPEN_REMOTEPASS_DMI_CACHE", "false") == "true"
 local ap_power_domain_reset_delay_ns = tonumber(
     getenv_or("QBOX_RDASPEN_AP_POWER_DOMAIN_RESET_DELAY_NS", "1"))
 rse_local_crypto = getenv_or("QBOX_RDASPEN_RSE_LOCAL_CRYPTO", "true") == "true"
@@ -242,6 +336,15 @@ local RSE_BOOT_FLASH_SIZE = 0x04000000
 local RSE_HOST_ACCESS_BASE_NS = 0x60000000
 local RSE_HOST_ACCESS_BASE_S = 0x70000000
 local RSE_HOST_ACCESS_SIZE = 0x10000000
+HOST_SI_CL0_IMG_HDR_LOGICAL_BASE = 0x70083C00
+HOST_SI_CL0_IMG_CODE_LOGICAL_BASE = 0x70084000
+HOST_SI_CL0_HEADER_FILE_OFFSET = 0x000FFC00
+HOST_SI_CL0_CODE_FILE_OFFSET = 0x00000000
+HOST_SI_CL1_IMG_HDR_LOGICAL_BASE = 0x70185C00
+HOST_SI_CL1_IMG_CODE_LOGICAL_BASE = 0x70186000
+HOST_SI_CL1_HEADER_FILE_OFFSET = 0x000FFC00
+HOST_SI_CL1_CODE_FILE_OFFSET = 0x00000000
+HOST_SI_IMG_HEADER_ALIAS_SIZE = 0x00000400
 local RSE_HOST_UART0_BASE_NS = RSE_HOST_ACCESS_BASE_NS + 0x0FF00000
 local RSE_HOST_UART0_BASE_S = RSE_HOST_ACCESS_BASE_S + 0x0FF00000
 local RSE_NSACFG_BASE_NS = 0x40080000
@@ -376,6 +479,40 @@ local HOST_SI_CL0_SRAM_PHYS_BASE = 0x4000120000000
 local HOST_SI_CL1_SRAM_PHYS_BASE = 0x4000140000000
 local HOST_SI_SRAM_WINDOW_SIZE = 0x01000000
 local HOST_SI_CONTROL_WINDOW_SIZE = 0x00010000
+function direct_file_alias_spec(address, size, file_offset, access, path)
+    assert(path ~= "", "direct file alias requires a map file")
+    return string.format("0x%x:0x%x:0x%x:%s:%s",
+                         address, size, file_offset, access, path)
+end
+
+if rse_direct_si_sram_alias and rse_direct_file_aliases == "" then
+    rse_direct_file_aliases = table.concat({
+        direct_file_alias_spec(
+            HOST_SI_CL0_IMG_HDR_LOGICAL_BASE,
+            HOST_SI_IMG_HEADER_ALIAS_SIZE,
+            HOST_SI_CL0_HEADER_FILE_OFFSET,
+            "rw",
+            host_si_cl0_sram_map_file);
+        direct_file_alias_spec(
+            HOST_SI_CL0_IMG_CODE_LOGICAL_BASE,
+            rse_direct_si_sram_code_alias_size,
+            HOST_SI_CL0_CODE_FILE_OFFSET,
+            "rw",
+            host_si_cl0_sram_map_file);
+        direct_file_alias_spec(
+            HOST_SI_CL1_IMG_HDR_LOGICAL_BASE,
+            HOST_SI_IMG_HEADER_ALIAS_SIZE,
+            HOST_SI_CL1_HEADER_FILE_OFFSET,
+            "rw",
+            host_si_cl1_sram_map_file);
+        direct_file_alias_spec(
+            HOST_SI_CL1_IMG_CODE_LOGICAL_BASE,
+            rse_direct_si_sram_code_alias_size,
+            HOST_SI_CL1_CODE_FILE_OFFSET,
+            "rw",
+            host_si_cl1_sram_map_file);
+    }, ";")
+end
 local HOST_AP_SI_SCMI_MHU_PBX_PHYS_BASE = 0x400003B080000
 local HOST_AP_SI_SCMI_MHU_MBX_PHYS_BASE = 0x400003B0C0000
 local HOST_AP_SI_MHU_FRAME_SIZE = 0x00030000
@@ -1015,7 +1152,7 @@ platform = {
 
     host_ap_mhu_ns_shared_sram = {
         moduletype = "gs_memory";
-        dmi = host_memory_dmi;
+        dmi_allow = host_memory_dmi;
         target_socket = {
             address = 0x00180000;
             size = 0x00001000;
@@ -1027,7 +1164,7 @@ platform = {
 
     host_ap_bl2_header_sram = {
         moduletype = "gs_memory";
-        dmi = host_memory_dmi;
+        dmi_allow = host_memory_dmi;
         target_socket = {
             address = HOST_AP_BL2_HEADER_SRAM_PHYS_BASE;
             size = HOST_AP_BL2_HEADER_SRAM_SIZE;
@@ -1077,7 +1214,7 @@ platform = {
 
     host_ap_dram1 = enable_ap_cpus and {
         moduletype = "gs_memory";
-        dmi = host_memory_dmi;
+        dmi_allow = host_memory_dmi;
         target_socket = {
             address = HOST_AP_DRAM1_BASE;
             size = HOST_AP_DRAM1_SIZE;
@@ -1088,7 +1225,7 @@ platform = {
 
     host_ap_ffa_mm_comm_buffer = enable_ap_cpus and {
         moduletype = "gs_memory";
-        dmi = host_memory_dmi;
+        dmi_allow = host_memory_dmi;
         target_socket = {
             address = 0xFFBF0000;
             size = 0x00002000;
@@ -1100,7 +1237,7 @@ platform = {
 
     host_ap_spmc_sdram = enable_ap_cpus and {
         moduletype = "gs_memory";
-        dmi = host_memory_dmi;
+        dmi_allow = host_memory_dmi;
         target_socket = {
             address = HOST_AP_SPMC_BASE;
             size = HOST_AP_SPMC_SIZE;
@@ -1111,7 +1248,7 @@ platform = {
 
     host_ap_dram2 = enable_ap_cpus and {
         moduletype = "gs_memory";
-        dmi = host_memory_dmi;
+        dmi_allow = host_memory_dmi;
         target_socket = {
             address = HOST_AP_DRAM2_BASE;
             size = HOST_AP_DRAM2_SIZE;
@@ -1364,7 +1501,7 @@ platform = {
 
     host_si_cl0_sram = {
         moduletype = "gs_memory";
-        dmi = host_memory_dmi;
+        dmi_allow = host_si_sram_dmi;
         target_socket = {
             address = HOST_SI_CL0_SRAM_PHYS_BASE;
             size = HOST_SI_SRAM_WINDOW_SIZE;
@@ -1377,14 +1514,14 @@ platform = {
 
     host_si_cl1_sram = {
         moduletype = "gs_memory";
-        dmi = host_memory_dmi;
+        dmi_allow = host_si_sram_dmi;
         target_socket = {
             address = HOST_SI_CL1_SRAM_PHYS_BASE;
             size = HOST_SI_SRAM_WINDOW_SIZE;
             bind = "&host_router.initiator_socket";
         };
-        map_file = getenv_or("QBOX_RDASPEN_HOST_SI_CL1_SRAM_MAP_FILE", "");
-        init_mem = getenv_or("QBOX_RDASPEN_HOST_SI_CL1_SRAM_MAP_FILE", "") == "";
+        map_file = host_si_cl1_sram_map_file;
+        init_mem = host_si_cl1_sram_map_file == "";
         log_level = 0;
     },
 
@@ -1539,7 +1676,7 @@ platform = {
 
     host_rse_si_ssram = {
         moduletype = "gs_memory";
-        dmi = host_memory_dmi;
+        dmi_allow = host_memory_dmi;
         target_socket = {
             address = HOST_RSE_SI_SSRAM_PHYS_BASE;
             size = HOST_RSE_SI_SSRAM_SIZE;
@@ -1997,6 +2134,7 @@ platform = {
         tlm_target_ports_num = 0;
         target_signals_num = RSE_REMOTE_SIGNAL_COUNT;
         initiator_signals_num = 0;
+        dmi_cache = remotepass_dmi_cache;
         initiator_socket_0 = {bind = "&rse_router.target_socket"};
         initiator_socket_1 = {bind = "&rse_router.target_socket"};
 
@@ -2036,6 +2174,7 @@ platform = {
             tlm_target_ports_num = 2;
             target_signals_num = 0;
             initiator_signals_num = RSE_REMOTE_SIGNAL_COUNT;
+            dmi_cache = remotepass_dmi_cache;
             target_socket_0 = {
                 address = 0x00000000;
                 size = RSE_NVIC_BASE;
@@ -2121,6 +2260,52 @@ platform = {
                 trace_pc_file = rse_pc_trace_file;
                 trace_pc_interval = rse_pc_trace_interval;
                 trace_pc_limit = rse_pc_trace_limit;
+                hotpath_accel = rse_hotpath_accel;
+                hotpath_memcpy_addr = rse_hotpath_memcpy_addr;
+                hotpath_memset_addr = rse_hotpath_memset_addr;
+                hotpath_max_bytes = rse_hotpath_max_bytes;
+                hotpath_profile_file = rse_hotpath_profile_file;
+                hotpath_profile_interval = rse_hotpath_profile_interval;
+                lms_accel = rse_lms_accel;
+                lms_verify_addr = rse_lms_verify_addr;
+                lms_max_data_bytes = rse_lms_max_data_bytes;
+                bl2_load_profile = rse_bl2_load_profile;
+                bl2_boot_go_for_image_id_addr = rse_bl2_boot_go_for_image_id_addr;
+                bl2_boot_load_image_to_sram_addr = rse_bl2_boot_load_image_to_sram_addr;
+                bl2_boot_enc_load_addr = rse_bl2_boot_enc_load_addr;
+                bl2_boot_enc_set_key_addr = rse_bl2_boot_enc_set_key_addr;
+                bl2_boot_enc_decrypt_addr = rse_bl2_boot_enc_decrypt_addr;
+                bl2_bootutil_img_validate_addr = rse_bl2_bootutil_img_validate_addr;
+                bl2_bootutil_img_hash_addr = rse_bl2_bootutil_img_hash_addr;
+                bl2_bootutil_verify_sig_addr = rse_bl2_bootutil_verify_sig_addr;
+                bl2_boot_image_count = rse_bl2_boot_image_count;
+                bl2_boot_state_curr_img_offset = rse_bl2_boot_state_curr_img_offset;
+                bl2_boot_state_imgs_offset = rse_bl2_boot_state_imgs_offset;
+                bl2_boot_state_image_stride = rse_bl2_boot_state_image_stride;
+                bl2_boot_state_slot_stride = rse_bl2_boot_state_slot_stride;
+                bl2_boot_state_slot_usage_offset = rse_bl2_boot_state_slot_usage_offset;
+                bl2_boot_state_slot_usage_stride = rse_bl2_boot_state_slot_usage_stride;
+                bl2_boot_slot_usage_img_dst_offset = rse_bl2_boot_slot_usage_img_dst_offset;
+                bl2_boot_slot_usage_img_sz_offset = rse_bl2_boot_slot_usage_img_sz_offset;
+                bl2_load_accel = rse_bl2_load_accel;
+                bl2_load_accel_max_bytes = rse_bl2_load_accel_max_bytes;
+                bl2_boot_enc_accel = rse_bl2_boot_enc_accel;
+                bl2_boot_status_enckey_offset = rse_bl2_boot_status_enckey_offset;
+                bl2_boot_enc_key_bytes = rse_bl2_boot_enc_key_bytes;
+                bl2_boot_enc_key_stride = rse_bl2_boot_enc_key_stride;
+                bl2_boot_enc_slots = rse_bl2_boot_enc_slots;
+                bl2_boot_enc_max_bytes = rse_bl2_boot_enc_max_bytes;
+                bl2_img_hash_accel = rse_bl2_img_hash_accel;
+                bl2_img_hash_max_bytes = rse_bl2_img_hash_max_bytes;
+                bl2_img_hash_max_seed_bytes = rse_bl2_img_hash_max_seed_bytes;
+                bl2_verify_sig_accel = rse_bl2_verify_sig_accel;
+                bl2_verify_sig_skip = rse_bl2_verify_sig_skip;
+                bl2_bootutil_keys_addr = rse_bl2_bootutil_keys_addr;
+                bl2_bootutil_key_cnt_addr = rse_bl2_bootutil_key_cnt_addr;
+                bl2_fih_success_addr = rse_bl2_fih_success_addr;
+                bl2_verify_sig_max_key_bytes = rse_bl2_verify_sig_max_key_bytes;
+                bl2_verify_sig_max_sig_bytes = rse_bl2_verify_sig_max_sig_bytes;
+                direct_file_aliases = rse_direct_file_aliases;
                 nvic = {
                     mem = {
                         address = RSE_NVIC_BASE;

@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -62,6 +63,16 @@ private:
     sc_core::sc_time* m_current_delay = nullptr;
     bool m_stats_error_reported = false;
 
+    static bool env_flag_enabled(const char* name)
+    {
+        const char* value = std::getenv(name);
+        if (value == nullptr || *value == '\0') {
+            return false;
+        }
+        const std::string text(value);
+        return text != "0" && text != "false" && text != "FALSE";
+    }
+
     bool memory_access(tlm::tlm_command command, uint64_t address,
                        uint8_t* data, unsigned int len)
     {
@@ -99,6 +110,7 @@ private:
         m_core.set_trace_config(trace);
         m_core.set_stats_interval(p_stats_file.get_value().empty() ? 0 :
                                   p_stats_interval.get_value());
+        m_core.set_timing_stats(env_flag_enabled("QBOX_CC3XX_TIMING_STATS"));
     }
 
     static void map_status(tlm::tlm_generic_payload& trans,

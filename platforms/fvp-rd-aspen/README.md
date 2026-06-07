@@ -216,6 +216,73 @@ runtime handoff markers.
 The full-system bundle
 `build/qbox-apollo-fvp/cc3xx-qemu-native-20260605-003557/full/` reached
 `passed: true` with Linux login and post-login probe evidence.
+For RSE boot-time comparison against FVP, combine the qemu-native CC3XX backend
+with `--rse-lms-accel --rse-fast-boot-aliases`. The fast alias preset installs
+QEMU-local aliases for SI SRAM, AP BL2, RSE boot-flash read-only windows, AP
+FIP reads, and the RSE PS/ITS storage direct-MMIO fast path. It is not an RSE
+stub and does not force signature or hash success. Disable it for FWU,
+PS/ITS persistence, negative secure-boot, or flash command-state fidelity
+checks.
+The current best RSE timing smoke is
+`build/qbox-apollo-fvp/rse-step1-storage-direct-fastpath-20260608-1/`: with
+qemu-native CC3XX, LMS acceleration, and fast boot aliases,
+`rse_bl1_1` to `rse_first_image_slot` is 22.668 seconds. The matching FVP timed
+run at `build/local-apollo-fvp/fvp-boot-timed-20260604/` is 4.818 seconds, so
+the remaining QBox optimization target is the post-BL2 image-load/storage path
+rather than an RSE-wide stub.
+Do not include `--rse-bl2-load-profile` or `--qbox-perf-profile` in final
+wall-time comparisons; those options are for hook/counter diagnostics and add
+profiling overhead.
+BL2 hook-based profile and accelerator modes resolve their function-entry
+addresses from `--rse-bl2-elf`; the Apollo full-system wrapper forwards the
+local-build TF-M BL2 ELF automatically. Check
+`rse_bl2_load_profile.symbol_source` in the result JSON for the exact symbol
+source and resolved addresses.
+The BL2 load profile also records
+`bl2_load_profile.ram_load_snapshot.by_image` in
+`qbox-perf-profile/rse-hotpath-profile.json`. The 2026-06-08 smoke bundle at
+`build/qbox-apollo-fvp/rse-bl2-ram-load-by-image-smoke-20260608/` captured
+image 0, 2, 3, and 4 with zero DMI failures or unsupported layouts. Use that
+section to verify the active MCUBoot header, `load_addr`, image size, hash
+region size, and RAM-load flags before enabling a future
+`--rse-bl2-load-accel`.
+`--rse-bl2-boot-enc-accel` and `--rse-bl2-img-hash-accel` are optional
+image-level semantic accelerators for this comparison. The image hash path can
+read split direct-file aliases in 4 KiB chunks, which is required for images
+whose header and payload fall into separate alias windows. A valid run records
+`bl2_img_hash_accel.hits > 0` and `dmi_failures == 0` in
+`qbox-perf-profile/rse-hotpath-profile.json`.
+`--rse-bl2-verify-sig-accel` is currently a safe host-native ECDSA verifier
+profile helper: it records and caches `bootutil_verify_sig` inputs, but leaves
+the guest PKA-backed verification running unless a lower-level experimental
+skip switch is set. Use the PKA counters to confirm whether a future
+image-level semantic accelerator actually removes the remaining
+`PKA_OPCODE`/`PKA_PIPE_RDY` traffic.
+`--rse-bl2-verify-sig-skip` is the opt-in positive-boot variant. It only skips
+the guest `bootutil_verify_sig()` body after the host-native ECDSA verifier
+accepts the signature, then returns the guest `FIH_SUCCESS` value resolved from
+the active BL2 ELF. The 2026-06-08 smoke bundle at
+`build/qbox-apollo-fvp/rse-bl2-verify-sig-skip-remote-rebuild-smoke-20260608/`
+reached RSE image 4/3/2/0 load, AP power-on, and first image slot with
+`verify_matches=1` and `skip_hits=1`; it is not FWU or negative secure-boot
+fidelity evidence.
+The matching no-profile timing run is
+`build/qbox-apollo-fvp/rse-bl2-verify-sig-skip-noprofile-smoke-20260608/`,
+which recorded `rse_bl1_1` to `rse_first_image_slot` in 24.179 seconds.
+With `--rse-bl2-boot-enc-accel --rse-bl2-img-hash-accel
+--rse-bl2-verify-sig-skip` and profiling disabled, the smoke bundle
+`build/qbox-apollo-fvp/rse-bl2-accel-no-load-profile-smoke-20260608/` reached
+the same RSE image 4/3/2/0 load and first image slot markers in 22.772 seconds.
+That is close to, but not better than, the 22.668-second fast-alias/storage
+direct baseline, so BL2 accelerators remain opt-in development aids for the
+next image-level accelerator rather than the default fidelity/performance
+preset.
+
+When changing Cortex-M55 CPU hook code in
+`qemu-components/common/include/cpu.h`, rebuild `remote_cpu` as well as the CPU
+module. The RSE `RemoteCPU` wrapper links the CPU header implementation into the
+`remote_cpu` executable, so rebuilding only `cpu_arm_cortexM55.so` can leave RSE
+smoke runs on stale hook code.
 
 This is not an RSE boot pass. It is evidence that the platform now progresses
 past the first CC3XX register abort, the observed DMA350 fill writes, the first

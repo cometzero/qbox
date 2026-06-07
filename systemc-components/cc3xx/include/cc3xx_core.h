@@ -6,6 +6,7 @@
 
 #include <array>
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <functional>
@@ -45,6 +46,48 @@ public:
         virtual bool read(uint64_t address, uint8_t* data, unsigned int len) = 0;
         virtual bool write(uint64_t address, const uint8_t* data, unsigned int len) = 0;
     };
+
+    static bool aes_ctr_xcrypt_buffer(const uint8_t* key, size_t key_len,
+                                      const uint8_t* counter,
+                                      const uint8_t* input, size_t len,
+                                      size_t blk_off, uint8_t* output)
+    {
+        if (key == nullptr || counter == nullptr || input == nullptr ||
+            output == nullptr) {
+            return false;
+        }
+        if (key_len != 16 && key_len != 24 && key_len != 32) {
+            return false;
+        }
+        if (blk_off >= 16) {
+            return false;
+        }
+
+        std::array<uint8_t, 16> local_counter{};
+        std::array<uint8_t, 16> stream{};
+        std::copy(counter, counter + local_counter.size(), local_counter.begin());
+
+        size_t processed = 0;
+        size_t stream_offset = blk_off;
+        while (processed != len) {
+            if (!aes_encrypt_block(key, key_len, local_counter.data(), stream.data())) {
+                return false;
+            }
+
+            const size_t block_len =
+                std::min(stream.size() - stream_offset, len - processed);
+            for (size_t i = 0; i < block_len; ++i) {
+                output[processed + i] =
+                    input[processed + i] ^ stream[stream_offset + i];
+            }
+
+            processed += block_len;
+            stream_offset = 0;
+            aes_increment_counter(local_counter);
+        }
+
+        return true;
+    }
 
     struct trace_config {
         bool enabled = false;
@@ -245,9 +288,37 @@ private:
         uint64_t mem_write_failures = 0;
         uint64_t crypto_engine_writes = 0;
         std::array<uint64_t, 32> crypto_engine_count{};
+        uint64_t pka_opcode_ns = 0;
+        uint64_t sha256_transform_ns = 0;
+        uint64_t sha256_finish_ns = 0;
+        uint64_t hash_dma_ns = 0;
+        uint64_t aes_dma_ns = 0;
+        uint64_t cmac_dma_ns = 0;
+        uint64_t cmac_finish_ns = 0;
     };
 
     stats_state m_stats;
+    bool m_timing_stats_enabled = false;
+
+    static uint64_t now_ns()
+    {
+        using clock = std::chrono::steady_clock;
+        return static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                clock::now().time_since_epoch()).count());
+    }
+
+    uint64_t timing_start() const
+    {
+        return m_timing_stats_enabled ? now_ns() : 0;
+    }
+
+    void timing_add(uint64_t& bucket, uint64_t start) const
+    {
+        if (start != 0) {
+            bucket += now_ns() - start;
+        }
+    }
 
     static bool is_supported_length(unsigned int len)
     {
@@ -582,9 +653,11 @@ private:
 
     void execute_pka_opcode(uint32_t opcode)
     {
+        const uint64_t timing = timing_start();
         const uint32_t op = (opcode >> 27) & 0x1fu;
         ++m_stats.pka_opcode_writes;
         if (op == 0) {
+            timing_add(m_stats.pka_opcode_ns, timing);
             return;
         }
         ++m_stats.pka_opcode_count[op];
@@ -739,6 +812,7 @@ private:
         }
         default:
             pka_update_status(result, false);
+            timing_add(m_stats.pka_opcode_ns, timing);
             return;
         }
 
@@ -746,6 +820,7 @@ private:
             pka_store_operand(result_id, result);
         }
         pka_update_status(result, carry, sign, div_by_zero);
+        timing_add(m_stats.pka_opcode_ns, timing);
     }
 
     uint64_t hash_current_len() const
@@ -1192,6 +1267,7 @@ private:
 
     void sha256_transform(const uint8_t* block)
     {
+        const uint64_t timing = timing_start();
         ++m_stats.sha256_transforms;
         static const uint32_t k[64] = {
             0x428a2f98u, 0x71374491u, 0xb5c0fbcfu, 0xe9b5dba5u,
@@ -1259,6 +1335,7 @@ private:
         m_sha256.h[6] += g;
         m_sha256.h[7] += h;
         store_sha256_h();
+        timing_add(m_stats.sha256_transform_ns, timing);
     }
 
     void sha256_update_impl(const uint8_t* data, size_t len, bool count_stats)
@@ -1298,6 +1375,7 @@ private:
             return;
         }
 
+        const uint64_t timing = timing_start();
         ++m_stats.sha256_finishes;
         const uint64_t message_bytes = m_sha256.bytes;
         const uint64_t bit_len = message_bytes * 8u;
@@ -1316,6 +1394,7 @@ private:
         store_sha256_h();
         store_hash_current_len(message_bytes);
         m_sha256.finalized = true;
+        timing_add(m_stats.sha256_finish_ns, timing);
     }
 
     bool mem_read(uint64_t address, uint8_t* data, unsigned int len)
@@ -1492,6 +1571,7 @@ private:
         uint64_t source = load32(DIN_SRC_LLI_WORD0);
         uint64_t remaining = load32(DIN_SRC_LLI_WORD1);
         std::array<uint8_t, DMA_CHUNK_BYTES> chunk{};
+        const uint64_t timing = timing_start();
 
         ++m_stats.cmac_dma_triggers;
         m_stats.cmac_dma_bytes += remaining;
@@ -1500,6 +1580,7 @@ private:
             ++m_stats.cmac_dma_chunks;
             if (!mem_read(source, chunk.data(), len)) {
                 ++m_stats.cmac_read_failures;
+                timing_add(m_stats.cmac_dma_ns, timing);
                 return;
             }
 
@@ -1507,6 +1588,7 @@ private:
             source += len;
             remaining -= len;
         }
+        timing_add(m_stats.cmac_dma_ns, timing);
     }
 
     void cmac_finish()
@@ -1515,6 +1597,7 @@ private:
             return;
         }
 
+        const uint64_t timing = timing_start();
         ++m_stats.cmac_finishes;
         const size_t key_len = aes_key_size_bytes();
         std::array<uint8_t, 32> key{};
@@ -1527,6 +1610,7 @@ private:
 
         store32(AES_BUSY, 0);
         m_cmac_active = false;
+        timing_add(m_stats.cmac_finish_ns, timing);
     }
 
     void reset_registers()
@@ -1696,6 +1780,7 @@ private:
         uint64_t source = load32(DIN_SRC_LLI_WORD0);
         uint64_t remaining = load32(DIN_SRC_LLI_WORD1);
         std::array<uint8_t, DMA_CHUNK_BYTES> chunk{};
+        const uint64_t timing = timing_start();
 
         ++m_stats.hash_dma_triggers;
         m_stats.hash_dma_bytes += remaining;
@@ -1704,6 +1789,7 @@ private:
             ++m_stats.hash_dma_chunks;
             if (!mem_read(source, chunk.data(), len)) {
                 ++m_stats.hash_dma_read_failures;
+                timing_add(m_stats.hash_dma_ns, timing);
                 return;
             }
 
@@ -1716,6 +1802,7 @@ private:
             ++m_stats.hash_auto_finishes;
             sha256_finish();
         }
+        timing_add(m_stats.hash_dma_ns, timing);
     }
 
     void aes_dma_output(uint32_t trigger_offset)
@@ -1740,17 +1827,21 @@ private:
             return;
         }
 
+        const uint64_t timing = timing_start();
         ++m_stats.aes_dma_triggers;
         switch (aes_mode()) {
         case CC3XX_AES_MODE_ECB:
             (void)aes_ecb_xcrypt(source, dest, len);
+            timing_add(m_stats.aes_dma_ns, timing);
             return;
         case CC3XX_AES_MODE_CTR:
             (void)aes_ctr_xcrypt(source, dest, len);
+            timing_add(m_stats.aes_dma_ns, timing);
             return;
         default:
             break;
         }
+        timing_add(m_stats.aes_dma_ns, timing);
     }
 
     void complete_dma_transfer(uint32_t trigger_offset)
@@ -2104,6 +2195,11 @@ private:
     }
 
 public:
+    void set_timing_stats(bool enabled)
+    {
+        m_timing_stats_enabled = enabled;
+    }
+
     void write_stats_json(std::ostream& out, const std::string& module_name) const
     {
         const uint64_t total_accesses = m_stats.read_accesses + m_stats.write_accesses;
@@ -2170,6 +2266,18 @@ public:
             << m_stats.crypto_engine_writes << ",\n";
         write_count_map(out, "crypto_engine_count", m_stats.crypto_engine_count, "  ");
         out << ",\n";
+        out << "  \"timing_enabled\": "
+            << (m_timing_stats_enabled ? "true" : "false") << ",\n"
+            << "  \"pka_opcode_ns\": " << m_stats.pka_opcode_ns << ",\n"
+            << "  \"sha256_transform_ns\": "
+            << m_stats.sha256_transform_ns << ",\n"
+            << "  \"sha256_finish_ns\": "
+            << m_stats.sha256_finish_ns << ",\n"
+            << "  \"hash_dma_ns\": " << m_stats.hash_dma_ns << ",\n"
+            << "  \"aes_dma_ns\": " << m_stats.aes_dma_ns << ",\n"
+            << "  \"cmac_dma_ns\": " << m_stats.cmac_dma_ns << ",\n"
+            << "  \"cmac_finish_ns\": "
+            << m_stats.cmac_finish_ns << ",\n";
         write_count_map(out, "register_read_count",
                         m_stats.register_read_count, "  ", sizeof(uint32_t));
         out << ",\n";

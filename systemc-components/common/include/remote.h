@@ -40,7 +40,13 @@
 #include <queue>
 #include <utility>
 #include <type_traits>
+#include <map>
+#include <cerrno>
 #include <chrono>
+#include <cctype>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
 #include <memory_services.h>
 
 #include <rpc/client.h>
@@ -153,7 +159,6 @@ public:
 };
 #endif // _WIN32
 
-// #define DMICACHE switchthis on - then you need a mutex
 /* rpc pass through should pass through ONE forward connection ? */
 
 template <unsigned int BUSWIDTH = DEFAULT_TLM_BUSWIDTH>
@@ -199,25 +204,63 @@ class PassRPC : public sc_core::sc_module, public transaction_forwarder_if<PASS>
     }
 
     using str_pairs = std::vector<std::pair<std::string, std::string>>;
-#ifdef DMICACHE
-    /* Handle local DMI cache */
-
+    /* Handle opt-in local DMI cache */
     std::map<uint64_t, tlm::tlm_dmi> m_dmi_cache;
-    tlm::tlm_dmi* in_cache(uint64_t address)
+    std::mutex m_dmi_cache_mut;
+
+    bool lookup_dmi_cache(uint64_t address, uint64_t len, tlm::tlm_dmi& dmi)
     {
-        if (m_dmi_cache.size() > 0) {
-            auto it = m_dmi_cache.upper_bound(address);
-            if (it != m_dmi_cache.begin()) {
-                it = std::prev(it);
-                if ((address >= it->second.get_start_address()) && (address <= it->second.get_end_address())) {
-                    return &(it->second);
-                }
-            }
+        if (!p_dmi_cache || m_dmi_cache.empty()) {
+            return false;
         }
-        return nullptr;
+        if (len == 0 || address > std::numeric_limits<uint64_t>::max() - (len - 1)) {
+            return false;
+        }
+
+        std::lock_guard<std::mutex> lock(m_dmi_cache_mut);
+        auto it = m_dmi_cache.upper_bound(address);
+        if (it == m_dmi_cache.begin()) {
+            return false;
+        }
+
+        --it;
+        const uint64_t end = address + len - 1;
+        if (address >= it->second.get_start_address() &&
+            end <= it->second.get_end_address()) {
+            dmi = it->second;
+            return true;
+        }
+
+        return false;
     }
+
+    void insert_dmi_cache(const tlm::tlm_dmi& dmi)
+    {
+        if (!p_dmi_cache || dmi.is_none_allowed()) {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(m_dmi_cache_mut);
+        m_dmi_cache[dmi.get_start_address()] = dmi;
+    }
+
+    void clear_dmi_cache()
+    {
+        if (!p_dmi_cache) {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(m_dmi_cache_mut);
+        m_dmi_cache.clear();
+    }
+
     void cache_clean(uint64_t start, uint64_t end)
     {
+        if (!p_dmi_cache) {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(m_dmi_cache_mut);
         auto it = m_dmi_cache.upper_bound(start);
 
         if (it != m_dmi_cache.begin()) {
@@ -244,7 +287,53 @@ class PassRPC : public sc_core::sc_module, public transaction_forwarder_if<PASS>
             it = m_dmi_cache.erase(it);
         }
     }
-#endif
+
+    bool try_dmi_cache_b_transport(tlm::tlm_generic_payload& trans)
+    {
+        const unsigned int len = trans.get_data_length();
+        if (len == 0 || trans.get_data_ptr() == nullptr) {
+            return false;
+        }
+        if (trans.get_byte_enable_ptr() != nullptr ||
+            trans.get_byte_enable_length() != 0) {
+            return false;
+        }
+        if (trans.get_streaming_width() < len) {
+            return false;
+        }
+
+        tlm::tlm_dmi cached_dmi;
+        const uint64_t addr = trans.get_address();
+        if (!lookup_dmi_cache(addr, len, cached_dmi)) {
+            return false;
+        }
+
+        unsigned char* const data = trans.get_data_ptr();
+        unsigned char* const dmi_ptr =
+            cached_dmi.get_dmi_ptr() + (addr - cached_dmi.get_start_address());
+
+        switch (trans.get_command()) {
+        case tlm::TLM_WRITE_COMMAND:
+            if (!cached_dmi.is_write_allowed()) {
+                return false;
+            }
+            std::memcpy(dmi_ptr, data, len);
+            break;
+        case tlm::TLM_READ_COMMAND:
+            if (!cached_dmi.is_read_allowed()) {
+                return false;
+            }
+            std::memcpy(data, dmi_ptr, len);
+            break;
+        default:
+            return false;
+        }
+
+        trans.set_dmi_allowed(true);
+        trans.set_response_status(tlm::TLM_OK_RESPONSE);
+        return true;
+    }
+
     /* RPC structure for TLM_DMI */
     struct tlm_dmi_rpc {
         std::string m_shmem_fn;
@@ -469,8 +558,37 @@ public:
     cci::cci_param<uint32_t> p_tlm_target_ports_num;
     cci::cci_param<uint32_t> p_initiator_signals_num;
     cci::cci_param<uint32_t> p_target_signals_num;
+    cci::cci_param<bool> p_dmi_cache;
 
 private:
+    struct profile_state {
+        std::atomic<uint64_t> outbound_b_transport{ 0 };
+        std::atomic<uint64_t> inbound_b_transport_rpc{ 0 };
+        std::atomic<uint64_t> local_b_transport{ 0 };
+        std::atomic<uint64_t> outbound_debug{ 0 };
+        std::atomic<uint64_t> inbound_debug_rpc{ 0 };
+        std::atomic<uint64_t> outbound_dmi_request{ 0 };
+        std::atomic<uint64_t> inbound_dmi_request_rpc{ 0 };
+        std::atomic<uint64_t> dmi_invalidations{ 0 };
+        std::atomic<uint64_t> dmi_cache_b_transport_hits{ 0 };
+        std::atomic<uint64_t> dmi_cache_dmi_request_hits{ 0 };
+        std::atomic<uint64_t> signal_writes{ 0 };
+        std::atomic<uint64_t> profile_events{ 0 };
+        std::atomic<uint64_t> bytes{ 0 };
+        std::atomic<uint64_t> outbound_b_transport_ns{ 0 };
+        std::atomic<uint64_t> inbound_b_transport_rpc_ns{ 0 };
+        std::atomic<uint64_t> local_b_transport_ns{ 0 };
+        std::atomic<uint64_t> outbound_debug_ns{ 0 };
+        std::atomic<uint64_t> inbound_debug_rpc_ns{ 0 };
+        std::atomic<uint64_t> outbound_dmi_request_ns{ 0 };
+        std::atomic<uint64_t> inbound_dmi_request_rpc_ns{ 0 };
+        std::atomic<uint64_t> run_on_sysc_ns{ 0 };
+    };
+
+    profile_state m_profile;
+    std::string m_profile_file;
+    bool m_profile_enabled = false;
+    uint64_t m_profile_flush_interval = 0;
     rpc::client* client = nullptr;
     rpc::server* server = nullptr;
     int m_child_pid = 0;
@@ -490,6 +608,146 @@ private:
     // std::shared_ptr<gs::tlm_quantumkeeper_extended> m_qk;
     gs::runonsysc m_sc;
     gs::ModuleFactory::ContainerBase* m_container;
+
+    static std::string profile_dir()
+    {
+        const char* value = std::getenv("QBOX_REMOTEPASS_PROFILE_DIR");
+        return value == nullptr ? std::string() : std::string(value);
+    }
+
+    static std::string sanitize_name(const std::string& name)
+    {
+        std::string result;
+        result.reserve(name.size());
+        for (unsigned char c : name) {
+            if (std::isalnum(c) || c == '-' || c == '_') {
+                result.push_back(static_cast<char>(c));
+            } else {
+                result.push_back('_');
+            }
+        }
+        return result.empty() ? std::string("remotepass") : result;
+    }
+
+    static std::string make_profile_file(const std::string& name, const void* self)
+    {
+        const std::string dir = profile_dir();
+        if (dir.empty()) {
+            return "";
+        }
+
+        std::ostringstream path;
+        path << dir << "/" << sanitize_name(name) << "-pid" << getpid()
+             << "-" << self << ".json";
+        return path.str();
+    }
+
+    static uint64_t profile_flush_interval()
+    {
+        const char* value = std::getenv("QBOX_PROFILE_FLUSH_INTERVAL");
+        if (value == nullptr || *value == '\0') {
+            return 65536;
+        }
+
+        char* end = nullptr;
+        errno = 0;
+        const uint64_t parsed = std::strtoull(value, &end, 0);
+        if (errno != 0 || end == value || *end != '\0') {
+            return 65536;
+        }
+        return parsed;
+    }
+
+    static uint64_t now_ns()
+    {
+        using clock = std::chrono::steady_clock;
+        return static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                clock::now().time_since_epoch()).count());
+    }
+
+    static void add_ns(std::atomic<uint64_t>& bucket, uint64_t start)
+    {
+        if (start != 0) {
+            bucket.fetch_add(now_ns() - start, std::memory_order_relaxed);
+        }
+    }
+
+    void profile_count(std::atomic<uint64_t>& counter,
+                       std::atomic<uint64_t>& ns_counter,
+                       uint64_t start, unsigned int bytes = 0)
+    {
+        if (!m_profile_enabled) {
+            return;
+        }
+        const uint64_t events =
+            m_profile.profile_events.fetch_add(1, std::memory_order_relaxed) + 1;
+        counter.fetch_add(1, std::memory_order_relaxed);
+        m_profile.bytes.fetch_add(bytes, std::memory_order_relaxed);
+        add_ns(ns_counter, start);
+        if (m_profile_flush_interval != 0 &&
+            (events % m_profile_flush_interval) == 0) {
+            write_profile_file();
+        }
+    }
+
+    void write_profile_file()
+    {
+        if (!m_profile_enabled || m_profile_file.empty()) {
+            return;
+        }
+
+        std::ofstream out(m_profile_file, std::ios::out | std::ios::trunc);
+        if (!out) {
+            return;
+        }
+
+        out << "{\n"
+            << "  \"module\": \"" << name() << "\",\n"
+            << "  \"outbound_b_transport\": "
+            << m_profile.outbound_b_transport.load(std::memory_order_relaxed) << ",\n"
+            << "  \"inbound_b_transport_rpc\": "
+            << m_profile.inbound_b_transport_rpc.load(std::memory_order_relaxed) << ",\n"
+            << "  \"local_b_transport\": "
+            << m_profile.local_b_transport.load(std::memory_order_relaxed) << ",\n"
+            << "  \"outbound_debug\": "
+            << m_profile.outbound_debug.load(std::memory_order_relaxed) << ",\n"
+            << "  \"inbound_debug_rpc\": "
+            << m_profile.inbound_debug_rpc.load(std::memory_order_relaxed) << ",\n"
+            << "  \"outbound_dmi_request\": "
+            << m_profile.outbound_dmi_request.load(std::memory_order_relaxed) << ",\n"
+            << "  \"inbound_dmi_request_rpc\": "
+            << m_profile.inbound_dmi_request_rpc.load(std::memory_order_relaxed) << ",\n"
+            << "  \"dmi_invalidations\": "
+            << m_profile.dmi_invalidations.load(std::memory_order_relaxed) << ",\n"
+            << "  \"dmi_cache_b_transport_hits\": "
+            << m_profile.dmi_cache_b_transport_hits.load(std::memory_order_relaxed) << ",\n"
+            << "  \"dmi_cache_dmi_request_hits\": "
+            << m_profile.dmi_cache_dmi_request_hits.load(std::memory_order_relaxed) << ",\n"
+            << "  \"signal_writes\": "
+            << m_profile.signal_writes.load(std::memory_order_relaxed) << ",\n"
+            << "  \"profile_events\": "
+            << m_profile.profile_events.load(std::memory_order_relaxed) << ",\n"
+            << "  \"bytes\": "
+            << m_profile.bytes.load(std::memory_order_relaxed) << ",\n"
+            << "  \"outbound_b_transport_ns\": "
+            << m_profile.outbound_b_transport_ns.load(std::memory_order_relaxed) << ",\n"
+            << "  \"inbound_b_transport_rpc_ns\": "
+            << m_profile.inbound_b_transport_rpc_ns.load(std::memory_order_relaxed) << ",\n"
+            << "  \"local_b_transport_ns\": "
+            << m_profile.local_b_transport_ns.load(std::memory_order_relaxed) << ",\n"
+            << "  \"outbound_debug_ns\": "
+            << m_profile.outbound_debug_ns.load(std::memory_order_relaxed) << ",\n"
+            << "  \"inbound_debug_rpc_ns\": "
+            << m_profile.inbound_debug_rpc_ns.load(std::memory_order_relaxed) << ",\n"
+            << "  \"outbound_dmi_request_ns\": "
+            << m_profile.outbound_dmi_request_ns.load(std::memory_order_relaxed) << ",\n"
+            << "  \"inbound_dmi_request_rpc_ns\": "
+            << m_profile.inbound_dmi_request_rpc_ns.load(std::memory_order_relaxed) << ",\n"
+            << "  \"run_on_sysc_ns\": "
+            << m_profile.run_on_sysc_ns.load(std::memory_order_relaxed) << "\n"
+            << "}\n";
+    }
 
 #ifdef _WIN32
     PartnerProcessManager m_partner_process_manager;
@@ -693,8 +951,12 @@ private:
     /* b_transport interface */
     void b_transport(int id, tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)
     {
+        const uint64_t timing = m_profile_enabled ? now_ns() : 0;
+        const unsigned int len = trans.get_data_length();
         if (is_local_mode()) {
             m_container->fw_b_transport(id, trans, delay);
+            profile_count(m_profile.local_b_transport,
+                          m_profile.local_b_transport_ns, timing, len);
             return;
         }
 
@@ -707,29 +969,13 @@ private:
         tlm_generic_payload_rpc r;
         double time = sc_core::sc_time_stamp().to_seconds();
 
-        uint64_t addr = trans.get_address();
-        // If we have a locally cached DMI, use it!
-#ifdef DMICACHE
-        auto c = in_cache(addr);
-        if (c) {
-            uint64_t len = trans.get_data_length();
-            if (addr >= c->get_start_address() && addr + len <= c->get_end_address()) {
-                switch (trans.get_command()) {
-                case tlm::TLM_IGNORE_COMMAND:
-                    break;
-                case tlm::TLM_WRITE_COMMAND:
-                    memcpy(c->get_dmi_ptr() + (addr - c->get_start_address()), trans.get_data_ptr(), len);
-                    break;
-                case tlm::TLM_READ_COMMAND:
-                    memcpy(trans.get_data_ptr(), c->get_dmi_ptr() + (addr - c->get_start_address()), len);
-                    break;
-                }
-                trans.set_dmi_allowed(true);
-                trans.set_response_status(tlm::TLM_OK_RESPONSE);
-                return;
-            }
+        if (try_dmi_cache_b_transport(trans)) {
+            btspt_waiter->is_port_busy[id] = false;
+            btspt_waiter->port_available_events[id].notify(sc_core::SC_ZERO_TIME);
+            profile_count(m_profile.dmi_cache_b_transport_hits,
+                          m_profile.local_b_transport_ns, timing, len);
+            return;
         }
-#endif
         t.from_tlm(trans);
         t.m_quantum_time = delay.to_seconds();
         t.m_sc_time = sc_core::sc_time_stamp().to_seconds();
@@ -768,25 +1014,54 @@ private:
         sc_core::sc_time other_time = sc_core::sc_time(r.m_sc_time, sc_core::SC_SEC);
         btspt_waiter->is_port_busy[id] = false;
         btspt_waiter->port_available_events[id].notify(sc_core::SC_ZERO_TIME);
+        profile_count(m_profile.outbound_b_transport,
+                      m_profile.outbound_b_transport_ns, timing, len);
     }
     tlm_generic_payload_rpc b_transport_rpc(int id, tlm_generic_payload_rpc t)
     {
+        const uint64_t timing = m_profile_enabled ? now_ns() : 0;
         tlm::tlm_generic_payload trans;
         t.deep_copy_to_tlm(trans);
+        const uint64_t addr = trans.get_address();
         sc_core::sc_time delay = sc_core::sc_time(t.m_quantum_time, sc_core::SC_SEC);
         sc_core::sc_time other_time = sc_core::sc_time(t.m_sc_time, sc_core::SC_SEC);
 
+        if (try_dmi_cache_b_transport(trans)) {
+            t.from_tlm(trans);
+            t.m_quantum_time = delay.to_seconds();
+            profile_count(m_profile.dmi_cache_b_transport_hits,
+                          m_profile.local_b_transport_ns, timing, t.m_length);
+            return t;
+        }
+
+        const uint64_t run_on_sysc_timing = m_profile_enabled ? now_ns() : 0;
         m_sc.run_on_sysc([&] { initiator_sockets[id]->b_transport(trans, delay); });
+        add_ns(m_profile.run_on_sysc_ns, run_on_sysc_timing);
+        if (trans.is_dmi_allowed()) {
+            trans.set_address(addr);
+            tlm::tlm_dmi dmi_data;
+            if (initiator_sockets[id]->get_direct_mem_ptr(trans, dmi_data)) {
+                insert_dmi_cache(dmi_data);
+            }
+        }
         t.from_tlm(trans);
         t.m_quantum_time = delay.to_seconds();
+        profile_count(m_profile.inbound_b_transport_rpc,
+                      m_profile.inbound_b_transport_rpc_ns, timing,
+                      t.m_length);
         return t;
     }
 
     /* Debug transport interface */
     unsigned int transport_dbg(int id, tlm::tlm_generic_payload& trans)
     {
+        const uint64_t timing = m_profile_enabled ? now_ns() : 0;
         if (is_local_mode()) {
-            return m_container->fw_transport_dbg(id, trans);
+            const unsigned int ret = m_container->fw_transport_dbg(id, trans);
+            profile_count(m_profile.outbound_debug,
+                          m_profile.outbound_debug_ns, timing,
+                          trans.get_data_length());
+            return ret;
         }
         SCP_DEBUG(()) << name() << " ->remote debug tlm " << txn_str(trans);
         tlm_generic_payload_rpc t;
@@ -797,10 +1072,14 @@ private:
         r.update_to_tlm(trans);
         SCP_DEBUG(()) << name() << " <-remote debug tlm done " << txn_str(trans);
         // this is not entirely accurate, but see below
+        profile_count(m_profile.outbound_debug,
+                      m_profile.outbound_debug_ns, timing,
+                      trans.get_data_length());
         return trans.get_response_status() == tlm::TLM_OK_RESPONSE ? trans.get_data_length() : 0;
     }
     tlm_generic_payload_rpc transport_dbg_rpc(int id, tlm_generic_payload_rpc t)
     {
+        const uint64_t timing = m_profile_enabled ? now_ns() : 0;
         tlm::tlm_generic_payload trans;
         t.deep_copy_to_tlm(trans);
         int ret_len;
@@ -813,25 +1092,31 @@ private:
             assert(false);
             SCP_WARN(()) << "debug transaction not able to access required length of data.";
         }
+        profile_count(m_profile.inbound_debug_rpc,
+                      m_profile.inbound_debug_rpc_ns, timing,
+                      t.m_length);
         return t;
     }
 
     bool get_direct_mem_ptr(int id, tlm::tlm_generic_payload& trans, tlm::tlm_dmi& dmi_data)
     {
+        const uint64_t timing = m_profile_enabled ? now_ns() : 0;
         if (is_local_mode()) {
-            return m_container->fw_get_direct_mem_ptr(id, trans, dmi_data);
+            const bool ret = m_container->fw_get_direct_mem_ptr(id, trans, dmi_data);
+            profile_count(m_profile.outbound_dmi_request,
+                          m_profile.outbound_dmi_request_ns, timing,
+                          trans.get_data_length());
+            return ret;
         }
-        tlm::tlm_dmi* c;
         SCP_DEBUG(()) << " " << name() << " get_direct_mem_ptr to address "
                       << "0x" << std::hex << trans.get_address();
 
-#ifdef DMICACHE
-        c = in_cache(trans.get_address());
-        if (c) {
-            dmi_data = *c;
+        if (lookup_dmi_cache(trans.get_address(), 1, dmi_data)) {
+            profile_count(m_profile.dmi_cache_dmi_request_hits,
+                          m_profile.outbound_dmi_request_ns, timing,
+                          trans.get_data_length());
             return !(dmi_data.is_none_allowed());
         }
-#endif
         tlm_generic_payload_rpc t;
         tlm_dmi_rpc r;
         t.from_tlm(trans);
@@ -839,18 +1124,22 @@ private:
 
         if (r.m_shmem_size == 0 && r.m_file_size == 0) {
             SCP_DEBUG(()) << name() << "DMI OK, but no shared memory available?" << trans.get_address();
+            profile_count(m_profile.outbound_dmi_request,
+                          m_profile.outbound_dmi_request_ns, timing,
+                          trans.get_data_length());
             return false;
         }
         r.to_tlm(dmi_data);
-#ifdef DMICACHE
-        assert(m_dmi_cache.count(dmi_data.get_start_address()) == 0);
-        m_dmi_cache[dmi_data.get_start_address()] = dmi_data;
-#endif
+        insert_dmi_cache(dmi_data);
+        profile_count(m_profile.outbound_dmi_request,
+                      m_profile.outbound_dmi_request_ns, timing,
+                      trans.get_data_length());
         return !(dmi_data.is_none_allowed());
     }
 
     tlm_dmi_rpc get_direct_mem_ptr_rpc(int id, tlm_generic_payload_rpc t)
     {
+        const uint64_t timing = m_profile_enabled ? now_ns() : 0;
         tlm::tlm_generic_payload trans;
         t.deep_copy_to_tlm(trans);
 
@@ -861,6 +1150,7 @@ private:
         ret.m_shmem_size = 0;
         ret.m_file_size = 0;
         if (initiator_sockets[id]->get_direct_mem_ptr(trans, dmi_data)) {
+            insert_dmi_cache(dmi_data);
             ShmemIDExtension* ext = trans.get_extension<ShmemIDExtension>();
             if (ext) {
                 ret.from_tlm(dmi_data, ext);
@@ -871,6 +1161,9 @@ private:
                 ret.from_tlm(dmi_data, file_ext);
             }
         }
+        profile_count(m_profile.inbound_dmi_request_rpc,
+                      m_profile.inbound_dmi_request_rpc_ns, timing,
+                      t.m_length);
         return ret;
     }
 
@@ -882,15 +1175,16 @@ private:
         }
         SCP_DEBUG(()) << " " << name() << " invalidate_direct_mem_ptr "
                       << " start address 0x" << std::hex << start << " end address 0x" << std::hex << end;
+        if (m_profile_enabled) {
+            m_profile.dmi_invalidations.fetch_add(1, std::memory_order_relaxed);
+        }
         do_rpc_async_call("dmi_inv", start, end);
     }
     void invalidate_direct_mem_ptr_rpc(sc_dt::uint64 start, sc_dt::uint64 end)
     {
         SCP_DEBUG(()) << " " << name() << " invalidate_direct_mem_ptr "
                       << " start address 0x" << std::hex << start << " end address 0x" << std::hex << end;
-#ifdef DMICACHE
         cache_clean(start, end);
-#endif
         for (int i = 0; i < target_sockets.size(); i++) {
             target_sockets[i]->invalidate_direct_mem_ptr(start, end);
         }
@@ -977,6 +1271,10 @@ public:
         , p_tlm_target_ports_num("tlm_target_ports_num", 0, "number of tlm target ports")
         , p_initiator_signals_num("initiator_signals_num", 0, "number of initiator signals")
         , p_target_signals_num("target_signals_num", 0, "number of target signals")
+        , p_dmi_cache("dmi_cache", false, "Cache shared-memory DMI ranges in the remote process")
+        , m_profile_file(make_profile_file(sc_core::sc_module::name(), this))
+        , m_profile_enabled(!m_profile_file.empty())
+        , m_profile_flush_interval(profile_flush_interval())
         , cancel_waiting(false)
     {
         SigHandler::get().add_sigint_handler(Handler_CB::PASS);
@@ -1152,6 +1450,9 @@ public:
 
         for (int i = 0; i < p_target_signals_num.get_value(); i++) {
             target_signal_sockets[i].register_value_changed_cb([&, i](bool value) {
+                if (m_profile_enabled) {
+                    m_profile.signal_writes.fetch_add(1, std::memory_order_relaxed);
+                }
                 if (is_local_mode()) {
                     m_container->fw_handle_signal(i, value);
                     return;
@@ -1345,16 +1646,16 @@ public:
     ~PassRPC()
     {
         SigHandler::get().deregister_on_exit_cb(std::string(name()) + ".gs::PassRPC::stop");
+        write_profile_file();
         if (is_local_mode()) return;
         SCP_DEBUG(()) << "EXIT " << name();
         stop();
-#ifdef DMICACHE
-        m_dmi_cache.clear();
-#endif
+        clear_dmi_cache();
     }
 
     void end_of_simulation() override
     {
+        write_profile_file();
         if (is_local_mode()) return;
         stop();
     }

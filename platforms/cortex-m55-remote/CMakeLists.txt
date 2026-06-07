@@ -25,6 +25,7 @@ target_include_directories(
   target_include_directories(
     remote_cpu PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/systemc-components>
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/systemc-components/cc3xx/include>
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/qemu-components>
   )
 
