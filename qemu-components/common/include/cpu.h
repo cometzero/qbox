@@ -254,6 +254,14 @@ protected:
     std::atomic<uint32_t> m_bl2_verify_sig_last_key_len{ 0 };
     std::atomic<uint32_t> m_bl2_verify_sig_last_fih_success{ 0 };
     std::atomic<uint32_t> m_bl2_verify_sig_last_unsupported_mask{ 0 };
+    std::atomic<uint64_t> m_bl2_delay_hits{ 0 };
+    std::atomic<uint64_t> m_bl2_delay_cycles{ 0 };
+    std::atomic<uint64_t> m_bl2_delay_state_failures{ 0 };
+    std::atomic<uint64_t> m_bl2_delay_unsupported{ 0 };
+    std::atomic<uint32_t> m_bl2_delay_last_cycles{ 0 };
+    std::atomic<uint32_t> m_bl2_delay_last_lr{ 0 };
+    std::atomic<uint32_t> m_bl2_delay_last_unsupported_mask{ 0 };
+    std::atomic<bool> m_bl2_delay_watch_active{ false };
 
     struct Bl2VerifySigCacheEntry {
         std::vector<uint8_t> public_key;
@@ -817,6 +825,13 @@ protected:
                m_bl2_verify_sig_verify_failures.load(std::memory_order_relaxed) +
                m_bl2_verify_sig_state_failures.load(std::memory_order_relaxed) +
                m_bl2_verify_sig_unsupported.load(std::memory_order_relaxed);
+    }
+
+    uint64_t bl2_delay_accel_events() const
+    {
+        return m_bl2_delay_hits.load(std::memory_order_relaxed) +
+               m_bl2_delay_state_failures.load(std::memory_order_relaxed) +
+               m_bl2_delay_unsupported.load(std::memory_order_relaxed);
     }
 
     void capture_bl2_profile_sample(Bl2ProfileSite& site, uint32_t pc)
@@ -1386,6 +1401,72 @@ protected:
         m_cpu.set_vcpu_dirty(true);
         maybe_write_hotpath_profile_file();
         return true;
+    }
+
+    bool try_bl2_delay_accel_at_pc(uint32_t pc)
+    {
+        if (!p_bl2_delay_accel.get_value()) {
+            return false;
+        }
+
+        const uint32_t norm_pc = pc & ~1u;
+        const uint32_t entry =
+            static_cast<uint32_t>(p_bl2_delay_cycles_addr.get_value() & ~1ull);
+        if (entry == 0 || norm_pc != entry) {
+            return false;
+        }
+
+        using Field = qemu::CpuArm::V7MStateField;
+        const uint32_t cycles = static_cast<uint32_t>(get_v7m_state(Field::R0));
+        const uint32_t return_pc = static_cast<uint32_t>(get_v7m_state(Field::LR));
+        m_bl2_delay_last_cycles.store(cycles, std::memory_order_relaxed);
+        m_bl2_delay_last_lr.store(return_pc, std::memory_order_relaxed);
+
+        uint32_t unsupported_mask = 0;
+        if (cycles > p_bl2_delay_max_cycles.get_value()) {
+            unsupported_mask |= 1u;
+        }
+        if (return_pc == 0) {
+            unsupported_mask |= 2u;
+        }
+        m_bl2_delay_last_unsupported_mask.store(
+            unsupported_mask, std::memory_order_relaxed);
+        if (unsupported_mask != 0) {
+            m_bl2_delay_unsupported.fetch_add(1, std::memory_order_relaxed);
+            write_hotpath_profile_file();
+            return false;
+        }
+
+        if (!set_v7m_state(Field::R0, 0) ||
+            !set_v7m_state(Field::PC, return_pc)) {
+            m_bl2_delay_state_failures.fetch_add(1, std::memory_order_relaxed);
+            write_hotpath_profile_file();
+            return false;
+        }
+
+        const uint64_t hits =
+            m_bl2_delay_hits.fetch_add(1, std::memory_order_relaxed) + 1;
+        m_bl2_delay_cycles.fetch_add(cycles, std::memory_order_relaxed);
+        const uint64_t expected_hits = p_bl2_delay_expected_hits.get_value();
+        if (expected_hits != 0 && hits >= expected_hits &&
+            m_bl2_delay_watch_active.exchange(false, std::memory_order_relaxed)) {
+            m_cpu.clear_pc_entry_watches();
+        }
+        m_cpu.set_vcpu_dirty(true);
+        maybe_write_hotpath_profile_file();
+        return true;
+    }
+
+    void try_bl2_delay_accel()
+    {
+        if (!p_bl2_delay_accel.get_value()) {
+            return;
+        }
+
+        if (try_bl2_delay_accel_at_pc(static_cast<uint32_t>(m_cpu.get_pc()))) {
+            m_cpu.set_vcpu_dirty(true);
+            m_cpu.kick();
+        }
     }
 
     bool try_bl2_boot_enc_decrypt_accel_at_pc(uint32_t pc)
@@ -1958,6 +2039,26 @@ protected:
             << "  \"lms_last_sig_addr\": \"" << hex_string(m_lms_last_sig_addr.load(std::memory_order_relaxed)) << "\",\n"
             << "  \"lms_last_sig_size\": " << m_lms_last_sig_size.load(std::memory_order_relaxed) << ",\n"
             << "  \"lms_last_unsupported_mask\": " << m_lms_last_unsupported_mask.load(std::memory_order_relaxed) << ",\n"
+            << "  \"bl2_delay_accel\": {\n"
+            << "    \"enabled\": " << (p_bl2_delay_accel.get_value() ? "true" : "false") << ",\n"
+            << "    \"delay_cycles_addr\": \"" << hex_string(p_bl2_delay_cycles_addr.get_value()) << "\",\n"
+            << "    \"max_cycles\": " << p_bl2_delay_max_cycles.get_value() << ",\n"
+            << "    \"watch_count\": " << m_cpu.pc_entry_watch_count() << ",\n"
+            << "    \"watch_add_calls\": " << m_cpu.pc_entry_watch_add_calls() << ",\n"
+            << "    \"watch_clear_calls\": " << m_cpu.pc_entry_watch_clear_calls() << ",\n"
+            << "    \"watch_match_queries\": " << m_cpu.pc_entry_watch_match_queries() << ",\n"
+            << "    \"watch_match_hits\": " << m_cpu.pc_entry_watch_match_hits() << ",\n"
+            << "    \"watch_last_pc\": \"" << hex_string(m_cpu.pc_entry_watch_last_pc()) << "\",\n"
+            << "    \"watch_last_watch_pc\": \"" << hex_string(m_cpu.pc_entry_watch_last_watch_pc()) << "\",\n"
+            << "    \"hits\": " << m_bl2_delay_hits.load(std::memory_order_relaxed) << ",\n"
+            << "    \"cycles\": " << m_bl2_delay_cycles.load(std::memory_order_relaxed) << ",\n"
+            << "    \"expected_hits\": " << p_bl2_delay_expected_hits.get_value() << ",\n"
+            << "    \"state_failures\": " << m_bl2_delay_state_failures.load(std::memory_order_relaxed) << ",\n"
+            << "    \"unsupported\": " << m_bl2_delay_unsupported.load(std::memory_order_relaxed) << ",\n"
+            << "    \"last_cycles\": " << m_bl2_delay_last_cycles.load(std::memory_order_relaxed) << ",\n"
+            << "    \"last_lr\": \"" << hex_string(m_bl2_delay_last_lr.load(std::memory_order_relaxed)) << "\",\n"
+            << "    \"last_unsupported_mask\": " << m_bl2_delay_last_unsupported_mask.load(std::memory_order_relaxed) << "\n"
+            << "  },\n"
             << "  \"bl2_load_accel\": {\n"
             << "    \"enabled\": " << (p_bl2_load_accel.get_value() ? "true" : "false") << ",\n"
             << "    \"decrypt_addr\": \"" << hex_string(p_bl2_boot_enc_decrypt_addr.get_value()) << "\",\n"
@@ -2149,7 +2250,8 @@ protected:
             bl2_load_accel_events() +
             bl2_boot_enc_accel_events() +
             bl2_img_hash_accel_events() +
-            bl2_verify_sig_accel_events();
+            bl2_verify_sig_accel_events() +
+            bl2_delay_accel_events();
         if (events != 0 && (events % interval) == 0) {
             write_hotpath_profile_file();
         }
@@ -2441,8 +2543,10 @@ protected:
             !p_bl2_load_accel.get_value() &&
             !p_bl2_boot_enc_accel.get_value() &&
             !p_bl2_img_hash_accel.get_value() &&
-            !p_bl2_verify_sig_accel.get_value()) {
+            !p_bl2_verify_sig_accel.get_value() &&
+            !p_bl2_delay_accel.get_value()) {
             m_cpu.clear_pc_entry_callback();
+            m_cpu.clear_pc_entry_watches();
             m_lms_pc_entry_registered = false;
         }
         write_hotpath_profile_file();
@@ -2454,6 +2558,9 @@ protected:
         const uint32_t pc32 = static_cast<uint32_t>(pc);
         try_bl2_load_profile_at_pc(pc32);
         try_bl2_boot_enc_capture_key_at_pc(pc32);
+        if (try_bl2_delay_accel_at_pc(pc32)) {
+            return true;
+        }
         if (try_bl2_load_decrypt_accel_at_pc(pc32)) {
             return true;
         }
@@ -2488,6 +2595,7 @@ protected:
         if (!m_lms_pc_entry_registered) {
             try_lms_accel();
         }
+        try_bl2_delay_accel();
         try_hotpath_accel();
         trace_pc_sample(now);
 
@@ -2816,6 +2924,10 @@ public:
     cci::cci_param<uint64_t> p_bl2_fih_success_addr;
     cci::cci_param<uint64_t> p_bl2_verify_sig_max_key_bytes;
     cci::cci_param<uint64_t> p_bl2_verify_sig_max_sig_bytes;
+    cci::cci_param<bool> p_bl2_delay_accel;
+    cci::cci_param<uint64_t> p_bl2_delay_cycles_addr;
+    cci::cci_param<uint64_t> p_bl2_delay_max_cycles;
+    cci::cci_param<uint64_t> p_bl2_delay_expected_hits;
     cci::cci_param<std::string> p_direct_file_aliases;
     cci::cci_param<bool> p_start_in_reset;
     cci::cci_param<bool> p_reset_power_on;
@@ -2928,6 +3040,14 @@ public:
                                          "Maximum public-key byte count accepted by BL2 signature accelerator")
         , p_bl2_verify_sig_max_sig_bytes("bl2_verify_sig_max_sig_bytes", 128,
                                          "Maximum DER signature byte count accepted by BL2 signature accelerator")
+        , p_bl2_delay_accel("bl2_delay_accel", false,
+                            "Enable opt-in RSE BL2 delay_cycles spin-loop acceleration")
+        , p_bl2_delay_cycles_addr("bl2_delay_cycles_addr", 0,
+                                  "Effective hook PC inside RSE BL2 delay_cycles")
+        , p_bl2_delay_max_cycles("bl2_delay_max_cycles", 50 * 1000 * 1000,
+                                 "Maximum cycle count accepted by BL2 delay accelerator")
+        , p_bl2_delay_expected_hits("bl2_delay_expected_hits", 3,
+                                    "Clear BL2 delay PC watch after this many hits; 0 keeps it armed")
         , p_direct_file_aliases("direct_file_aliases", "",
                                 "Semicolon-separated addr:size:file_offset:ro|rw:path direct file aliases")
         , p_start_in_reset("start_in_reset", false, "Hold the CPU in reset when simulation starts")
@@ -2987,7 +3107,8 @@ public:
     {
         if (p_hotpath_accel.get_value() || p_lms_accel.get_value() ||
             p_bl2_load_profile.get_value() || p_bl2_boot_enc_accel.get_value() ||
-            p_bl2_img_hash_accel.get_value() || p_bl2_verify_sig_accel.get_value()) {
+            p_bl2_img_hash_accel.get_value() || p_bl2_verify_sig_accel.get_value() ||
+            p_bl2_delay_accel.get_value()) {
             write_hotpath_profile_file();
         }
         if (m_finished) return;
@@ -3068,7 +3189,13 @@ public:
         if (p_lms_accel.get_value() || p_bl2_load_profile.get_value() ||
             p_bl2_load_accel.get_value() || p_bl2_boot_enc_accel.get_value() ||
             p_bl2_img_hash_accel.get_value() ||
-            p_bl2_verify_sig_accel.get_value()) {
+            p_bl2_verify_sig_accel.get_value() ||
+            p_bl2_delay_accel.get_value()) {
+            if (p_bl2_delay_accel.get_value() &&
+                p_bl2_delay_cycles_addr.get_value() != 0) {
+                m_cpu.add_pc_entry_watch(p_bl2_delay_cycles_addr.get_value() & ~1ull);
+                m_bl2_delay_watch_active.store(true, std::memory_order_relaxed);
+            }
             m_cpu.set_pc_entry_callback(std::bind(&QemuCpu::try_rse_pc_entry, this, std::placeholders::_1));
             m_lms_pc_entry_registered = true;
         }

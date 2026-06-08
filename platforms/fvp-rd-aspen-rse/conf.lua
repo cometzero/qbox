@@ -209,6 +209,14 @@ rse_bl2_verify_sig_max_key_bytes =
     tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_VERIFY_SIG_MAX_KEY_BYTES", "512"))
 rse_bl2_verify_sig_max_sig_bytes =
     tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_VERIFY_SIG_MAX_SIG_BYTES", "128"))
+rse_bl2_delay_accel =
+    getenv_or("QBOX_RDASPEN_RSE_BL2_DELAY_ACCEL", "false") == "true"
+rse_bl2_delay_cycles_addr =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_DELAY_CYCLES_ADDR", "0x31021aca"))
+rse_bl2_delay_max_cycles =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_DELAY_MAX_CYCLES", "50000000"))
+rse_bl2_delay_expected_hits =
+    tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_DELAY_EXPECTED_HITS", "3"))
 rse_bl2_boot_status_enckey_offset =
     tonumber(getenv_or("QBOX_RDASPEN_RSE_BL2_BOOT_STATUS_ENCKEY_OFFSET", "0x0c"))
 rse_bl2_boot_enc_key_bytes =
@@ -2305,6 +2313,10 @@ platform = {
                 bl2_fih_success_addr = rse_bl2_fih_success_addr;
                 bl2_verify_sig_max_key_bytes = rse_bl2_verify_sig_max_key_bytes;
                 bl2_verify_sig_max_sig_bytes = rse_bl2_verify_sig_max_sig_bytes;
+                bl2_delay_accel = rse_bl2_delay_accel;
+                bl2_delay_cycles_addr = rse_bl2_delay_cycles_addr;
+                bl2_delay_max_cycles = rse_bl2_delay_max_cycles;
+                bl2_delay_expected_hits = rse_bl2_delay_expected_hits;
                 direct_file_aliases = rse_direct_file_aliases;
                 nvic = {
                     mem = {

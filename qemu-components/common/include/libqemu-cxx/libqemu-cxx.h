@@ -717,6 +717,15 @@ public:
     void set_end_of_loop_callback(EndOfLoopCallbackFn cb);
     void set_pc_entry_callback(PcEntryCallbackFn cb);
     void clear_pc_entry_callback();
+    void add_pc_entry_watch(uintptr_t pc);
+    void clear_pc_entry_watches();
+    uint64_t pc_entry_watch_count() const;
+    uint64_t pc_entry_watch_add_calls() const;
+    uint64_t pc_entry_watch_clear_calls() const;
+    uint64_t pc_entry_watch_match_queries() const;
+    uint64_t pc_entry_watch_match_hits() const;
+    uintptr_t pc_entry_watch_last_pc() const;
+    uintptr_t pc_entry_watch_last_watch_pc() const;
     void set_kick_callback(CpuKickCallbackFn cb);
 
     bool is_in_exclusive_context() const;

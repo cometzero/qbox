@@ -69,6 +69,7 @@ void Cpu::set_pc_entry_callback(Cpu::PcEntryCallbackFn cb)
 void Cpu::clear_pc_entry_callback()
 {
     m_int->get_cpu_pc_entry_cb().clear(*this);
+    m_int->exports().clear_cpu_pc_entry_watches();
     m_int->exports().set_cpu_pc_entry_cb(nullptr, nullptr);
 }
 

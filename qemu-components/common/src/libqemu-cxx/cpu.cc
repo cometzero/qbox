@@ -96,6 +96,24 @@ void Cpu::set_end_of_loop_callback(Cpu::EndOfLoopCallbackFn cb)
 
 void Cpu::set_kick_callback(Cpu::CpuKickCallbackFn cb) { m_int->get_cpu_kick_cb().register_cb(*this, cb); }
 
+void Cpu::add_pc_entry_watch(uintptr_t pc) { m_int->exports().add_cpu_pc_entry_watch(pc); }
+
+void Cpu::clear_pc_entry_watches() { m_int->exports().clear_cpu_pc_entry_watches(); }
+
+uint64_t Cpu::pc_entry_watch_count() const { return m_int->exports().get_cpu_pc_entry_watch_count(); }
+
+uint64_t Cpu::pc_entry_watch_add_calls() const { return m_int->exports().get_cpu_pc_entry_watch_add_calls(); }
+
+uint64_t Cpu::pc_entry_watch_clear_calls() const { return m_int->exports().get_cpu_pc_entry_watch_clear_calls(); }
+
+uint64_t Cpu::pc_entry_watch_match_queries() const { return m_int->exports().get_cpu_pc_entry_watch_match_queries(); }
+
+uint64_t Cpu::pc_entry_watch_match_hits() const { return m_int->exports().get_cpu_pc_entry_watch_match_hits(); }
+
+uintptr_t Cpu::pc_entry_watch_last_pc() const { return m_int->exports().get_cpu_pc_entry_watch_last_pc(); }
+
+uintptr_t Cpu::pc_entry_watch_last_watch_pc() const { return m_int->exports().get_cpu_pc_entry_watch_last_watch_pc(); }
+
 bool Cpu::is_in_exclusive_context() const { return m_int->exports().cpu_in_exclusive_context(m_obj); }
 
 void Cpu::set_vcpu_dirty(bool dirty) const { m_int->exports().cpu_set_vcpu_dirty(m_obj, dirty); }
