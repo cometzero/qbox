@@ -243,6 +243,9 @@ cc3xx_stats_interval = tonumber(getenv_or("QBOX_RDASPEN_CC3XX_STATS_INTERVAL", "
 cc3xx_backend = getenv_or("QBOX_RDASPEN_CC3XX_BACKEND", "systemc")
 assert(cc3xx_backend == "systemc" or cc3xx_backend == "qemu-native",
        "QBOX_RDASPEN_CC3XX_BACKEND must be systemc or qemu-native")
+smmu_backend = getenv_or("QBOX_RDASPEN_SMMU_BACKEND", "systemc-mmu720ae")
+assert(smmu_backend == "qemu-arm-smmuv3" or smmu_backend == "systemc-mmu720ae",
+       "QBOX_RDASPEN_SMMU_BACKEND must be qemu-arm-smmuv3 or systemc-mmu720ae")
 local dma350_trace = getenv_or("QBOX_RDASPEN_DMA350_TRACE", "false") == "true"
 local dma350_trace_limit = tonumber(getenv_or("QBOX_RDASPEN_DMA350_TRACE_LIMIT", "64"))
 local dma350_trace_filter = getenv_or("QBOX_RDASPEN_DMA350_TRACE_FILTER", "all")
@@ -587,6 +590,36 @@ function rse_tcm_aliases(split_cpu0_alias, ns_address, cpu0_s_address, cpu0_ns_a
     end
 
     return aliases
+end
+
+function ap_smmu_component()
+    if smmu_backend == "systemc-mmu720ae" then
+        return {
+            moduletype = "mmu720ae";
+            mem = {
+                address = 0x1C0000000;
+                size = 0x08000000;
+                bind = "&host_router.initiator_socket";
+            };
+            downstream_socket = {bind = "&host_router.target_socket"};
+            ptw_socket = {bind = "&host_router.target_socket"};
+            irq_combined = {bind = "&ap_gic.spi_in_65"};
+            stage = "1";
+            profile = "zena-css-cfg2";
+        }
+    end
+
+    return {
+        moduletype = "arm_smmuv3";
+        args = {"&platform.ap_qemu_inst", "&platform.ap_gpex_0"};
+        mem = {
+            address = 0x1C0000000;
+            size = 0x08000000;
+            bind = "&host_router.initiator_socket";
+        };
+        irq_out_0 = {bind = "&ap_gic.spi_in_65"};
+        stage = "1";
+    }
 end
 
 platform = {
@@ -1296,17 +1329,7 @@ platform = {
         };
     } or nil,
 
-    ap_smmu_0 = enable_ap_cpus and {
-        moduletype = "arm_smmuv3";
-        args = {"&platform.ap_qemu_inst", "&platform.ap_gpex_0"};
-        mem = {
-            address = 0x1C0000000;
-            size = 0x08000000;
-            bind = "&host_router.initiator_socket";
-        };
-        irq_out_0 = {bind = "&ap_gic.spi_in_65"};
-        stage = "1";
-    } or nil,
+    ap_smmu_0 = enable_ap_cpus and ap_smmu_component() or nil,
 
     ap_virtioblk_0 = enable_ap_cpus and {
         moduletype = "virtio_mmio_blk";
@@ -1636,7 +1659,7 @@ platform = {
     },
 
     host_rse_si_mhu_pbx = {
-        moduletype = "mhuv3_stub";
+        moduletype = "mhu320ae";
         frame = "pbx";
         pair = "rse_si_cl0";
         protocol = "scmi";
@@ -1660,7 +1683,7 @@ platform = {
     },
 
     host_rse_si_mhu_mbx = {
-        moduletype = "mhuv3_stub";
+        moduletype = "mhu320ae";
         frame = "mbx";
         pair = "rse_si_cl0";
         protocol = "scmi";
@@ -1720,7 +1743,7 @@ platform = {
     },
 
     host_ap_si_ns_scmi_mhu_pbx = enable_ap_cpus and {
-        moduletype = "mhuv3_stub";
+        moduletype = "mhu320ae";
         frame = "pbx";
         pair = "ap_si_ns_scmi";
         protocol = "scmi";
@@ -1741,7 +1764,7 @@ platform = {
     } or nil,
 
     host_ap_si_ns_scmi_mhu_mbx = enable_ap_cpus and {
-        moduletype = "mhuv3_stub";
+        moduletype = "mhu320ae";
         frame = "mbx";
         pair = "ap_si_ns_scmi";
         protocol = "scmi";
@@ -1762,7 +1785,7 @@ platform = {
     } or nil,
 
     host_ap_si_scmi_mhu_pbx = enable_ap_cpus and {
-        moduletype = "mhuv3_stub";
+        moduletype = "mhu320ae";
         frame = "pbx";
         pair = "ap_si_scmi";
         protocol = "scmi";
@@ -1793,7 +1816,7 @@ platform = {
     } or nil,
 
     host_ap_si_scmi_mhu_mbx = enable_ap_cpus and {
-        moduletype = "mhuv3_stub";
+        moduletype = "mhu320ae";
         frame = "mbx";
         pair = "ap_si_scmi";
         protocol = "scmi";
@@ -1814,7 +1837,7 @@ platform = {
     } or nil,
 
     host_ap_si_cl1_mhu_pbx = enable_ap_cpus and {
-        moduletype = "mhuv3_stub";
+        moduletype = "mhu320ae";
         frame = "pbx";
         pair = "ap_si_cl1";
         protocol = "doorbell";
@@ -1858,7 +1881,7 @@ platform = {
     } or nil,
 
     host_ap_si_cl1_mhu_mbx = enable_ap_cpus and {
-        moduletype = "mhuv3_stub";
+        moduletype = "mhu320ae";
         frame = "mbx";
         pair = "ap_si_cl1";
         protocol = "doorbell";
@@ -1876,7 +1899,7 @@ platform = {
     } or nil,
 
     host_ap_si_pfdi_monitor_mhu_pbx = enable_ap_cpus and {
-        moduletype = "mhuv3_stub";
+        moduletype = "mhu320ae";
         frame = "pbx";
         pair = "ap_si_pfdi_monitor";
         protocol = "scmi";
@@ -1948,7 +1971,7 @@ platform = {
     },
 
     host_ap_rse_mhu_pbx = {
-        moduletype = "mhuv3_stub";
+        moduletype = "mhu320ae";
         frame = "pbx";
         pair = "ap_s_to_rse";
         protocol = "doorbell-bridge";
@@ -1968,7 +1991,7 @@ platform = {
     },
 
     host_ap_rse_mhu_mbx = {
-        moduletype = "mhuv3_stub";
+        moduletype = "mhu320ae";
         frame = "mbx";
         pair = "rse_to_ap_s";
         protocol = "doorbell-bridge";
@@ -2001,7 +2024,7 @@ platform = {
     },
 
     rse_mhu0_sender_s = {
-        moduletype = "mhuv3_stub";
+        moduletype = "mhu320ae";
         frame = "pbx";
         pair = "rse_ap_monitor_local";
         protocol = "doorbell";
@@ -2019,7 +2042,7 @@ platform = {
     },
 
     rse_mhu0_receiver_s = {
-        moduletype = "mhuv3_stub";
+        moduletype = "mhu320ae";
         frame = "mbx";
         pair = "rse_ap_monitor_local";
         protocol = "doorbell";
@@ -2039,7 +2062,7 @@ platform = {
     },
 
     rse_mhu2_sender_s = {
-        moduletype = "mhuv3_stub";
+        moduletype = "mhu320ae";
         frame = "pbx";
         pair = "rse_to_ap_s";
         protocol = "doorbell-bridge";
@@ -2057,7 +2080,7 @@ platform = {
     },
 
     rse_mhu2_receiver_s = {
-        moduletype = "mhuv3_stub";
+        moduletype = "mhu320ae";
         frame = "mbx";
         pair = "ap_s_to_rse";
         protocol = "doorbell-bridge";

@@ -1075,7 +1075,7 @@ local function enable_apollo_live_cl1()
     }
 
     platform.si_cl1_hipc_mhu_pbx = {
-        moduletype = "mhuv3_stub";
+        moduletype = "mhu320ae";
         frame = "pbx";
         pair = "apollo_si_cl1_to_ap";
         protocol = "doorbell-bridge";
@@ -1094,7 +1094,7 @@ local function enable_apollo_live_cl1()
     }
 
     platform.si_cl1_hipc_mhu_mbx = {
-        moduletype = "mhuv3_stub";
+        moduletype = "mhu320ae";
         frame = "mbx";
         pair = "apollo_ap_to_si_cl1";
         protocol = "doorbell-bridge";
@@ -1113,7 +1113,7 @@ local function enable_apollo_live_cl1()
     }
 
     platform.si_cl1_pfdi_mhu_pbx = {
-        moduletype = "mhuv3_stub";
+        moduletype = "mhu320ae";
         frame = "pbx";
         pair = "apollo_si_cl1_pfdi";
         protocol = "scmi";

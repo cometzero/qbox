@@ -170,7 +170,7 @@ platform = {
     };
 
     si_cl1_hipc_mhu_pbx = {
-        moduletype = "mhuv3_stub";
+        moduletype = "mhu320ae";
         frame = "pbx";
         pair = "apollo_si_cl1_hipc_isolated";
         protocol = "doorbell";
@@ -189,7 +189,7 @@ platform = {
     };
 
     si_cl1_hipc_mhu_mbx = {
-        moduletype = "mhuv3_stub";
+        moduletype = "mhu320ae";
         frame = "mbx";
         pair = "apollo_si_cl1_hipc_isolated";
         protocol = "doorbell";
@@ -208,7 +208,7 @@ platform = {
     };
 
     si_cl1_pfdi_mhu_pbx = {
-        moduletype = "mhuv3_stub";
+        moduletype = "mhu320ae";
         frame = "pbx";
         pair = "apollo_si_cl1_pfdi_isolated";
         protocol = "scmi";

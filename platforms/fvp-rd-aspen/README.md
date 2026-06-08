@@ -194,7 +194,7 @@ rse_atu: translation-dmi-model when QBOX_RDASPEN_ATU_DMI=true
 rse_boot_media: cfi-strata-flash-partial-model
 rse_cc3xx: hash-aes-cmac-modular-pka-model
 rse_host_scr: sid-system-cfg-register-model for CFG2 CL1 present bit
-rse_mhuv3: compatibility component with reusable PBX/MBX frame model plus SCMI/RPMsg service-model hooks
+rse_mhuv3: SystemC mhu320ae component with reusable PBX/MBX frame model plus SCMI/RPMsg service-model hooks
 rse_host_ppu: touched-status-model
 rse_integrity_checker: touched-status-model
 rse_kmu: touched-register-model
@@ -340,7 +340,7 @@ fd-backed RemotePass validation. ATU and host-memory DMI remain explicit
 opt-ins because they can hide host-window side effects. Boot-flash DMI is kept
 off for TF-M storage debug until flash command-state/DMI invalidation behavior
 is proven equivalent.
-The temporary ATU/LCM/KMU/Integrity Checker/MHU/host-window/boot-media behavior
+The temporary ATU/LCM/KMU/Integrity Checker/host-window/boot-media behavior
 also still needs to be expanded into documented hardware semantics.
 
 For the current default RSE handoff check, use:

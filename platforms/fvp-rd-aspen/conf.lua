@@ -51,6 +51,9 @@ local extra_disk_images = {
     getenv_or("QBOX_RDASPEN_EXTRA_BLK3", root.."build/qbox-fvp-rd-aspen/rd-aspen-extra-blk3.raw"),
 }
 local netdev = getenv_or("QBOX_RDASPEN_NETDEV", "type=user,hostfwd=tcp::2222-:22")
+local smmu_backend = getenv_or("QBOX_RDASPEN_SMMU_BACKEND", "systemc-mmu720ae")
+assert(smmu_backend == "qemu-arm-smmuv3" or smmu_backend == "systemc-mmu720ae",
+       "QBOX_RDASPEN_SMMU_BACKEND must be qemu-arm-smmuv3 or systemc-mmu720ae")
 
 if ACCEL == nil then
     ACCEL = getenv_or("QBOX_RDASPEN_ACCEL", "tcg")
@@ -78,6 +81,36 @@ local function mp_affinity(cpu_index)
     local cluster = math.floor(cpu_index / 4)
     local core = cpu_index % 4
     return (cluster << 16) | (core << 8)
+end
+
+local function smmu0_component()
+    if smmu_backend == "systemc-mmu720ae" then
+        return {
+            moduletype = "mmu720ae";
+            mem = {
+                address = 0x1c0000000,
+                size = 0x8000000,
+                bind = "&router.initiator_socket"
+            };
+            downstream_socket = {bind = "&router.target_socket"};
+            ptw_socket = {bind = "&router.target_socket"};
+            irq_combined = {bind = "&gic_0.spi_in_65"};
+            stage = "1";
+            profile = "zena-css-cfg2";
+        }
+    end
+
+    return {
+        moduletype = "arm_smmuv3";
+        args = {"&platform.qemu_inst", "&platform.gpex_0"};
+        mem = {
+            address = 0x1c0000000,
+            size = 0x8000000,
+            bind = "&router.initiator_socket"
+        };
+        irq_out_0 = {bind = "&gic_0.spi_in_65"};
+        stage = "1";
+    }
 end
 
 platform = {
@@ -354,20 +387,10 @@ platform = {
         };
     };
 
-    smmu_0 = {
-        moduletype = "arm_smmuv3";
-        args = {"&platform.qemu_inst", "&platform.gpex_0"};
-        mem = {
-            address = 0x1c0000000,
-            size = 0x8000000,
-            bind = "&router.initiator_socket"
-        };
-        irq_out_0 = {bind = "&gic_0.spi_in_65"};
-        stage = "1";
-    };
+    smmu_0 = smmu0_component();
 
     mhuv3_db_tx_0 = {
-        moduletype = "mhuv3_stub";
+        moduletype = "mhu320ae";
         frame = "pbx";
         pair = "scmi";
         protocol = "scmi";
@@ -382,7 +405,7 @@ platform = {
     };
 
     mhuv3_db_rx_0 = {
-        moduletype = "mhuv3_stub";
+        moduletype = "mhu320ae";
         frame = "mbx";
         pair = "scmi";
         protocol = "scmi";
