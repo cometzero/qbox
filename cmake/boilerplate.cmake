@@ -52,7 +52,7 @@ macro(install_systemc_dependencies)
         NAME SystemCCCI
         GIT_REPOSITORY ${CCI_GIT}
         GIT_TAG 915c189f6916ab56db773b2da20ebc06fe8f24e9
-        GIT_SHALLOW True
+        GIT_SHALLOW False
         OPTIONS "SYSTEMCCCI_BUILD_TESTS OFF"
     )
 
@@ -60,7 +60,7 @@ macro(install_systemc_dependencies)
         NAME SCP
         GIT_REPOSITORY ${SCP_GIT}
         GIT_TAG 6830c915bb691d9b505b17ac631f1ff305fe9c17
-        GIT_SHALLOW True
+        GIT_SHALLOW False
     )
 endmacro()
 
