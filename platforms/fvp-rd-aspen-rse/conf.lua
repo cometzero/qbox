@@ -2429,7 +2429,7 @@ if enable_ap_cpus then
             mp_affinity = mp_affinity(i);
             start_powered_off = i ~= 0;
             start_in_reset = true;
-            reset_power_on = i ~= 0;
+            reset_power_on = true;
             rvbar = HOST_AP_BL2_PHYS_BASE;
             trace_pc = ap_pc_trace;
             trace_pc_file = ap_pc_trace_file;
