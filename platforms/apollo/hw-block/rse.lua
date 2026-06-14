@@ -2446,29 +2446,4 @@ if enable_ap_cpus then
     end
 end
 
-return {
-    add_ap_logical_mhu_aliases = function(platform)
-        local AP_RSE_SECURE_MHU_PBX_LOGICAL_BASE = 0x40680000
-        local AP_RSE_SECURE_MHU_MBX_LOGICAL_BASE = 0x406B0000
-        local AP_LOGICAL_MHU_FRAME_SIZE = 0x00030000
-
-        if platform.host_ap_rse_mhu_pbx ~= nil then
-            local target = platform.host_ap_rse_mhu_pbx.target_socket
-            target.priority = 0
-            target.aliases = target.aliases or {}
-            target.aliases.ap_logical_pbx = {
-                address = AP_RSE_SECURE_MHU_PBX_LOGICAL_BASE;
-                size = AP_LOGICAL_MHU_FRAME_SIZE;
-            }
-        end
-        if platform.host_ap_rse_mhu_mbx ~= nil then
-            local target = platform.host_ap_rse_mhu_mbx.target_socket
-            target.priority = 0
-            target.aliases = target.aliases or {}
-            target.aliases.ap_logical_mbx = {
-                address = AP_RSE_SECURE_MHU_MBX_LOGICAL_BASE;
-                size = AP_LOGICAL_MHU_FRAME_SIZE;
-            }
-        end
-    end;
-}
+return {}

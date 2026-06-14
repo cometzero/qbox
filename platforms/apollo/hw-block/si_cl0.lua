@@ -137,24 +137,6 @@ function si_cl0.enable(ctx, platform)
     local si_cmn_trace_limit =
         ctx.getenv_number_or("QBOX_APOLLO_FULL_SI_CMN_TRACE_LIMIT", "512")
 
-    -- The flattened RSE/AP/SI bus still contains broad AP and host-side
-    -- service-model ranges. Lower the broad windows so the CL0 local view wins
-    -- for narrow local SRAM and device accesses.
-    if platform.host_ap_flash ~= nil then
-        ctx.lower_decode_priority(platform.host_ap_flash.target_socket, 10)
-    end
-    if platform.ap_gpex_0 ~= nil then
-        ctx.lower_decode_priority(platform.ap_gpex_0.ecam_iface, 10)
-    end
-    if platform.host_ap_dram1 ~= nil then
-        ctx.lower_decode_priority(platform.host_ap_dram1.target_socket, 10)
-    end
-    ctx.ros.lower_decode_priorities(platform, ctx.lower_decode_priority, 10)
-
-    ctx.ap_compute.enable_ap_view_router(ctx, platform)
-
-    ctx.rse.add_ap_logical_mhu_aliases(platform)
-
     platform.si_cl0_cmn_cyprus = {
         moduletype = "host_cmn_cyprus";
         trace = si_cmn_trace;

@@ -44,6 +44,7 @@ end
 
 local apollo_dir = apollo_top()
 local ros = dofile(apollo_dir.."hw-block/ros.lua")
+local system_mgmt = dofile(apollo_dir.."hw-block/system_mgmt.lua")
 local rse = dofile(apollo_dir.."hw-block/rse.lua")
 local ap_compute = dofile(apollo_dir.."hw-block/ap_compute.lua")
 local si_cl0 = dofile(apollo_dir.."hw-block/si_cl0.lua")
@@ -71,11 +72,13 @@ local ctx = {
     getenv_bool_or = getenv_bool_or;
     lower_decode_priority = lower_decode_priority;
     ros = ros;
+    system_mgmt = system_mgmt;
     rse = rse;
     ap_compute = ap_compute;
 }
 
 if apollo_live_cl0 then
+    system_mgmt.prepare_live_cl0_integration(ctx, platform)
     si_cl0.enable(ctx, platform)
 end
 

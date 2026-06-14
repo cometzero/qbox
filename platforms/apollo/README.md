@@ -47,10 +47,17 @@ hw-block/si_cl0.lua
 hw-block/si_cl1.lua
 hw-block/si_cl1_isolated.lua
 hw-block/ros.lua
+hw-block/system_mgmt.lua
 ```
 
 `hw-block/ros.lua` tracks the modeled Rest of System subset from the Arm Zena
 CSS FVP RoS peripheral table: AP-visible virtio block/net/rng and PL031 RTC.
+
+`hw-block/system_mgmt.lua` tracks cross-domain system-management ownership and
+helpers: AP/RSE MHU logical aliases, reset/power integration, SMD shared
+memory, SCMI/PFDI messaging, ATU windows, and CL0-visible safety/control
+surfaces. RSE secure boot and RSE-local security peripherals remain in
+`hw-block/rse.lua`.
 
 ## Build Local Artifacts
 
