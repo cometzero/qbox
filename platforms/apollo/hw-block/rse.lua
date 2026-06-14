@@ -911,7 +911,7 @@ platform = {
     },
 
     rse_nsacfg_regs = {
-        moduletype = "gs_memory";
+        moduletype = "rse_protection_ctrl";
         target_socket = {
             address = RSE_NSACFG_BASE_NS;
             size = 0x00001000;
@@ -936,7 +936,7 @@ platform = {
     },
 
     rse_sacfg_regs = {
-        moduletype = "gs_memory";
+        moduletype = "rse_protection_ctrl";
         target_socket = {
             address = RSE_SACFG_BASE_S;
             size = 0x00001000;
@@ -997,39 +997,27 @@ platform = {
     },
 
     rse_mpc_vm0_regs = {
-        moduletype = "gs_memory";
+        moduletype = "rse_protection_ctrl";
+        profile = 1;
+        blk_max = 1;
+        blk_cfg = 0x00000007;
         target_socket = {
             address = RSE_MPC_VM0_BASE_S;
             size = 0x00001000;
             bind = "&rse_router.initiator_socket";
         };
-        init_mem = true;
-        load = {
-            data = {
-                [5] = 1; -- BLK_MAX
-                [6] = 0x00000007; -- BLK_CFG: 4 KiB blocks
-                [0x3F9] = 0x00000065; -- PIDR0: SIE300
-            };
-            offset = 0;
-        };
         log_level = 0;
     },
 
     rse_mpc_vm1_regs = {
-        moduletype = "gs_memory";
+        moduletype = "rse_protection_ctrl";
+        profile = 1;
+        blk_max = 1;
+        blk_cfg = 0x00000007;
         target_socket = {
             address = RSE_MPC_VM1_BASE_S;
             size = 0x00001000;
             bind = "&rse_router.initiator_socket";
-        };
-        init_mem = true;
-        load = {
-            data = {
-                [5] = 1; -- BLK_MAX
-                [6] = 0x00000007; -- BLK_CFG: 4 KiB blocks
-                [0x3F9] = 0x00000065; -- PIDR0: SIE300
-            };
-            offset = 0;
         };
         log_level = 0;
     },
@@ -1066,31 +1054,24 @@ platform = {
     },
 
     rse_sic_regs = {
-        moduletype = "gs_memory";
+        moduletype = "rse_protection_ctrl";
         target_socket = {
             address = 0x50140000;
             size = 0x00001000;
             bind = "&rse_router.initiator_socket";
         };
-        init_mem = true;
         log_level = 0;
     },
 
     rse_mpc_sic_regs = {
-        moduletype = "gs_memory";
+        moduletype = "rse_protection_ctrl";
+        profile = 1;
+        blk_max = 127;
+        blk_cfg = 0x00000007;
         target_socket = {
             address = 0x50151000;
             size = 0x00001000;
             bind = "&rse_router.initiator_socket";
-        };
-        init_mem = true;
-        load = {
-            data = {
-                [5] = 127; -- BLK_MAX
-                [6] = 0x00000007; -- BLK_CFG: 4 KiB blocks
-                [0x3F9] = 0x00000065; -- PIDR0: SIE300
-            };
-            offset = 0;
         };
         log_level = 0;
     },

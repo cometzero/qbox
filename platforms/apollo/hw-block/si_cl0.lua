@@ -38,6 +38,8 @@ function si_cl0.enable(ctx, platform)
     local SI_CL0_SSU_SIZE = 0x00001000
     local SI_CL0_FMU_BASE = 0x2a510000
     local SI_CL0_FMU_SIZE = 0x00050000
+    local SI_CL0_FMU_CRITICAL_IRQ = 128
+    local SI_CL0_FMU_NON_CRITICAL_IRQ = 129
     local SI_CL0_NI710AE_PRIMARY_NCI_BASE = 0x2a000000
     local SI_CL0_NI710AE_SECONDARY_NCI_BASE = 0x2a200000
     local SI_CL0_NI710AE_MHU_NCI_BASE = 0x2a300000
@@ -292,28 +294,30 @@ function si_cl0.enable(ctx, platform)
     }
 
     platform.si_cl0_ssu = {
-        moduletype = "gs_memory";
-        dmi = false;
+        moduletype = "zena_ssu";
         target_socket = {
             address = SI_CL0_SSU_BASE;
             size = SI_CL0_SSU_SIZE;
             bind = "&host_router.initiator_socket";
             priority = 0;
         };
-        init_mem = true;
         log_level = 0;
     }
 
     platform.si_cl0_fmu = {
-        moduletype = "gs_memory";
-        dmi = false;
+        moduletype = "zena_fmu";
+        bank_count = 5;
+        record_count = 384;
         target_socket = {
             address = SI_CL0_FMU_BASE;
             size = SI_CL0_FMU_SIZE;
             bind = "&host_router.initiator_socket";
             priority = 0;
         };
-        init_mem = true;
+        critical_irq = {bind = "&si_cl0_gic.spi_in_"..SI_CL0_FMU_CRITICAL_IRQ};
+        non_critical_irq = {bind = "&si_cl0_gic.spi_in_"..SI_CL0_FMU_NON_CRITICAL_IRQ};
+        critical_ssu = {bind = "&si_cl0_ssu.critical_in"};
+        non_critical_ssu = {bind = "&si_cl0_ssu.non_critical_in"};
         log_level = 0;
     }
 
