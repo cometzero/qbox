@@ -18,7 +18,7 @@ _KERNEL64_LOAD_ADDR = 0x80080000
 _DTB_LOAD_ADDR      = 0x8fc00000
 _INITRAMFS_LOAD_ADDR = 0x94000000
 
-dofile(top().."../ubuntu/fw/arm64_bootloader.lua")
+dofile(top().."../../ubuntu/fw/arm64_bootloader.lua")
 
 local function getenv_or(name, default)
     local value = os.getenv(name)
@@ -28,7 +28,7 @@ local function getenv_or(name, default)
     return value
 end
 
-local root = top().."../../../../"
+local root = top().."../../../../../"
 local kernel_image = getenv_or(
     "QBOX_APOLLO_KERNEL",
     root.."build/tmp_baremetal/deploy/images/apollo-fvp/Image")
@@ -404,7 +404,7 @@ for i=0,(ARM_NUM_CPUS-1) do
         },
         pmu_interrupt = {bind = "&gic_0.ppi_in_cpu_"..i.."_23"},
         psci_conduit = psci_conduit,
-        mp_affinity = i << 8;
+        mp_affinity = i * 0x100;
         start_powered_off = true;
         rvbar = INITIAL_DDR_SPACE;
     };

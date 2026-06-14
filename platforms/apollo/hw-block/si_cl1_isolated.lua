@@ -30,7 +30,7 @@ end
 
 print("Apollo FVP Safety Island CL1 isolated QBox config running...")
 
-local root = top().."../../../../"
+local root = top().."../../../../../"
 local si_cl1_image = getenv_or(
     "QBOX_APOLLO_SI_CL1_IMAGE",
     root.."build/local-apollo-fvp/deploy/firmware/zephyr-demos-cl1.bin")
@@ -261,7 +261,7 @@ for i=0,(SI_CL1_CPU_COUNT-1) do
         psci_conduit = "smc";
         start_powered_off = false;
         rvbar = SI_CL1_ENTRY;
-        mp_affinity = 0x10000 + (i << 8);
+        mp_affinity = 0x10000 + (i * 0x100);
         irq_timer_sec_out = {
             bind = "&si_cl1_gic.ppi_in_cpu_"..i.."_"..ARCH_TIMER_SEC_PPI;
         };
