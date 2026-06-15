@@ -68,19 +68,6 @@ function si_cl1.enable(ctx, platform)
         }
     end
 
-    if platform.host_ap_si_cl1_mhu_pbx ~= nil then
-        platform.host_ap_si_cl1_mhu_pbx.pair = "apollo_ap_to_si_cl1"
-        platform.host_ap_si_cl1_mhu_pbx.protocol = "doorbell-bridge"
-        platform.host_ap_si_cl1_mhu_pbx.channel_count = SI_CL1_MHU_CHANNELS
-        platform.host_ap_si_cl1_mhu_pbx.doorbell_ack_trigger_value = 0
-        platform.host_ap_si_cl1_mhu_pbx.rpmsg_ns_enable = false
-    end
-    if platform.host_ap_si_cl1_mhu_mbx ~= nil then
-        platform.host_ap_si_cl1_mhu_mbx.pair = "apollo_si_cl1_to_ap"
-        platform.host_ap_si_cl1_mhu_mbx.protocol = "doorbell-bridge"
-        platform.host_ap_si_cl1_mhu_mbx.channel_count = SI_CL1_MHU_CHANNELS
-    end
-
     platform.si_cl1_qemu_inst_mgr = {
         moduletype = "QemuInstanceManager";
     }
@@ -227,9 +214,9 @@ function si_cl1.enable(ctx, platform)
             mem = {bind = "&host_router.target_socket"};
             has_el2 = true;
             psci_conduit = "smc";
-            start_powered_off = ctx.apollo_live_cl0;
-            start_in_reset = ctx.apollo_live_cl0;
-            reset_power_on = ctx.apollo_live_cl0;
+            start_powered_off = false;
+            start_in_reset = false;
+            reset_power_on = false;
             rvbar = SI_CL1_ENTRY;
             mp_affinity = 0x10000 + (i * 0x100);
             irq_timer_sec_out = {
@@ -262,22 +249,6 @@ function si_cl1.enable(ctx, platform)
         }
         platform["si_cl1_gic"]["vfiq_out_"..i] = {
             bind = "&si_cl1_cpu_"..i..".vfiq_in";
-        }
-    end
-
-    if ctx.apollo_live_cl0 and platform.host_rse_si_mhu_pbx ~= nil then
-        local reset_targets = {"&ap_cpu_0.reset"}
-        for i=0,(SI_CL1_CPU_COUNT-1) do
-            reset_targets[#reset_targets + 1] =
-                "&si_cl1_cpu_"..tostring(i)..".reset"
-        end
-        platform.apollo_si_cl1_reset_fanout = {
-            moduletype = "reset_fanout";
-            reset_out = {bind = table.concat(reset_targets, ";")};
-            log_level = 0;
-        }
-        platform.host_rse_si_mhu_pbx.power_on_reset = {
-            bind = "&apollo_si_cl1_reset_fanout.reset_in";
         }
     end
 
