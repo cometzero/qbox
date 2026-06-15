@@ -79,7 +79,15 @@ function ap_compute.enable_ap_view_router(ctx, platform)
     bind_ap_socket(platform.ap_primary_uart, "target_socket")
     bind_ap_socket(platform.ap_timer_mem, "mem")
     bind_ap_socket(platform.ap_timer_mem, "mem_view")
+    bind_ap_socket(platform.ap_secure_timer_frame, "target_socket")
     bind_ap_socket(platform.ap_secure_wdog, "target_socket")
+    bind_ap_socket(platform.ap_secure_wdog_refresh, "target_socket")
+    bind_ap_socket(platform.ap_sid, "target_socket")
+    bind_ap_socket(platform.ap_rgic2lgic_messreg, "target_socket")
+    bind_ap_socket(platform.ap_cl0_ni710ae_fmu, "target_socket")
+    bind_ap_socket(platform.ap_cl1_ni710ae_fmu, "target_socket")
+    bind_ap_socket(platform.ap_cl2_ni710ae_fmu, "target_socket")
+    bind_ap_socket(platform.ap_cl3_ni710ae_fmu, "target_socket")
     for i=0,15 do
         local cpu = platform["ap_cpu_"..i]
         if cpu ~= nil then

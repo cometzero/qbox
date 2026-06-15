@@ -415,13 +415,15 @@ RSE_REMOTE_SIGNAL_COUNT = RSE_NVIC_NUM_IRQ
 RSE_IRQ_CMU_MHU0_RECEIVER = 41
 RSE_IRQ_CMU_MHU2_RECEIVER = 45
 RSE_IRQ_SI_CL0_RSE_CMU_MHU_RECEIVER = 139
-local HOST_AP_SHARED_SRAM_PHYS_BASE = 0x00000000
-local HOST_AP_SHARED_SRAM_SIZE = 0x00100000
-local HOST_AP_SDS_MEM_SIZE = 0x00000DC0
+-- Keep the AP/SI map constants as chunk globals so the generated platform
+-- stays below Lua 5.1's 200-local main-function limit.
+HOST_AP_SHARED_SRAM_PHYS_BASE = 0x00000000
+HOST_AP_SHARED_SRAM_SIZE = 0x00100000
+HOST_AP_SDS_MEM_SIZE = 0x00000DC0
 HOST_AP_SDS_RESET_SYNDROME_PHYS_BASE = HOST_AP_SHARED_SRAM_PHYS_BASE + 0x50
 SDS_RESET_SYNDROME_SYS_RESET_REQ = 0x00000008
-local HOST_AP_SCMI_PAYLOAD_BASE = HOST_AP_SHARED_SRAM_PHYS_BASE + HOST_AP_SDS_MEM_SIZE
-local HOST_AP_BL2_PHYS_BASE = HOST_AP_SHARED_SRAM_PHYS_BASE + 0x00082000
+HOST_AP_SCMI_PAYLOAD_BASE = HOST_AP_SHARED_SRAM_PHYS_BASE + HOST_AP_SDS_MEM_SIZE
+HOST_AP_BL2_PHYS_BASE = HOST_AP_SHARED_SRAM_PHYS_BASE + 0x00082000
 AP_BL2_RESET = {
     data_phys_base = HOST_AP_SHARED_SRAM_PHYS_BASE + 0x00098000;
     stacks_phys_base = HOST_AP_SHARED_SRAM_PHYS_BASE + 0x00098F40;
@@ -433,63 +435,76 @@ AP_BL2_RESET = {
     bss_size = 0x00008000;
     xlat_size = 0x0000E000;
 }
-local HOST_AP_BL2_HEADER_SRAM_PHYS_BASE = 0x00100000
-local HOST_AP_BL2_HEADER_SRAM_SIZE = 0x00080000
-local HOST_AP_FLASH_PHY_BASE = 0x38000000
-local HOST_AP_FLASH_IMAGE_SIZE = 0x08000000
-local HOST_AP_TRUSTED_NVCTR_BASE = 0x32030000
-local HOST_AP_TRUSTED_NVCTR_SIZE = 0x00010000
-local HOST_AP_DRAM1_BASE = 0x80000000
-local HOST_AP_DRAM1_SIZE = 0x7F000000
-local HOST_AP_SPMC_BASE = 0xFFC00000
-local HOST_AP_SPMC_SIZE = 0x003FC000
-local HOST_AP_DRAM2_BASE = 0x20000000000
-local HOST_AP_DRAM2_SIZE = 0x80000000
-local HOST_AP_ATU_LOGICAL_BASE = 0x40000000
-local HOST_AP_ATU_LOGICAL_SIZE = 0x00800000
-local AP_NUM_CPUS = enable_ap_cpus and 4 or 0
-local AP_GIC_NUM_CPUS = enable_ap_cpus and AP_NUM_CPUS or 1
-local ARCH_TIMER_VIRT_IRQ = 16 + 11
-local ARCH_TIMER_S_EL1_IRQ = 16 + 13
-local ARCH_TIMER_NS_EL1_IRQ = 16 + 14
-local ARCH_TIMER_NS_EL2_IRQ = 16 + 10
-local AP_SECURE_UART_BASE = 0x1A410000
-local AP_PRIMARY_UART_BASE = 0x1A400000
-local AP_SECURE_WDOG_BASE = 0x1A460000
-local AP_SECURE_WDOG_SIZE = 0x00010000
-local AP_SYS_TIMCTL_BASE = 0x1A810000
-local AP_SYS_CNT_BASE_NS = 0x1A830000
-local AP_SYS_TIMER_SIZE = 0x00010000
-local AP_SYS_TIMER_IRQ = 49
-local AP_PRIMARY_UART_IRQ = 52
-local AP_SECURE_UART_IRQ = 53
-local AP_SI_SCMI_MHU_PBX_IRQ = 112
-local AP_SI_SCMI_MHU_MBX_IRQ = 113
-local AP_GIC_DIST_BASE = 0x20800000
-local AP_GIC_REDIST_BASE = 0x20880000
-local AP_GIC_REDIST_SIZE = 0x00040000
-local AP_GIC_REDIST_REGIONS = 16
-local AP_GIC_ACTIVE_REDIST_REGIONS = AP_GIC_NUM_CPUS
-local AP_GIC_LEGACY_DIST_BASE = 0x20000000
-local AP_GIC_LEGACY_REDIST_BASE = 0x200C0000
-local AP_GIC_LEGACY_REDIST_SIZE = 0x00020000
-local HOST_SI_CL0_CL_UTIL_BASE = 0x4000028000000
-local HOST_SI_CL1_CL_UTIL_BASE = 0x4000028800000
-local HOST_SI_CL_UTIL_SIZE = 0x00800000
-local HOST_SI_CLUS_PPU_OFFSET = 0x00010000
-local HOST_SI_CORE0_PPU_OFFSET = 0x00040000
-local HOST_SI_PIK_PHYS_BASE = 0x400002A600000
-local HOST_SI_SCR_PHYS_BASE = 0x400002A6B0000
-local HOST_SI_ATU_PHYS_BASE = 0x4000031000000
-local HOST_RSE_SI_MHU_PHYS_BASE = 0x400003C000000
-local HOST_RSE_SI_MHU_SIZE = 0x01000000
-local RSE_MHU_FRAME_SIZE = 0x00020000
-local HOST_RSE_SI_SSRAM_PHYS_BASE = 0x4000040000000
-local HOST_RSE_SI_SSRAM_SIZE = 0x00040000
-local HOST_SI_CL0_SRAM_PHYS_BASE = 0x4000120000000
-local HOST_SI_CL1_SRAM_PHYS_BASE = 0x4000140000000
-local HOST_SI_SRAM_WINDOW_SIZE = 0x01000000
-local HOST_SI_CONTROL_WINDOW_SIZE = 0x00010000
+HOST_AP_BL2_HEADER_SRAM_PHYS_BASE = 0x00100000
+HOST_AP_BL2_HEADER_SRAM_SIZE = 0x00080000
+HOST_AP_FLASH_PHY_BASE = 0x38000000
+HOST_AP_FLASH_IMAGE_SIZE = 0x08000000
+HOST_AP_TRUSTED_NVCTR_BASE = 0x32030000
+HOST_AP_TRUSTED_NVCTR_SIZE = 0x00010000
+HOST_AP_DRAM1_BASE = 0x80000000
+HOST_AP_DRAM1_SIZE = 0x7F000000
+HOST_AP_SPMC_BASE = 0xFFC00000
+HOST_AP_SPMC_SIZE = 0x003FC000
+HOST_AP_DRAM2_BASE = 0x880000000
+HOST_AP_DRAM2_SIZE = 0x80000000
+HOST_AP_ATU_LOGICAL_BASE = 0x40000000
+HOST_AP_ATU_LOGICAL_SIZE = 0x00800000
+AP_NUM_CPUS = enable_ap_cpus and 4 or 0
+AP_GIC_NUM_CPUS = enable_ap_cpus and AP_NUM_CPUS or 1
+ARCH_TIMER_VIRT_IRQ = 16 + 11
+ARCH_TIMER_S_EL1_IRQ = 16 + 13
+ARCH_TIMER_NS_EL1_IRQ = 16 + 14
+ARCH_TIMER_NS_EL2_IRQ = 16 + 10
+AP_SECURE_UART_BASE = 0x1A410000
+AP_PRIMARY_UART_BASE = 0x1A400000
+AP_SECURE_WDOG_BASE = 0x1A460000
+AP_SECURE_WDOG_REFRESH_BASE = 0x1A470000
+AP_SECURE_WDOG_SIZE = 0x00010000
+AP_SID_BASE = 0x1A4A0000
+AP_SID_SIZE = 0x00010000
+AP_SYS_TIMCTL_BASE = 0x1A810000
+AP_SYS_CNT_BASE_S = 0x1A820000
+AP_SYS_CNT_BASE_NS = 0x1A830000
+AP_SYS_TIMER_SIZE = 0x00010000
+AP_RGIC2LGIC_MESSREG_BASE = 0x5FFF0000
+AP_RGIC2LGIC_MESSREG_SIZE = 0x00010000
+AP_FMU_REGION_BASE = 0x1D000000
+AP_FMU_SUBWINDOW_SIZE = 0x00100000
+AP_FMU_MODELED_SIZE = 0x00050000
+AP_CL0_NI710AE_FMU_BASE = AP_FMU_REGION_BASE
+AP_CL1_NI710AE_FMU_BASE = AP_FMU_REGION_BASE + AP_FMU_SUBWINDOW_SIZE
+AP_CL2_NI710AE_FMU_BASE = AP_FMU_REGION_BASE + 2 * AP_FMU_SUBWINDOW_SIZE
+AP_CL3_NI710AE_FMU_BASE = AP_FMU_REGION_BASE + 3 * AP_FMU_SUBWINDOW_SIZE
+AP_SYS_TIMER_IRQ = 49
+AP_PRIMARY_UART_IRQ = 52
+AP_SECURE_UART_IRQ = 53
+AP_SI_SCMI_MHU_PBX_IRQ = 112
+AP_SI_SCMI_MHU_MBX_IRQ = 113
+AP_GIC_DIST_BASE = 0x20800000
+AP_GIC_REDIST_BASE = 0x20880000
+AP_GIC_REDIST_SIZE = 0x00040000
+AP_GIC_REDIST_REGIONS = 16
+AP_GIC_ACTIVE_REDIST_REGIONS = AP_GIC_NUM_CPUS
+AP_GIC_LEGACY_DIST_BASE = 0x20000000
+AP_GIC_LEGACY_REDIST_BASE = 0x200C0000
+AP_GIC_LEGACY_REDIST_SIZE = 0x00020000
+HOST_SI_CL0_CL_UTIL_BASE = 0x4000028000000
+HOST_SI_CL1_CL_UTIL_BASE = 0x4000028800000
+HOST_SI_CL_UTIL_SIZE = 0x00800000
+HOST_SI_CLUS_PPU_OFFSET = 0x00010000
+HOST_SI_CORE0_PPU_OFFSET = 0x00040000
+HOST_SI_PIK_PHYS_BASE = 0x400002A600000
+HOST_SI_SCR_PHYS_BASE = 0x400002A6B0000
+HOST_SI_ATU_PHYS_BASE = 0x4000031000000
+HOST_RSE_SI_MHU_PHYS_BASE = 0x400003C000000
+HOST_RSE_SI_MHU_SIZE = 0x01000000
+RSE_MHU_FRAME_SIZE = 0x00020000
+HOST_RSE_SI_SSRAM_PHYS_BASE = 0x4000040000000
+HOST_RSE_SI_SSRAM_SIZE = 0x00040000
+HOST_SI_CL0_SRAM_PHYS_BASE = 0x4000120000000
+HOST_SI_CL1_SRAM_PHYS_BASE = 0x4000140000000
+HOST_SI_SRAM_WINDOW_SIZE = 0x01000000
+HOST_SI_CONTROL_WINDOW_SIZE = 0x00010000
 function direct_file_alias_spec(address, size, file_offset, access, path)
     assert(path ~= "", "direct file alias requires a map file")
     return string.format("0x%x:0x%x:0x%x:%s:%s",
@@ -1497,6 +1512,17 @@ platform = {
         };
     } or nil,
 
+    ap_secure_timer_frame = enable_ap_cpus and {
+        moduletype = "gs_memory";
+        target_socket = {
+            address = AP_SYS_CNT_BASE_S;
+            size = AP_SYS_TIMER_SIZE;
+            bind = "&host_router.initiator_socket";
+        };
+        init_mem = true;
+        log_level = 0;
+    } or nil,
+
     -- RD-Aspen AP BL2 refreshes the secure SBSA watchdog in panic/error paths.
     -- Keep the window mapped so watchdog access does not hide the original
     -- secure-world failure while a fuller watchdog model is still pending.
@@ -1508,6 +1534,102 @@ platform = {
             bind = "&host_router.initiator_socket";
         };
         init_mem = true;
+        log_level = 0;
+    } or nil,
+
+    ap_secure_wdog_refresh = enable_ap_cpus and {
+        moduletype = "gs_memory";
+        target_socket = {
+            address = AP_SECURE_WDOG_REFRESH_BASE;
+            size = AP_SECURE_WDOG_SIZE;
+            bind = "&host_router.initiator_socket";
+        };
+        init_mem = true;
+        log_level = 0;
+    } or nil,
+
+    ap_sid = enable_ap_cpus and {
+        moduletype = "host_scr";
+        system_id = 0x0047773d;
+        soc_id = 0x00000000;
+        chip_id = 0x00000000;
+        pidr4 = 0x00000004;
+        pidr0 = 0x0000003d;
+        pidr1 = 0x000000b7;
+        pidr2 = 0x0000000b;
+        pidr3 = 0x00000000;
+        cidr0 = 0x0000000d;
+        cidr1 = 0x000000f0;
+        cidr2 = 0x00000005;
+        cidr3 = 0x000000b1;
+        target_socket = {
+            address = AP_SID_BASE;
+            size = AP_SID_SIZE;
+            bind = "&host_router.initiator_socket";
+        };
+        log_level = 0;
+    } or nil,
+
+    -- Temporary AP-visible decode for the GIC-720AE remote-to-local message
+    -- registers; replace with multichip/message semantics when modeled.
+    ap_rgic2lgic_messreg = enable_ap_cpus and {
+        moduletype = "gs_memory";
+        target_socket = {
+            address = AP_RGIC2LGIC_MESSREG_BASE;
+            size = AP_RGIC2LGIC_MESSREG_SIZE;
+            bind = "&host_router.initiator_socket";
+        };
+        init_mem = true;
+        log_level = 0;
+    } or nil,
+
+    -- Models only the active 5-bank FMU register block in each 1 MiB
+    -- APP aperture; unmapped gaps remain explicit coverage debt.
+    ap_cl0_ni710ae_fmu = enable_ap_cpus and {
+        moduletype = "zena_fmu";
+        bank_count = 5;
+        record_count = 384;
+        target_socket = {
+            address = AP_CL0_NI710AE_FMU_BASE;
+            size = AP_FMU_MODELED_SIZE;
+            bind = "&host_router.initiator_socket";
+        };
+        log_level = 0;
+    } or nil,
+
+    ap_cl1_ni710ae_fmu = enable_ap_cpus and {
+        moduletype = "zena_fmu";
+        bank_count = 5;
+        record_count = 384;
+        target_socket = {
+            address = AP_CL1_NI710AE_FMU_BASE;
+            size = AP_FMU_MODELED_SIZE;
+            bind = "&host_router.initiator_socket";
+        };
+        log_level = 0;
+    } or nil,
+
+    ap_cl2_ni710ae_fmu = enable_ap_cpus and {
+        moduletype = "zena_fmu";
+        bank_count = 5;
+        record_count = 384;
+        target_socket = {
+            address = AP_CL2_NI710AE_FMU_BASE;
+            size = AP_FMU_MODELED_SIZE;
+            bind = "&host_router.initiator_socket";
+        };
+        log_level = 0;
+    } or nil,
+
+    ap_cl3_ni710ae_fmu = enable_ap_cpus and {
+        moduletype = "zena_fmu";
+        bank_count = 5;
+        record_count = 384;
+        target_socket = {
+            address = AP_CL3_NI710AE_FMU_BASE;
+            size = AP_FMU_MODELED_SIZE;
+            bind = "&host_router.initiator_socket";
+        };
         log_level = 0;
     } or nil,
 
