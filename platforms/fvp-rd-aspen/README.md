@@ -6,7 +6,7 @@ using the local `tools/qemu` checkout as `libqemu`.
 ## Build
 
 ```bash
-./scripts/build_qbox_fvp_rd_aspen_linux.sh
+./scripts/build/build_qbox_fvp_rd_aspen_linux.sh
 ```
 
 This builds the required QBox AArch64 modules and compiles:
@@ -18,7 +18,7 @@ build/qbox-fvp-rd-aspen/fvp-rd-aspen-primary-compute.dtb
 ## Static Map Validation
 
 ```bash
-./scripts/validate_qbox_fvp_rd_aspen_map.py
+./scripts/test/validate_qbox_fvp_rd_aspen_map.py
 ```
 
 The report is written to:
@@ -45,7 +45,7 @@ keeps the remaining redistributor windows decoded as reserved memory.
 ## Full Reference Coverage Audit
 
 ```bash
-./scripts/audit_qbox_fvp_rd_aspen_coverage.py
+./scripts/test/audit_qbox_fvp_rd_aspen_coverage.py
 ```
 
 The report is written to:
@@ -62,7 +62,7 @@ reports any reference FVP DT blocks that are still not emulated by QBox.
 ## Headless Boot and Driver Probe Check
 
 ```bash
-python3 scripts/run_qbox_fvp_rd_aspen_linux.py --timeout 600 --post-login-probe
+python3 scripts/run/run_qbox_fvp_rd_aspen_linux.py --timeout 600 --post-login-probe
 ```
 
 The script writes the boot log and result files under:
@@ -91,7 +91,7 @@ tools/qbox/platforms/fvp-rd-aspen-rse/conf.lua
 Run a file-backed trace smoke with:
 
 ```bash
-python3 scripts/run_qbox_fvp_rd_aspen_rse.py \
+python3 scripts/run/run_qbox_fvp_rd_aspen_rse.py \
   --skip-build \
   --qemu-trace \
   --timeout 5 \
@@ -203,7 +203,7 @@ rse_sysctrl: touched-register-model
 ```
 
 The default RSE CC3XX backend remains the SystemC `cc3xx` component. For
-performance experiments, `scripts/run_qbox_fvp_rd_aspen_rse.py` and the Apollo
+performance experiments, `scripts/run/run_qbox_fvp_rd_aspen_rse.py` and the Apollo
 full-system wrappers accept `--cc3xx-qemu-native-backend`. That option selects
 `QBOX_RDASPEN_CC3XX_BACKEND=qemu-native` and automatically enables the
 `0x50154000:0x2000` direct MMIO fast path so RSE CPU CC3XX accesses enter the
@@ -348,7 +348,7 @@ For the current default RSE handoff check, use:
 ```bash
 QBOX_RDASPEN_ATU_DMI=true \
 QBOX_RDASPEN_HOST_MEMORY_DMI=true \
-python3 scripts/run_qbox_fvp_rd_aspen_rse.py \
+python3 scripts/run/run_qbox_fvp_rd_aspen_rse.py \
   --skip-build \
   --timeout 600 \
   --out-dir build/qbox-fvp-rd-aspen/rse-handoff-<run-id>
@@ -361,7 +361,7 @@ QBOX_RDASPEN_RSE_LOCAL_CRYPTO=true \
 QBOX_RDASPEN_RSE_LOCAL_BOOT_FLASH=true \
 QBOX_RDASPEN_ATU_DMI=true \
 QBOX_RDASPEN_HOST_MEMORY_DMI=true \
-python3 scripts/run_qbox_fvp_rd_aspen_rse.py \
+python3 scripts/run/run_qbox_fvp_rd_aspen_rse.py \
   --skip-build \
   --timeout 90 \
   --out-dir build/qbox-fvp-rd-aspen/rse-local-progress-<run-id>
@@ -373,7 +373,7 @@ For the experimental AP CPU path, use:
 QBOX_RDASPEN_ENABLE_AP_CPUS=true \
 QBOX_RDASPEN_ATU_DMI=true \
 QBOX_RDASPEN_HOST_MEMORY_DMI=true \
-python3 scripts/run_qbox_fvp_rd_aspen_rse.py \
+python3 scripts/run/run_qbox_fvp_rd_aspen_rse.py \
   --skip-build \
   --pc-trace \
   --pc-trace-limit 4096 \
@@ -389,7 +389,7 @@ QBOX_RDASPEN_ENABLE_AP_CPUS=true \
 QBOX_RDASPEN_ATU_DMI=true \
 QBOX_RDASPEN_HOST_MEMORY_DMI=true \
 QBOX_RDASPEN_BOOT_FLASH_DMI=false \
-python3 scripts/debug_qbox_fvp_rd_aspen_rse_gdb.py \
+python3 scripts/debug/debug_qbox_fvp_rd_aspen_rse_gdb.py \
   --launch \
   --sample-only \
   --sample-delay 190 \
@@ -404,7 +404,7 @@ For the current SI CL0 encrypted-image trace, use:
 
 ```bash
 QBOX_RDASPEN_ATU_DMI=true \
-python3 scripts/run_qbox_fvp_rd_aspen_rse.py \
+python3 scripts/run/run_qbox_fvp_rd_aspen_rse.py \
   --skip-build \
   --boot-enc-trace \
   --qemu-trace-events in_asm \
@@ -415,7 +415,7 @@ python3 scripts/run_qbox_fvp_rd_aspen_rse.py \
 For lightweight current-PC tracing, use:
 
 ```bash
-python3 scripts/run_qbox_fvp_rd_aspen_rse.py \
+python3 scripts/run/run_qbox_fvp_rd_aspen_rse.py \
   --skip-build \
   --pc-trace \
   --pc-trace-interval 200 \
@@ -428,7 +428,7 @@ To include Arm M-profile exception/fault state in the same file-backed trace,
 use:
 
 ```bash
-python3 scripts/run_qbox_fvp_rd_aspen_rse.py \
+python3 scripts/run/run_qbox_fvp_rd_aspen_rse.py \
   --skip-build \
   --exception-trace \
   --pc-trace-interval 200 \
@@ -442,7 +442,7 @@ SCP-Firmware symbol state, and SI CL1 Zephyr symbol state, generate a debug
 bundle:
 
 ```bash
-python3 scripts/debug_qbox_fvp_rd_aspen_rse_gdb.py \
+python3 scripts/debug/debug_qbox_fvp_rd_aspen_rse_gdb.py \
   --out-dir build/qbox-fvp-rd-aspen/gdb-debug-<run-id>
 ```
 
@@ -506,7 +506,7 @@ the primary-UART post-login probe:
 QBOX_RDASPEN_ENABLE_AP_CPUS=true \
 QBOX_RDASPEN_ATU_DMI=true \
 QBOX_RDASPEN_HOST_MEMORY_DMI=true \
-python3 scripts/run_qbox_fvp_rd_aspen_rse.py \
+python3 scripts/run/run_qbox_fvp_rd_aspen_rse.py \
   --skip-build \
   --post-login-probe \
   --rootfs build/qbox-fvp-rd-aspen/rse-t019da-bootargs-console-probe-20260524-v1/rootfs-console-probe.wic \
@@ -544,7 +544,7 @@ QBOX_RDASPEN_ENABLE_AP_CPUS=true \
 QBOX_RDASPEN_ATU_DMI=true \
 QBOX_RDASPEN_HOST_MEMORY_DMI=true \
 QBOX_RDASPEN_BOOT_FLASH_DMI=false \
-python3 scripts/run_qbox_fvp_rd_aspen_rse.py \
+python3 scripts/run/run_qbox_fvp_rd_aspen_rse.py \
   --skip-build \
   --fwu-probe \
   --ignore-fail-patterns \
@@ -567,7 +567,7 @@ FWU success still requires the bank-1 markers above.
 When MHU tracing is enabled, summarize AP-RSE request/response pairing with:
 
 ```bash
-python3 scripts/analyze_qbox_mhu_trace.py \
+python3 scripts/analyze/analyze_qbox_mhu_trace.py \
   build/qbox-fvp-rd-aspen/<run-id>/mhuv3-trace.log \
   --json-out build/qbox-fvp-rd-aspen/<run-id>/mhuv3-analysis.json \
   --summary-out build/qbox-fvp-rd-aspen/<run-id>/mhuv3-analysis.txt
@@ -580,7 +580,7 @@ Before attempting the destructive Secure FWU capsule/reboot flow, inspect the
 current A/B bank and metadata baseline:
 
 ```bash
-python3 scripts/inspect_qbox_fvp_rd_aspen_fwu.py \
+python3 scripts/inspect/inspect_qbox_fvp_rd_aspen_fwu.py \
   --out-dir build/qbox-fvp-rd-aspen/fwu-inspect-<run-id>
 ```
 
@@ -599,7 +599,7 @@ the per-run bootargs patch profile:
 QBOX_RDASPEN_ENABLE_AP_CPUS=true \
 QBOX_RDASPEN_ATU_DMI=true \
 QBOX_RDASPEN_HOST_MEMORY_DMI=true \
-python3 scripts/run_qbox_fvp_rd_aspen_rse.py \
+python3 scripts/run/run_qbox_fvp_rd_aspen_rse.py \
   --skip-build \
   --post-login-probe \
   --rootfs build/tmp_baremetal/deploy/images/fvp-rd-aspen/baremetal-image-fvp-rd-aspen.wic \
@@ -618,7 +618,7 @@ QBOX_RDASPEN_ATU_TRACE=true \
 QBOX_RDASPEN_ATU_TRACE_LIMIT=4096 \
 QBOX_RDASPEN_HOST_PPU_TRACE=true \
 QBOX_RDASPEN_HOST_PPU_TRACE_LIMIT=128 \
-python3 scripts/run_qbox_fvp_rd_aspen_rse.py \
+python3 scripts/run/run_qbox_fvp_rd_aspen_rse.py \
   --skip-build \
   --timeout 240 \
   --out-dir build/qbox-fvp-rd-aspen/rse-host-ppu-<run-id>
@@ -630,7 +630,7 @@ budget:
 ```bash
 QBOX_RDASPEN_BOOT_FLASH_TRACE=true \
 QBOX_RDASPEN_BOOT_FLASH_TRACE_LIMIT=256 \
-python3 scripts/run_qbox_fvp_rd_aspen_rse.py \
+python3 scripts/run/run_qbox_fvp_rd_aspen_rse.py \
   --skip-build \
   --timeout 300 \
   --out-dir build/qbox-fvp-rd-aspen/rse-boot-flash-<run-id>
@@ -654,7 +654,7 @@ platform timeout when iterating on RSE image validation and Strata traffic.
 QBOX_RDASPEN_CC3XX_TRACE=true \
 QBOX_RDASPEN_CC3XX_TRACE_FILTER=pka \
 QBOX_RDASPEN_CC3XX_TRACE_LIMIT=200000 \
-python3 scripts/run_qbox_fvp_rd_aspen_rse.py \
+python3 scripts/run/run_qbox_fvp_rd_aspen_rse.py \
   --skip-build \
   --timeout 300 \
   --out-dir build/qbox-fvp-rd-aspen/rse-cc3xx-pka-filter-<run-id>
@@ -663,7 +663,7 @@ python3 scripts/run_qbox_fvp_rd_aspen_rse.py \
 For the QEMU-native CC3XX backend, collect stats and timing with:
 
 ```bash
-python3 scripts/run_qbox_fvp_rd_aspen_rse.py \
+python3 scripts/run/run_qbox_fvp_rd_aspen_rse.py \
   --skip-build \
   --range-limited-flash-dmi \
   --cc3xx-stats \
