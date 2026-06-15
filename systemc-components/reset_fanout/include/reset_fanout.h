@@ -5,6 +5,8 @@
 #pragma once
 
 #include <iostream>
+#include <utility>
+#include <vector>
 
 #include <cci_configuration>
 #include <module_factory_registery.h>
@@ -15,7 +17,7 @@
 class reset_fanout : public sc_core::sc_module
 {
     unsigned int m_trace_count = 0;
-    bool m_pending_reset = false;
+    std::vector<bool> m_pending_resets;
     bool m_last_reset = false;
     bool m_have_last_reset = false;
     sc_core::sc_event m_reset_event;
@@ -54,7 +56,7 @@ public:
             m_have_last_reset = true;
             m_last_reset = value;
             trace_write(value);
-            m_pending_reset = value;
+            m_pending_resets.push_back(value);
             m_reset_event.notify(sc_core::sc_time(1, sc_core::SC_PS));
         });
 
@@ -63,5 +65,10 @@ public:
         dont_initialize();
     }
 
-    void emit_reset() { reset_out.async_write_vector({ m_pending_reset }); }
+    void emit_reset()
+    {
+        const std::vector<bool> pending = std::move(m_pending_resets);
+        m_pending_resets.clear();
+        reset_out.async_write_vector(pending);
+    }
 };

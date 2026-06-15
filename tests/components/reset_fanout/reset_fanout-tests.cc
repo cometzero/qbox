@@ -34,6 +34,28 @@ public:
     }
 };
 
+class SameTimestampResetSource : public sc_core::sc_module
+{
+public:
+    SC_HAS_PROCESS(SameTimestampResetSource);
+
+    InitiatorSignalSocket<bool> reset;
+
+    explicit SameTimestampResetSource(sc_core::sc_module_name name)
+        : sc_core::sc_module(name)
+        , reset("reset")
+    {
+        SC_THREAD(run);
+    }
+
+    void run()
+    {
+        wait(sc_core::sc_time(1, sc_core::SC_PS));
+        reset->write(true);
+        reset->write(false);
+    }
+};
+
 class ResetSink : public sc_core::sc_module
 {
 public:
@@ -65,6 +87,15 @@ TEST(ResetFanoutTest, BroadcastsResetValueToEveryTarget)
     dut.reset_out.bind(sink1.reset);
     dut.reset_out.bind(sink2.reset);
 
+    SameTimestampResetSource pulse_source("pulse_source");
+    reset_fanout pulse_dut("pulse_reset_fanout");
+    ResetSink pulse_sink0("pulse_sink0");
+    ResetSink pulse_sink1("pulse_sink1");
+
+    pulse_source.reset.bind(pulse_dut.reset_in);
+    pulse_dut.reset_out.bind(pulse_sink0.reset);
+    pulse_dut.reset_out.bind(pulse_sink1.reset);
+
     sc_core::sc_start(sc_core::sc_time(10, sc_core::SC_PS));
 
     ASSERT_GE(sink0.observed.size(), 2u);
@@ -72,6 +103,9 @@ TEST(ResetFanoutTest, BroadcastsResetValueToEveryTarget)
     EXPECT_EQ(sink0.observed, sink2.observed);
     EXPECT_TRUE(sink0.observed.front());
     EXPECT_FALSE(sink0.observed.back());
+
+    ASSERT_EQ(pulse_sink0.observed, (std::vector<bool>{true, false}));
+    EXPECT_EQ(pulse_sink0.observed, pulse_sink1.observed);
 }
 
 int sc_main(int argc, char* argv[])
