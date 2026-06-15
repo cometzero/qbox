@@ -81,7 +81,7 @@ build/qbox-apollo-fvp/apollo-fvp-primary-compute.dtb
 ## Build QBox Targets
 
 ```bash
-./scripts/build/build_qbox_apollo_fvp_linux.sh
+./local-build.sh qbox
 ```
 
 ## Headless Boot
@@ -109,7 +109,11 @@ qbox-apollo-fvp.log
 ## Interactive Boot
 
 ```bash
-scripts/run/run_qbox_apollo_fvp_linux.sh
+python3 scripts/run/run_qbox_apollo_fvp_linux.py \
+  --skip-build \
+  --interactive \
+  --timeout "${QBOX_APOLLO_TIMEOUT:-0}" \
+  --local-build-dir build/local-apollo-fvp
 ```
 
 Set `QBOX_APOLLO_TIMEOUT=0` for an unbounded interactive session.

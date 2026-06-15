@@ -6,7 +6,7 @@ using the local `tools/qemu` checkout as `libqemu`.
 ## Build
 
 ```bash
-./scripts/build/build_qbox_fvp_rd_aspen_linux.sh
+./local-build.sh qbox
 ```
 
 This builds the required QBox AArch64 modules and compiles:
@@ -62,7 +62,7 @@ reports any reference FVP DT blocks that are still not emulated by QBox.
 ## Headless Boot and Driver Probe Check
 
 ```bash
-python3 scripts/run/run_qbox_fvp_rd_aspen_linux.py --timeout 600 --post-login-probe
+python3 scripts/run/run_qbox_fvp_rd_aspen_rse.py --timeout 600 --post-login-probe
 ```
 
 The script writes the boot log and result files under:
@@ -81,8 +81,8 @@ systemd units, remoteproc state, RPMsg module load results, and explicit
 
 ## RSE-Oriented Skeleton Mode
 
-The RSE-oriented bring-up path is separate from this primary-compute direct boot
-configuration. Its Lua configuration is:
+The RSE-oriented bring-up path is the maintained RD-Aspen runtime path. Its Lua
+configuration is:
 
 ```text
 tools/qbox/platforms/fvp-rd-aspen-rse/conf.lua
