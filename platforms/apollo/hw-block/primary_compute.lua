@@ -82,7 +82,7 @@ platform = {
     ram_1 = {
         moduletype="gs_memory";
         target_socket = {
-            address = 0x880000000;
+            address = 0x20000000000;
             size = 0x80000000;
             bind = "&router.initiator_socket"
         };
