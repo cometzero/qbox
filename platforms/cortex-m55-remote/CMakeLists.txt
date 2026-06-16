@@ -19,6 +19,7 @@ target_link_libraries(remote_cpu
 target_include_directories(
     cortex-m55-vp PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/systemc-components>
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/systemc-components/cc3xx/include>
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/qemu-components>
   )
 

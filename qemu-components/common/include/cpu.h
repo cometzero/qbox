@@ -104,6 +104,7 @@ protected:
     std::atomic<uint64_t> m_hotpath_memcpy_hits{ 0 };
     std::atomic<uint64_t> m_hotpath_memset_hits{ 0 };
     std::atomic<uint64_t> m_hotpath_fallbacks{ 0 };
+    std::atomic<uint64_t> m_hotpath_tlm_fallbacks{ 0 };
     std::atomic<uint64_t> m_hotpath_pc_misses{ 0 };
     std::atomic<uint64_t> m_hotpath_too_large_fails{ 0 };
     std::atomic<uint64_t> m_hotpath_dmi_fails{ 0 };
@@ -612,6 +613,112 @@ protected:
         return true;
     }
 
+    bool hotpath_tlm_access(uint64_t address, uint8_t* data, uint64_t size,
+                            tlm::tlm_command command)
+    {
+        if (!p_hotpath_tlm_fallback.get_value() ||
+            size > std::numeric_limits<unsigned int>::max() ||
+            (data == nullptr && size != 0)) {
+            return false;
+        }
+        if (size == 0) {
+            return true;
+        }
+
+        TlmPayload trans;
+        trans.set_command(command);
+        trans.set_address(address);
+        trans.set_data_ptr(data);
+        trans.set_data_length(static_cast<unsigned int>(size));
+        trans.set_streaming_width(static_cast<unsigned int>(size));
+        trans.set_byte_enable_ptr(nullptr);
+        trans.set_byte_enable_length(0);
+        trans.set_dmi_allowed(false);
+        trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
+        initiator_customize_tlm_payload(trans);
+
+        sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+        socket->b_transport(trans, delay);
+        initiator_tidy_tlm_payload(trans);
+
+        if (trans.is_response_ok()) {
+            m_hotpath_tlm_fallbacks.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
+        return false;
+    }
+
+    bool hotpath_read_bytes_tlm(uint64_t address, uint64_t size,
+                                std::vector<uint8_t>& out)
+    {
+        out.clear();
+        if (!p_hotpath_tlm_fallback.get_value() ||
+            size > std::numeric_limits<unsigned int>::max()) {
+            return false;
+        }
+        if (size == 0) {
+            return true;
+        }
+
+        out.resize(static_cast<size_t>(size));
+        static constexpr uint64_t CHUNK_SIZE = 4096;
+        uint64_t offset = 0;
+        while (offset < size) {
+            const uint64_t chunk_addr = address + offset;
+            const uint64_t page_remaining =
+                CHUNK_SIZE - (chunk_addr & (CHUNK_SIZE - 1));
+            const uint64_t chunk_size =
+                std::min<uint64_t>(size - offset, page_remaining);
+            TlmPayload trans;
+            trans.set_command(tlm::TLM_READ_COMMAND);
+            trans.set_address(chunk_addr);
+            trans.set_data_ptr(out.data() + offset);
+            trans.set_data_length(static_cast<unsigned int>(chunk_size));
+            trans.set_streaming_width(static_cast<unsigned int>(chunk_size));
+            trans.set_byte_enable_ptr(nullptr);
+            trans.set_byte_enable_length(0);
+            trans.set_dmi_allowed(false);
+            trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
+            initiator_customize_tlm_payload(trans);
+
+            const unsigned int read = socket->transport_dbg(trans);
+            initiator_tidy_tlm_payload(trans);
+            if (read != chunk_size) {
+                out.clear();
+                return false;
+            }
+            offset += chunk_size;
+        }
+        m_hotpath_tlm_fallbacks.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+
+    bool hotpath_write_bytes_tlm(uint64_t address, const uint8_t* data,
+                                 uint64_t size)
+    {
+        if (!p_hotpath_tlm_fallback.get_value()) {
+            return false;
+        }
+        static constexpr uint64_t CHUNK_SIZE = 4096;
+        uint64_t offset = 0;
+        while (offset < size) {
+            const uint64_t chunk_addr = address + offset;
+            const uint64_t page_remaining =
+                CHUNK_SIZE - (chunk_addr & (CHUNK_SIZE - 1));
+            const uint64_t chunk_size =
+                std::min<uint64_t>(size - offset, page_remaining);
+            if (!hotpath_tlm_access(chunk_addr, const_cast<uint8_t*>(data) + offset,
+                                    chunk_size, tlm::TLM_WRITE_COMMAND)) {
+                return false;
+            }
+            offset += chunk_size;
+        }
+        if (size != 0) {
+            m_inst.get().tb_invalidate_phys_range(address, address + size - 1);
+        }
+        return true;
+    }
+
     bool hotpath_read_bytes(uint64_t address, uint64_t size,
                             std::vector<uint8_t>& out)
     {
@@ -622,7 +729,25 @@ protected:
 
         uint8_t* ptr = nullptr;
         if (!hotpath_dmi_ptr(address, size, true, false, ptr)) {
-            return false;
+            static constexpr uint64_t CHUNK_SIZE = 4096;
+            out.resize(static_cast<size_t>(size));
+            uint64_t offset = 0;
+            while (offset < size) {
+                const uint64_t chunk_addr = address + offset;
+                const uint64_t page_remaining =
+                    CHUNK_SIZE - (chunk_addr & (CHUNK_SIZE - 1));
+                const uint64_t chunk_size =
+                    std::min<uint64_t>(size - offset, page_remaining);
+                uint8_t* chunk_ptr = nullptr;
+                if (!hotpath_dmi_ptr(chunk_addr, chunk_size, true, false,
+                                     chunk_ptr)) {
+                    return hotpath_read_bytes_tlm(address, size, out);
+                }
+                std::memcpy(out.data() + offset, chunk_ptr,
+                            static_cast<size_t>(chunk_size));
+                offset += chunk_size;
+            }
+            return true;
         }
 
         out.resize(static_cast<size_t>(size));
@@ -662,8 +787,7 @@ protected:
                                          chunk_ptr)) {
                         if (!socket.direct_file_alias_ptr(
                                 chunk_addr, chunk_size, false, chunk_ptr)) {
-                            out.clear();
-                            return false;
+                            return hotpath_read_bytes_tlm(address, size, out);
                         }
                         direct_file_alias = true;
                     }
@@ -692,7 +816,28 @@ protected:
 
         uint8_t* ptr = nullptr;
         if (!hotpath_dmi_ptr(address, size, false, true, ptr)) {
-            return false;
+            static constexpr uint64_t CHUNK_SIZE = 4096;
+            uint64_t offset = 0;
+            while (offset < size) {
+                const uint64_t chunk_addr = address + offset;
+                const uint64_t page_remaining =
+                    CHUNK_SIZE - (chunk_addr & (CHUNK_SIZE - 1));
+                const uint64_t chunk_size =
+                    std::min<uint64_t>(size - offset, page_remaining);
+                uint8_t* chunk_ptr = nullptr;
+                if (!hotpath_dmi_ptr(chunk_addr, chunk_size, false, true,
+                                     chunk_ptr)) {
+                    return hotpath_write_bytes_tlm(address, data, size);
+                }
+                std::memcpy(chunk_ptr, data + offset,
+                            static_cast<size_t>(chunk_size));
+                offset += chunk_size;
+            }
+            if (size != 0) {
+                m_inst.get().tb_invalidate_phys_range(
+                    address, static_cast<uint64_t>(address) + size - 1);
+            }
+            return true;
         }
         if (size != 0) {
             std::memcpy(ptr, data, static_cast<size_t>(size));
@@ -730,7 +875,7 @@ protected:
                                          chunk_ptr)) {
                         if (!socket.direct_file_alias_ptr(
                                 chunk_addr, chunk_size, true, chunk_ptr)) {
-                            return false;
+                            return hotpath_write_bytes_tlm(address, data, size);
                         }
                         direct_file_alias = true;
                     }
@@ -1553,28 +1698,13 @@ protected:
             return false;
         }
 
-        uint8_t* input = nullptr;
-        uint8_t* output = nullptr;
+        std::vector<uint8_t> input;
+        std::vector<uint8_t> output(static_cast<size_t>(size));
         bool direct_file_alias = false;
-        if (!hotpath_dmi_ptr(buf, size, true, false, input)) {
-            if (!socket.direct_file_alias_ptr(buf, size, false, input)) {
-                m_bl2_boot_enc_decrypt_dmi_failures.fetch_add(1, std::memory_order_relaxed);
-                write_hotpath_profile_file();
-                return false;
-            }
-            direct_file_alias = true;
-        }
-        if (!hotpath_dmi_ptr(buf, size, false, true, output)) {
-            if (!socket.direct_file_alias_ptr(buf, size, true, output)) {
-                m_bl2_boot_enc_decrypt_dmi_failures.fetch_add(1, std::memory_order_relaxed);
-                write_hotpath_profile_file();
-                return false;
-            }
-            direct_file_alias = true;
-        }
-        if (direct_file_alias) {
-            m_bl2_boot_enc_decrypt_direct_file_alias_hits.fetch_add(
-                1, std::memory_order_relaxed);
+        if (!hotpath_read_bytes_or_alias(buf, size, input, direct_file_alias)) {
+            m_bl2_boot_enc_decrypt_dmi_failures.fetch_add(1, std::memory_order_relaxed);
+            write_hotpath_profile_file();
+            return false;
         }
 
         std::array<uint8_t, 16> counter{};
@@ -1585,11 +1715,23 @@ protected:
         counter[15] = static_cast<uint8_t>(block);
 
         if (!qbox::cc3xx::core::aes_ctr_xcrypt_buffer(
-                key.key.data(), key.key_size, counter.data(), input, size,
-                blk_off, output)) {
+                key.key.data(), key.key_size, counter.data(), input.data(), size,
+                blk_off, output.data())) {
             m_bl2_boot_enc_decrypt_unsupported.fetch_add(1, std::memory_order_relaxed);
             write_hotpath_profile_file();
             return false;
+        }
+
+        bool write_direct_file_alias = false;
+        if (!hotpath_write_bytes_or_alias(buf, output.data(), size,
+                                          write_direct_file_alias)) {
+            m_bl2_boot_enc_decrypt_dmi_failures.fetch_add(1, std::memory_order_relaxed);
+            write_hotpath_profile_file();
+            return false;
+        }
+        if (direct_file_alias || write_direct_file_alias) {
+            m_bl2_boot_enc_decrypt_direct_file_alias_hits.fetch_add(
+                1, std::memory_order_relaxed);
         }
 
         m_inst.get().tb_invalidate_phys_range(buf, static_cast<uint64_t>(buf) + size - 1);
@@ -2019,6 +2161,8 @@ protected:
             << "  \"memcpy_hits\": " << m_hotpath_memcpy_hits.load(std::memory_order_relaxed) << ",\n"
             << "  \"memset_hits\": " << m_hotpath_memset_hits.load(std::memory_order_relaxed) << ",\n"
             << "  \"fallbacks\": " << m_hotpath_fallbacks.load(std::memory_order_relaxed) << ",\n"
+            << "  \"tlm_fallback_enabled\": " << (p_hotpath_tlm_fallback.get_value() ? "true" : "false") << ",\n"
+            << "  \"tlm_fallbacks\": " << m_hotpath_tlm_fallbacks.load(std::memory_order_relaxed) << ",\n"
             << "  \"pc_misses\": " << m_hotpath_pc_misses.load(std::memory_order_relaxed) << ",\n"
             << "  \"too_large_failures\": " << m_hotpath_too_large_fails.load(std::memory_order_relaxed) << ",\n"
             << "  \"dmi_failures\": " << m_hotpath_dmi_fails.load(std::memory_order_relaxed) << ",\n"
@@ -2883,6 +3027,7 @@ public:
     cci::cci_param<uint64_t> p_hotpath_memcpy_addr;
     cci::cci_param<uint64_t> p_hotpath_memset_addr;
     cci::cci_param<uint64_t> p_hotpath_max_bytes;
+    cci::cci_param<bool> p_hotpath_tlm_fallback;
     cci::cci_param<std::string> p_hotpath_profile_file;
     cci::cci_param<uint64_t> p_hotpath_profile_interval;
     cci::cci_param<bool> p_lms_accel;
@@ -2958,6 +3103,8 @@ public:
                                 "Thumb entry address for an acceleratable memset implementation")
         , p_hotpath_max_bytes("hotpath_max_bytes", 16 * 1024 * 1024,
                               "Maximum byte count handled by semantic hotpath acceleration")
+        , p_hotpath_tlm_fallback("hotpath_tlm_fallback", false,
+                                 "Allow reported TLM fallback for hotpath byte transfers when DMI chunks are unavailable")
         , p_hotpath_profile_file("hotpath_profile_file", "",
                                  "Optional JSON profile file for hotpath acceleration counters")
         , p_hotpath_profile_interval("hotpath_profile_interval", 1024,

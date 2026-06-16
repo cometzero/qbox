@@ -84,6 +84,69 @@ build/qbox-apollo-fvp/apollo-fvp-primary-compute.dtb
 ./local-build.sh qbox
 ```
 
+## Full-System RSE-First Boot
+
+The default Apollo full-system performance path uses shared-memory SRAM DMI.
+It forwards `--rse-fast-boot-sram-dmi` to the RSE runner and sets
+`QBOX_RDASPEN_HOST_SRAM_SHARED_MEMORY=true` so host SI/AP SRAM regions use
+transferable shared-memory DMI instead of direct-file aliases.
+
+```bash
+./run_qbox.sh
+```
+
+For a bounded headless command, use:
+
+```bash
+python3 scripts/run/run_qbox_apollo_fvp_full.py \
+  --si-mode live-cl0-cl1 \
+  --skip-build \
+  --timeout 2400 \
+  --rootfs-bootargs-profile none \
+  --post-login-probe \
+  --cc3xx-qemu-native-backend \
+  --rse-lms-accel \
+  --rse-fast-boot-sram-dmi \
+  --out-dir build/qbox-apollo-fvp/full-live-cl0-cl1-sram-dmi
+```
+
+The RSE child `result.json` should report
+`rse_fast_boot_sram_dmi.enabled: true`,
+`rse_fast_boot_sram_dmi.env.QBOX_RDASPEN_HOST_SRAM_SHARED_MEMORY: "true"`, and
+`rse_direct_file_aliases_summary.enabled: false`. The `host_sram_backing`
+entries for the host SRAM regions should use `mode: "shared_memory"` and
+`file_created: false`.
+
+The default SRAM DMI path should not create file-backed host SRAM images:
+
+```bash
+find build/qbox-apollo-fvp/full-live-cl0-cl1-sram-dmi -type f \( \
+  -name 'host-si-cl*-sram.bin' -o \
+  -name 'host-ap-*-sram.bin' \
+\) -print -quit
+```
+
+The command should print nothing. Use the legacy file-backed SRAM aliases only
+for explicit debug or compatibility rollback:
+
+```bash
+./run_qbox.sh --legacy-file-backed-sram
+```
+
+For direct RSE-runner debugging, the legacy equivalent is:
+
+```bash
+python3 scripts/run/run_qbox_fvp_rd_aspen_rse.py \
+  --skip-build \
+  --cc3xx-qemu-native-backend \
+  --rse-lms-accel \
+  --rse-fast-boot-aliases \
+  --qbox-perf-profile \
+  --timeout 90 \
+  --ignore-fail-patterns \
+  --out-dir build/qbox-apollo-fvp/rse-legacy-file-backed-sram
+```
+
 ## Headless Boot
 
 ```bash

@@ -104,6 +104,11 @@ local host_ap_shared_sram_map_file = getenv_or(
 local host_ap_bl2_header_sram_map_file = getenv_or(
     "QBOX_RDASPEN_HOST_AP_BL2_HEADER_SRAM_MAP_FILE",
     "")
+local host_sram_shared_memory =
+    getenv_or("QBOX_RDASPEN_HOST_SRAM_SHARED_MEMORY", "false") == "true"
+local function host_sram_shared_memory_enabled(map_file)
+    return host_sram_shared_memory and map_file == ""
+end
 local provisioning_bundle = getenv_or(
     "QBOX_RDASPEN_PROVISIONING_BUNDLE",
     deploy.."combined_provisioning_message.bin")
@@ -142,6 +147,7 @@ rse_hotpath_accel = getenv_or("QBOX_RDASPEN_RSE_HOTPATH_ACCEL", "false") == "tru
 rse_hotpath_memcpy_addr = tonumber(getenv_or("QBOX_RDASPEN_RSE_HOTPATH_MEMCPY_ADDR", "0x11000488"))
 rse_hotpath_memset_addr = tonumber(getenv_or("QBOX_RDASPEN_RSE_HOTPATH_MEMSET_ADDR", "0x11000448"))
 rse_hotpath_max_bytes = tonumber(getenv_or("QBOX_RDASPEN_RSE_HOTPATH_MAX_BYTES", tostring(16 * 1024 * 1024)))
+rse_hotpath_tlm_fallback = getenv_or("QBOX_RDASPEN_RSE_HOTPATH_TLM_FALLBACK", "false") == "true"
 rse_hotpath_profile_file = getenv_or("QBOX_RDASPEN_RSE_HOTPATH_PROFILE_FILE", "")
 rse_hotpath_profile_interval = tonumber(getenv_or("QBOX_RDASPEN_RSE_HOTPATH_PROFILE_INTERVAL", "1024"))
 rse_lms_accel = getenv_or("QBOX_RDASPEN_RSE_LMS_ACCEL", "false") == "true"
@@ -439,6 +445,9 @@ HOST_AP_BL2_HEADER_SRAM_PHYS_BASE = 0x00100000
 HOST_AP_BL2_HEADER_SRAM_SIZE = 0x00080000
 HOST_AP_FLASH_PHY_BASE = 0x38000000
 HOST_AP_FLASH_IMAGE_SIZE = 0x08000000
+HOST_AP_FLASH_LOGICAL_BASE = 0x703A6000
+AP_FLASH_FIP_PRIMARY_OFFSET = 0x00007000
+AP_FLASH_FIP_SIZE = 0x00240000
 HOST_AP_TRUSTED_NVCTR_BASE = 0x32030000
 HOST_AP_TRUSTED_NVCTR_SIZE = 0x00010000
 HOST_AP_DRAM1_BASE = 0x80000000
@@ -1141,12 +1150,15 @@ platform = {
 
     host_ap_shared_sram = {
         moduletype = "gs_memory";
+        dmi_allow = host_memory_dmi;
         target_socket = {
             address = HOST_AP_SHARED_SRAM_PHYS_BASE;
             size = HOST_AP_SHARED_SRAM_SIZE;
             bind = "&host_router.initiator_socket";
         };
         map_file = host_ap_shared_sram_map_file;
+        shared_memory = host_sram_shared_memory_enabled(host_ap_shared_sram_map_file);
+        shared_memory_prefix = "ra-aps-";
         init_mem = host_ap_shared_sram_map_file == "";
         load = {data = HOST_AP_SDS_REGION_DATA, offset = 0};
         log_level = 0;
@@ -1208,6 +1220,8 @@ platform = {
             bind = "&host_router.initiator_socket";
         };
         map_file = host_ap_bl2_header_sram_map_file;
+        shared_memory = host_sram_shared_memory_enabled(host_ap_bl2_header_sram_map_file);
+        shared_memory_prefix = "ra-aph-";
         init_mem = host_ap_bl2_header_sram_map_file == "";
         log_level = 0;
     },
@@ -1233,6 +1247,25 @@ platform = {
             bind = "&host_router.initiator_socket";
         };
         load = {bin_file = ap_flash, offset = 0};
+        log_level = 0;
+    },
+
+    rse_ap_fip_logical = host_sram_shared_memory and {
+        moduletype = "gs_memory";
+        read_only = true;
+        dmi_allow = host_memory_dmi;
+        target_socket = {
+            address = HOST_AP_FLASH_LOGICAL_BASE + AP_FLASH_FIP_PRIMARY_OFFSET;
+            size = AP_FLASH_FIP_SIZE;
+            priority = 0;
+            bind = "&rse_router.initiator_socket";
+        };
+        load = {
+            bin_file = ap_flash;
+            offset = 0;
+            bin_file_offset = AP_FLASH_FIP_PRIMARY_OFFSET;
+            bin_file_size = AP_FLASH_FIP_SIZE;
+        };
         log_level = 0;
     },
 
@@ -1642,6 +1675,8 @@ platform = {
             bind = "&host_router.initiator_socket";
         };
         map_file = host_si_cl0_sram_map_file;
+        shared_memory = host_sram_shared_memory_enabled(host_si_cl0_sram_map_file);
+        shared_memory_prefix = "ra-si0-";
         init_mem = host_si_cl0_sram_map_file == "";
         log_level = 0;
     },
@@ -1655,6 +1690,8 @@ platform = {
             bind = "&host_router.initiator_socket";
         };
         map_file = host_si_cl1_sram_map_file;
+        shared_memory = host_sram_shared_memory_enabled(host_si_cl1_sram_map_file);
+        shared_memory_prefix = "ra-si1-";
         init_mem = host_si_cl1_sram_map_file == "";
         log_level = 0;
     },
@@ -2398,6 +2435,7 @@ platform = {
                 hotpath_memcpy_addr = rse_hotpath_memcpy_addr;
                 hotpath_memset_addr = rse_hotpath_memset_addr;
                 hotpath_max_bytes = rse_hotpath_max_bytes;
+                hotpath_tlm_fallback = rse_hotpath_tlm_fallback;
                 hotpath_profile_file = rse_hotpath_profile_file;
                 hotpath_profile_interval = rse_hotpath_profile_interval;
                 lms_accel = rse_lms_accel;

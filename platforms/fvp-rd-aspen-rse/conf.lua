@@ -142,6 +142,7 @@ rse_hotpath_accel = getenv_or("QBOX_RDASPEN_RSE_HOTPATH_ACCEL", "false") == "tru
 rse_hotpath_memcpy_addr = tonumber(getenv_or("QBOX_RDASPEN_RSE_HOTPATH_MEMCPY_ADDR", "0x11000488"))
 rse_hotpath_memset_addr = tonumber(getenv_or("QBOX_RDASPEN_RSE_HOTPATH_MEMSET_ADDR", "0x11000448"))
 rse_hotpath_max_bytes = tonumber(getenv_or("QBOX_RDASPEN_RSE_HOTPATH_MAX_BYTES", tostring(16 * 1024 * 1024)))
+rse_hotpath_tlm_fallback = getenv_or("QBOX_RDASPEN_RSE_HOTPATH_TLM_FALLBACK", "false") == "true"
 rse_hotpath_profile_file = getenv_or("QBOX_RDASPEN_RSE_HOTPATH_PROFILE_FILE", "")
 rse_hotpath_profile_interval = tonumber(getenv_or("QBOX_RDASPEN_RSE_HOTPATH_PROFILE_INTERVAL", "1024"))
 rse_lms_accel = getenv_or("QBOX_RDASPEN_RSE_LMS_ACCEL", "false") == "true"
@@ -2295,6 +2296,7 @@ platform = {
                 hotpath_memcpy_addr = rse_hotpath_memcpy_addr;
                 hotpath_memset_addr = rse_hotpath_memset_addr;
                 hotpath_max_bytes = rse_hotpath_max_bytes;
+                hotpath_tlm_fallback = rse_hotpath_tlm_fallback;
                 hotpath_profile_file = rse_hotpath_profile_file;
                 hotpath_profile_interval = rse_hotpath_profile_interval;
                 lms_accel = rse_lms_accel;

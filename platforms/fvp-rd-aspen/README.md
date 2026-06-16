@@ -217,18 +217,24 @@ The full-system bundle
 `build/qbox-apollo-fvp/cc3xx-qemu-native-20260605-003557/full/` reached
 `passed: true` with Linux login and post-login probe evidence.
 For RSE boot-time comparison against FVP, combine the qemu-native CC3XX backend
-with `--rse-lms-accel --rse-fast-boot-aliases`. The fast alias preset installs
-QEMU-local aliases for SI SRAM, AP BL2, RSE boot-flash read-only windows, AP
-FIP reads, and the RSE PS/ITS storage direct-MMIO fast path. It is not an RSE
-stub and does not force signature or hash success. Disable it for FWU,
-PS/ITS persistence, negative secure-boot, or flash command-state fidelity
-checks.
-The current best RSE timing smoke is
+with `--rse-lms-accel --rse-fast-boot-sram-dmi`. This is the default fast path
+for the Apollo/RD-Aspen RSE comparison mode: it enables shared-memory SRAM DMI
+with `QBOX_RDASPEN_HOST_SRAM_SHARED_MEMORY=true` and avoids direct-file SRAM/AP
+BL2 aliases. It is not an RSE stub and does not force signature or hash success.
+Disable acceleration for FWU, PS/ITS persistence, negative secure-boot, or
+flash command-state fidelity checks.
+The previous `--rse-fast-boot-aliases` preset is legacy debug/compatibility
+mode. Use it only when explicitly rolling back to file-backed SRAM aliases, for
+example through `./run_qbox.sh --legacy-file-backed-sram` or a direct RSE runner
+debug command.
+The current pre-DMI timing smoke remains
 `build/qbox-apollo-fvp/rse-step1-storage-direct-fastpath-20260608-1/`: with
-qemu-native CC3XX, LMS acceleration, and fast boot aliases,
-`rse_bl1_1` to `rse_first_image_slot` is 22.668 seconds. The matching FVP timed
-run at `build/local-apollo-fvp/fvp-boot-timed-20260604/` is 4.818 seconds, so
-the remaining QBox optimization target is the post-BL2 image-load/storage path
+qemu-native CC3XX, LMS acceleration, and legacy fast boot aliases,
+`rse_bl1_1` to `rse_first_image_slot` is 22.668 seconds. Treat that bundle as
+historical baseline evidence; T10/T11 must provide final runtime evidence for
+the shared-memory SRAM DMI default. The matching FVP timed run at
+`build/local-apollo-fvp/fvp-boot-timed-20260604/` is 4.818 seconds, so the
+remaining QBox optimization target is the post-BL2 image-load/storage path
 rather than an RSE-wide stub.
 Do not include `--rse-bl2-load-profile` or `--qbox-perf-profile` in final
 wall-time comparisons; those options are for hook/counter diagnostics and add
@@ -247,11 +253,12 @@ section to verify the active MCUBoot header, `load_addr`, image size, hash
 region size, and RAM-load flags before enabling a future
 `--rse-bl2-load-accel`.
 `--rse-bl2-boot-enc-accel` and `--rse-bl2-img-hash-accel` are optional
-image-level semantic accelerators for this comparison. The image hash path can
-read split direct-file aliases in 4 KiB chunks, which is required for images
-whose header and payload fall into separate alias windows. A valid run records
+image-level semantic accelerators for this comparison. The image hash path uses
+shared-memory SRAM DMI in the default mode and keeps the split direct-file
+reader only for legacy debug/compatibility aliases. A valid profile run records
 `bl2_img_hash_accel.hits > 0` and `dmi_failures == 0` in
-`qbox-perf-profile/rse-hotpath-profile.json`.
+`qbox-perf-profile/rse-hotpath-profile.json`. Do not use profile-enabled runs as
+final wall-time evidence.
 `--rse-bl2-verify-sig-accel` is currently a safe host-native ECDSA verifier
 profile helper: it records and caches `bootutil_verify_sig` inputs, but leaves
 the guest PKA-backed verification running unless a lower-level experimental
@@ -336,10 +343,58 @@ measured-boot markers through `BL_33`, then times out at U-Boot because the
 run was capped at 160 seconds. Separate login-focused evidence remains
 `build/qbox-fvp-rd-aspen/rse-post-login-threaded-input-20260524-v3/`.
 RSE-local DMI paths are enabled by default for short-timeout iteration after
-fd-backed RemotePass validation. ATU and host-memory DMI remain explicit
-opt-ins because they can hide host-window side effects. Boot-flash DMI is kept
-off for TF-M storage debug until flash command-state/DMI invalidation behavior
-is proven equivalent.
+fd-backed RemotePass validation. The default fast RSE command now uses
+shared-memory host SRAM DMI:
+
+```bash
+python3 scripts/run/run_qbox_fvp_rd_aspen_rse.py \
+  --skip-build \
+  --cc3xx-qemu-native-backend \
+  --rse-lms-accel \
+  --rse-fast-boot-sram-dmi \
+  --qbox-perf-profile \
+  --timeout 90 \
+  --ignore-fail-patterns \
+  --out-dir build/qbox-fvp-rd-aspen/rse-fast-boot-sram-dmi-<run-id>
+```
+
+The resulting child `result.json` should show
+`rse_fast_boot_sram_dmi.enabled: true`,
+`rse_fast_boot_sram_dmi.host_sram_shared_memory: true`,
+`rse_fast_boot_sram_dmi.env.QBOX_RDASPEN_HOST_SRAM_SHARED_MEMORY: "true"`, and
+`rse_direct_file_aliases_summary.enabled: false`. The `host_sram_backing`
+entries for `host_si_cl0_sram`, `host_si_cl1_sram`, `host_ap_shared_sram`, and
+`host_ap_bl2_header_sram` should use `mode: "shared_memory"` with
+`file_created: false`.
+
+No host SRAM `.bin` file should be created in the default SRAM DMI mode:
+
+```bash
+find build/qbox-fvp-rd-aspen/rse-fast-boot-sram-dmi-<run-id> -type f \( \
+  -name 'host-si-cl*-sram.bin' -o \
+  -name 'host-ap-*-sram.bin' \
+\) -print -quit
+```
+
+This command should print nothing. If a file-backed SRAM run is needed for
+debug or compatibility, use the legacy rollback mode explicitly:
+
+```bash
+python3 scripts/run/run_qbox_fvp_rd_aspen_rse.py \
+  --skip-build \
+  --cc3xx-qemu-native-backend \
+  --rse-lms-accel \
+  --rse-fast-boot-aliases \
+  --qbox-perf-profile \
+  --timeout 90 \
+  --ignore-fail-patterns \
+  --out-dir build/qbox-fvp-rd-aspen/rse-legacy-file-backed-sram-<run-id>
+```
+
+ATU and host-memory DMI remain explicit opt-ins outside the
+`--rse-fast-boot-sram-dmi` preset because they can hide host-window side
+effects. Boot-flash DMI is kept off for TF-M storage debug until flash
+command-state/DMI invalidation behavior is proven equivalent.
 The temporary ATU/LCM/KMU/Integrity Checker/host-window/boot-media behavior
 also still needs to be expanded into documented hardware semantics.
 

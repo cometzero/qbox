@@ -8,6 +8,7 @@
 
 /* Quic Module Cortex-M55 */
 #include "remote_cpu.h"
+#include <keep_alive/include/keep_alive.h>
 #include <module_factory_container.h>
 #include <argparser.h>
 
@@ -17,11 +18,13 @@ class RemotePlatform : public gs::ModuleFactory::ContainerDeferModulesConstruct
 
 protected:
     cci::cci_param<int> p_quantum_ns;
+    keep_alive m_keep_alive;
 
 public:
     RemotePlatform(const sc_core::sc_module_name& n)
         : gs::ModuleFactory::ContainerDeferModulesConstruct(n)
         , p_quantum_ns("quantum_ns", 1'000'000, "TLM-2.0 global quantum in ns")
+        , m_keep_alive("keep_alive_0")
     {
         using tlm_utils::tlm_quantumkeeper;
 
@@ -34,6 +37,7 @@ public:
         // when we get here, all CCI parameters are communicated from the remote side to the current process after
         // remote_pass is constructed.
         ModulesConstruct();
+        name_bind(&m_keep_alive);
         name_bind(rpass);
     }
 

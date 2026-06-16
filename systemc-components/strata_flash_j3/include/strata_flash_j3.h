@@ -29,6 +29,7 @@
 #include <module_factory_registery.h>
 #include <systemc>
 #include <tlm>
+#include <tlm-extensions/shmem_extension.h>
 #include <tlm_sockets_buswidth.h>
 #include <tlm_utils/simple_target_socket.h>
 
@@ -155,6 +156,7 @@ class strata_flash_j3 : public sc_core::sc_module
     int m_backing_fd = -1;
     uint8_t* m_backing_map = nullptr;
     uint64_t m_backing_size = 0;
+    gs::FileDMIExtension m_backing_file_dmi;
 #endif
 
     void ensure_storage()
@@ -1510,7 +1512,26 @@ public:
             return false;
         }
 
-        dmi_data.set_dmi_ptr(m_data.data() + range.start);
+#ifndef _WIN32
+        uint8_t* dmi_ptr = m_data.data() + range.start;
+        flush_deferred_backing();
+        if (!m_backing_file_value.empty() &&
+            ensure_backing_file() &&
+            range.end < m_backing_size &&
+            m_backing_map != nullptr) {
+            dmi_ptr = m_backing_map + range.start;
+            m_backing_file_dmi = gs::FileDMIExtension(
+                m_open_backing_file,
+                reinterpret_cast<uint64_t>(m_backing_map),
+                m_backing_size,
+                0);
+            trans.set_extension(&m_backing_file_dmi);
+        }
+#else
+        uint8_t* dmi_ptr = m_data.data() + range.start;
+#endif
+
+        dmi_data.set_dmi_ptr(dmi_ptr);
         dmi_data.set_start_address(range.start);
         dmi_data.set_end_address(range.end);
         dmi_data.set_read_latency(sc_core::SC_ZERO_TIME);
