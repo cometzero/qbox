@@ -17,6 +17,13 @@ project consists of:
   timers, PCI devices, and more
 - **Example platforms** -- Reference implementations in `platforms/`
 
+## Platform Overlays
+
+This repository is the upstream-friendly QBox core. Apollo/RD-Aspen platform
+source, Zena/RSE SystemC models, Apollo Lua entrypoints, and the
+`apollo_fvp_full_system` aggregate target live in the external
+`tools/qbox-platform` overlay in the Arm Auto Solutions workspace.
+
 ### Supported Architectures
 
 - **ARM:** Cortex-A53/A55/A76/A710/A720AE, Cortex-M7/M55,

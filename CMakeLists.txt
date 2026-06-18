@@ -44,6 +44,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON CACHE BOOL "The with CMAKE_CXX_STANDARD selec
 set(GIT_BRANCH "main" CACHE STRING "Git branch from which to clone all gs repositoies")
 set(PKG_LOCK "package-lock.cmake" CACHE STRING "Package lock which will be used by the user")
 set(QEMU_PATH_NAME "" CACHE STRING "The name of the path of qemu in the git directory")
+set(QEMU_SOURCE_DIR "" CACHE PATH "Path to a local qemu/libqemu source tree")
+
+if(QEMU_SOURCE_DIR)
+    get_filename_component(QEMU_SOURCE_DIR "${QEMU_SOURCE_DIR}" ABSOLUTE)
+    set(QEMU_SOURCE_DIR "${QEMU_SOURCE_DIR}" CACHE PATH "Path to a local qemu/libqemu source tree" FORCE)
+    set(FETCHCONTENT_SOURCE_DIR_QEMU "${QEMU_SOURCE_DIR}" CACHE PATH "Local qemu source override" FORCE)
+    set(FETCHCONTENT_SOURCE_DIR_LIBQEMU "${QEMU_SOURCE_DIR}" CACHE PATH "Local libqemu source override" FORCE)
+endif()
 
 set(CMAKE_FIND_USE_PACKAGE_REGISTRY FALSE)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -434,86 +442,6 @@ if(ENABLE_PYTHON_BINDER AND (NOT GS_ONLY))
     add_subdirectory(py-models)
 endif()
 add_subdirectory(html)
-
-if(NOT WITHOUT_QEMU)
-    set(
-        QBOX_APOLLO_BUILD_TARGET
-        "apollo_fvp_full_system"
-        CACHE STRING
-        "Aggregate target for Apollo FVP QBox runtime dependencies"
-    )
-
-    set(QBOX_APOLLO_REQUIRED_TARGETS
-        platforms-vp
-        keep_alive
-        addrtr
-        router
-        gs_memory
-        host_scr
-        loader
-        char_backend_file
-        char_backend_stdio
-        uart-pl011
-        global_peripheral_initiator
-        cpu_arm_cortexA720AE
-        cpu_arm_cortexR82
-        arm_gicv3
-        arm_gicv3_its
-        qemu_gpex
-        virtio_mmio_blk
-        virtio_mmio_net
-        virtio_mmio_rng
-        arm_smmuv3
-        mmu720ae
-        reset_gpio
-        pl031
-        sbsa_gwdt
-        cpu_arm_cortexM55
-        nvic_armv7m
-        remote_cpu
-        qemu_cc3xx
-        qemu_hexagon_qtimer
-        mhu320ae
-        gicx00_multiview
-        zena_fmu
-        zena_ssu
-        host_cmn_cyprus
-        host_gtimer
-        host_ni710ae_nci
-        host_ppu
-        cc3xx
-        dma350
-        rse_atu
-        rse_integrity_checker
-        rse_kmu
-        rse_lcm
-        rse_protection_ctrl
-        rse_sam
-        strata_flash_j3
-        host_smcf_mgi
-        host_system_pll
-        reset_fanout
-        rse_sysctrl
-    )
-
-    set(QBOX_APOLLO_MISSING_TARGETS "")
-    foreach(apollo_target IN LISTS QBOX_APOLLO_REQUIRED_TARGETS)
-        if(NOT TARGET "${apollo_target}")
-            list(APPEND QBOX_APOLLO_MISSING_TARGETS "${apollo_target}")
-        endif()
-    endforeach()
-    if(QBOX_APOLLO_MISSING_TARGETS)
-        message(
-            FATAL_ERROR
-            "Missing Apollo FVP QBox target(s): ${QBOX_APOLLO_MISSING_TARGETS}"
-        )
-    endif()
-
-    add_custom_target(
-        ${QBOX_APOLLO_BUILD_TARGET}
-        DEPENDS ${QBOX_APOLLO_REQUIRED_TARGETS}
-    )
-endif()
 
 gs_enable_testing()
 
