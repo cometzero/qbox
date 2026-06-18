@@ -475,6 +475,8 @@ if(NOT WITHOUT_QEMU)
         qemu_hexagon_qtimer
         mhu320ae
         gicx00_multiview
+        zena_fmu
+        zena_ssu
         host_cmn_cyprus
         host_gtimer
         host_ni710ae_nci
@@ -485,6 +487,7 @@ if(NOT WITHOUT_QEMU)
         rse_integrity_checker
         rse_kmu
         rse_lcm
+        rse_protection_ctrl
         rse_sam
         strata_flash_j3
         host_smcf_mgi
