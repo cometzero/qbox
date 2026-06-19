@@ -153,7 +153,7 @@ platform will wait for GDB to connect before proceeding.
 ### CPUs
 
 **ARM:**
-- Cortex-A53, Cortex-A55, Cortex-A76, Cortex-A710, Cortex-A720AE
+- Cortex-A53, Cortex-A55, Cortex-A76, Cortex-A710
 - Cortex-M7, Cortex-M55
 - Cortex-R5, Cortex-R52
 - Neoverse-N1, Neoverse-N2
