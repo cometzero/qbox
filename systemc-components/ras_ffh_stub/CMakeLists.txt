@@ -1,1 +1,0 @@
-gs_create_dymod(ras_ffh_stub)

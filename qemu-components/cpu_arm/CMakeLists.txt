@@ -29,7 +29,6 @@ foreach(cpu_arm_target
     if(TARGET ${cpu_arm_target})
         target_include_directories(
             ${cpu_arm_target} PUBLIC
-            $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/qemu-components>
-            $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/systemc-components/cc3xx/include>)
+            $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/qemu-components>)
     endif()
 endforeach()
