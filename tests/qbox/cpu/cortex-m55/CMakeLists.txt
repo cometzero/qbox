@@ -1,6 +1,5 @@
-set(ARM_NONE_EABI_HINT
-    "/build/arm/arm-auto-solutions/build/tmp_baremetal/sysroots-components/x86_64/gcc-arm-none-eabi-native/usr/libexec/gcc-arm-none-eabi-13.3.rel1/bin"
-)
+set(ARM_NONE_EABI_HINT "" CACHE PATH
+    "Optional path to arm-none-eabi tools")
 
 find_program(ARM_NONE_EABI_GCC arm-none-eabi-gcc HINTS ${ARM_NONE_EABI_HINT})
 find_program(ARM_NONE_EABI_OBJCOPY arm-none-eabi-objcopy HINTS ${ARM_NONE_EABI_HINT})

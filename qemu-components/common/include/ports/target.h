@@ -16,6 +16,7 @@
 #include <sstream>
 #include <string>
 
+#include <cci_configuration>
 #include <tlm>
 
 #include "qemu-instance.h"
@@ -42,6 +43,8 @@ protected:
     std::string m_trace_filter;
     std::ofstream m_trace_stream;
     std::mutex m_trace_lock;
+    bool m_mirror_4k_aperture = false;
+    bool m_mirror_4k_writes = false;
 
     void init_as()
     {
@@ -253,6 +256,12 @@ public:
         m_trace_filter = filter;
     }
 
+    void set_mirror_4k_aperture(bool enabled, bool mirror_writes)
+    {
+        m_mirror_4k_aperture = enabled;
+        m_mirror_4k_writes = mirror_writes;
+    }
+
     virtual void b_transport(TlmPayload& trans, sc_core::sc_time& t)
     {
         uint64_t addr = trans.get_address();
@@ -280,13 +289,9 @@ public:
         switch (trans.get_command()) {
         case tlm::TLM_READ_COMMAND:
             res = m_as->read(qemu_addr, data, size, attrs);
-            if (res == qemu::MemoryRegionOps::MemTxDecodeError && addr >= 0x1000) {
-                /*
-                 * Some FVP device-tree windows are larger than the underlying
-                 * QEMU PrimeCell sysbus region.  Mirror the first 4 KiB so
-                 * AMBA peripheral-ID reads at the end of a 64 KiB window still
-                 * reach the QEMU device model.
-                 */
+            if (m_mirror_4k_aperture &&
+                res == qemu::MemoryRegionOps::MemTxDecodeError &&
+                addr >= 0x1000) {
                 qemu_addr = addr & 0xfff;
                 mirrored = true;
                 res = m_as->read(qemu_addr, data, size, attrs);
@@ -295,7 +300,9 @@ public:
 
         case tlm::TLM_WRITE_COMMAND:
             res = m_as->write(qemu_addr, data, size, attrs);
-            if (res == qemu::MemoryRegionOps::MemTxDecodeError && addr >= 0x1000) {
+            if (m_mirror_4k_writes &&
+                res == qemu::MemoryRegionOps::MemTxDecodeError &&
+                addr >= 0x1000) {
                 qemu_addr = addr & 0xfff;
                 mirrored = true;
                 res = m_as->write(qemu_addr, data, size, attrs);
@@ -367,21 +374,51 @@ protected:
     TlmTargetToQemuBridge m_bridge;
     QemuInstance& m_inst;
     qemu::SysBusDevice m_sbd;
+    cci::cci_param<bool> p_mirror_4k_aperture;
+    cci::cci_param<bool> p_mirror_4k_writes;
 
 public:
-    QemuTargetSocket(const char* name, QemuInstance& inst): TlmTargetSocket(name), m_inst(inst)
+    QemuTargetSocket(const char* name, QemuInstance& inst)
+        : TlmTargetSocket(name)
+        , m_inst(inst)
+        , p_mirror_4k_aperture(std::string(name) + ".mirror_4k_aperture",
+                                false,
+                                "Mirror high FVP-style apertures to the first 4 KiB for reads")
+        , p_mirror_4k_writes(std::string(name) + ".mirror_4k_writes",
+                             false,
+                             "Allow 4 KiB aperture mirroring for writes")
     {
         TlmTargetSocket::bind(m_bridge);
     }
 
-    void init(qemu::SysBusDevice sbd, int mmio_idx) { m_bridge.init(sbd, mmio_idx); }
+    void init(qemu::SysBusDevice sbd, int mmio_idx)
+    {
+        m_bridge.init(sbd, mmio_idx);
+        apply_mirror_config();
+    }
 
-    void init_with_mr(qemu::MemoryRegion mr) { m_bridge.init_with_mr(mr); }
+    void init_with_mr(qemu::MemoryRegion mr)
+    {
+        m_bridge.init_with_mr(mr);
+        apply_mirror_config();
+    }
 
     void set_trace(const std::string& name, bool enabled, const std::string& file,
                    uint64_t limit, const std::string& filter)
     {
         m_bridge.set_trace(name, enabled, file, limit, filter);
+    }
+
+    void set_mirror_4k_aperture(bool enabled, bool mirror_writes = false)
+    {
+        m_bridge.set_mirror_4k_aperture(enabled, mirror_writes);
+    }
+
+private:
+    void apply_mirror_config()
+    {
+        m_bridge.set_mirror_4k_aperture(
+            p_mirror_4k_aperture.get_value(), p_mirror_4k_writes.get_value());
     }
 };
 

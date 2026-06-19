@@ -10,6 +10,7 @@
 #include <mutex>
 #include <queue>
 
+#include <cci_configuration>
 #include "tlm.h"
 #include "tlm_utils/simple_target_socket.h"
 #include <systemc>
@@ -92,9 +93,15 @@ public:
     InitiatorSignalSocket<bool> irq;
 
     sc_core::sc_event update_event;
+    cci::cci_param<uint64_t> p_id_register_mirror_mask;
 
     Pl011(sc_core::sc_module_name name)
-        : irq("irq"), s(nullptr), socket("target_socket"), backend_socket("backend_socket")
+        : irq("irq")
+        , s(nullptr)
+        , socket("target_socket")
+        , backend_socket("backend_socket")
+        , p_id_register_mirror_mask("id_register_mirror_mask", 0,
+                                    "Mask applied to PL011 ID register reads")
     {
         SCP_TRACE(()) << "Pl011 constructor";
 
@@ -250,7 +257,10 @@ public:
             r = s->dmacr;
             break;
         default:
-            uint64_t id_offset = offset & 0xfff;
+            uint64_t id_offset = offset;
+            if (p_id_register_mirror_mask.get_value() != 0) {
+                id_offset &= p_id_register_mirror_mask.get_value();
+            }
             if ((id_offset >> 2) >= 0x3f8 && (id_offset >> 2) <= 0x400) {
                 r = s->id[(id_offset - 0xfe0) >> 2];
                 break;

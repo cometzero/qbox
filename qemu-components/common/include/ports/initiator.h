@@ -218,6 +218,8 @@ protected:
     };
 
     std::vector<std::unique_ptr<DirectFileAlias>> m_direct_file_aliases;
+    std::map<uint64_t, uint64_t> m_mmio_read_fastpath_entries;
+    std::vector<std::pair<uint64_t, uint64_t>> m_mmio_direct_fastpath_ranges;
 
     // we use an ordered map to find and combine elements
     std::map<DmiRegionAliasKey, DmiRegionAlias::Ptr> m_dmi_aliases;
@@ -287,15 +289,15 @@ protected:
         return true;
     }
 
-    static std::map<uint64_t, uint64_t> parse_mmio_read_fastpath()
+    static std::map<uint64_t, uint64_t> parse_mmio_read_fastpath(
+        const std::string& spec)
     {
         std::map<uint64_t, uint64_t> entries;
-        const char* env = std::getenv("QBOX_MMIO_READ_FASTPATH");
-        if (env == nullptr || *env == '\0') {
+        if (trim_copy(spec).empty()) {
             return entries;
         }
 
-        std::stringstream stream(env);
+        std::stringstream stream(spec);
         std::string item;
         while (std::getline(stream, item, ',')) {
             const auto sep = item.find('=');
@@ -316,21 +318,15 @@ protected:
         return entries;
     }
 
-    static const std::map<uint64_t, uint64_t>& mmio_read_fastpath_entries()
-    {
-        static const auto entries = parse_mmio_read_fastpath();
-        return entries;
-    }
-
-    static std::vector<std::pair<uint64_t, uint64_t>> parse_mmio_direct_fastpath_ranges()
+    static std::vector<std::pair<uint64_t, uint64_t>>
+    parse_mmio_direct_fastpath_ranges(const std::string& spec)
     {
         std::vector<std::pair<uint64_t, uint64_t>> ranges;
-        const char* env = std::getenv("QBOX_MMIO_DIRECT_FASTPATH_RANGES");
-        if (env == nullptr || *env == '\0') {
+        if (trim_copy(spec).empty()) {
             return ranges;
         }
 
-        std::stringstream stream(env);
+        std::stringstream stream(spec);
         std::string item;
         while (std::getline(stream, item, ',')) {
             item = trim_copy(item);
@@ -363,12 +359,6 @@ protected:
             ranges.emplace_back(start, end);
         }
 
-        return ranges;
-    }
-
-    static const std::vector<std::pair<uint64_t, uint64_t>>& mmio_direct_fastpath_ranges()
-    {
-        static const auto ranges = parse_mmio_direct_fastpath_ranges();
         return ranges;
     }
 
@@ -514,17 +504,17 @@ protected:
         return out.str();
     }
 
-    static bool try_mmio_read_fastpath(tlm::tlm_command command, uint64_t addr, uint64_t* val, unsigned int size,
-                                       MemTxAttrs attrs)
+    bool try_mmio_read_fastpath(tlm::tlm_command command, uint64_t addr,
+                                uint64_t* val, unsigned int size,
+                                MemTxAttrs attrs) const
     {
         if (command != tlm::TLM_READ_COMMAND || attrs.debug || val == nullptr ||
             size == 0 || size > sizeof(*val)) {
             return false;
         }
 
-        const auto& entries = mmio_read_fastpath_entries();
-        const auto it = entries.find(addr);
-        if (it == entries.end()) {
+        const auto it = m_mmio_read_fastpath_entries.find(addr);
+        if (it == m_mmio_read_fastpath_entries.end()) {
             return false;
         }
 
@@ -535,7 +525,8 @@ protected:
         return true;
     }
 
-    static bool use_mmio_direct_fastpath(uint64_t addr, unsigned int size, MemTxAttrs attrs)
+    bool use_mmio_direct_fastpath(uint64_t addr, unsigned int size,
+                                  MemTxAttrs attrs) const
     {
         if (attrs.debug || size == 0) {
             return false;
@@ -545,7 +536,7 @@ protected:
         }
 
         const uint64_t end = addr + size - 1;
-        for (const auto& range : mmio_direct_fastpath_ranges()) {
+        for (const auto& range : m_mmio_direct_fastpath_ranges) {
             if (range.first <= addr && end <= range.second) {
                 return true;
             }
@@ -1504,6 +1495,19 @@ public:
             add_direct_file_alias(address, size, fields[4], file_offset,
                                   read_only, priority);
         }
+    }
+
+    void install_mmio_read_fastpath(const std::string& spec)
+    {
+        auto entries = parse_mmio_read_fastpath(spec);
+        m_mmio_read_fastpath_entries.insert(entries.begin(), entries.end());
+    }
+
+    void install_mmio_direct_fastpath_ranges(const std::string& spec)
+    {
+        auto ranges = parse_mmio_direct_fastpath_ranges(spec);
+        m_mmio_direct_fastpath_ranges.insert(m_mmio_direct_fastpath_ranges.end(),
+                                             ranges.begin(), ranges.end());
     }
 
     bool direct_file_alias_ptr(uint64_t address, uint64_t size,
