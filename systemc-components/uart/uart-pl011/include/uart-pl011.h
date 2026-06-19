@@ -10,7 +10,6 @@
 #include <mutex>
 #include <queue>
 
-#include <cci_configuration>
 #include "tlm.h"
 #include "tlm_utils/simple_target_socket.h"
 #include <systemc>
@@ -44,6 +43,8 @@
 #define INT_RI  (1 << 0)
 #define INT_E   (INT_OE | INT_BE | INT_PE | INT_FE)
 #define INT_MS  (INT_RI | INT_DSR | INT_DCD | INT_CTS)
+
+static constexpr uint64_t PL011_REGISTER_BLOCK_MASK = 0xfff;
 
 typedef struct PL011State {
     uint32_t readbuff;
@@ -93,15 +94,9 @@ public:
     InitiatorSignalSocket<bool> irq;
 
     sc_core::sc_event update_event;
-    cci::cci_param<uint64_t> p_id_register_mirror_mask;
 
     Pl011(sc_core::sc_module_name name)
-        : irq("irq")
-        , s(nullptr)
-        , socket("target_socket")
-        , backend_socket("backend_socket")
-        , p_id_register_mirror_mask("id_register_mirror_mask", 0,
-                                    "Mask applied to PL011 ID register reads")
+        : irq("irq"), s(nullptr), socket("target_socket"), backend_socket("backend_socket")
     {
         SCP_TRACE(()) << "Pl011 constructor";
 
@@ -200,6 +195,8 @@ public:
 
     uint32_t pl011_read(uint64_t offset)
     {
+        offset &= PL011_REGISTER_BLOCK_MASK;
+
         uint32_t c;
         uint64_t r;
 
@@ -257,12 +254,8 @@ public:
             r = s->dmacr;
             break;
         default:
-            uint64_t id_offset = offset;
-            if (p_id_register_mirror_mask.get_value() != 0) {
-                id_offset &= p_id_register_mirror_mask.get_value();
-            }
-            if ((id_offset >> 2) >= 0x3f8 && (id_offset >> 2) <= 0x400) {
-                r = s->id[(id_offset - 0xfe0) >> 2];
+            if ((offset >> 2) >= 0x3f8 && (offset >> 2) <= 0x400) {
+                r = s->id[(offset - 0xfe0) >> 2];
                 break;
             }
             r = 0;
@@ -292,6 +285,8 @@ public:
 
     void pl011_write(uint64_t offset, uint32_t value)
     {
+        offset &= PL011_REGISTER_BLOCK_MASK;
+
         unsigned char ch;
 
         switch (offset >> 2) {
