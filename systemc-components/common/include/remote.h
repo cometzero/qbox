@@ -1172,6 +1172,7 @@ private:
     {
         if (is_local_mode()) {
             m_container->fw_invalidate_direct_mem_ptr(start, end);
+            return;
         }
         SCP_DEBUG(()) << " " << name() << " invalidate_direct_mem_ptr "
                       << " start address 0x" << std::hex << start << " end address 0x" << std::hex << end;
