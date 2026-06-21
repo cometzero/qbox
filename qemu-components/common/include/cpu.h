@@ -414,104 +414,7 @@ protected:
         return ptr != nullptr;
     }
 
-    bool guest_tlm_access(uint64_t address, uint8_t* data, uint64_t size,
-                          tlm::tlm_command command, bool allow_tlm_fallback)
-    {
-        if (!allow_tlm_fallback || size > std::numeric_limits<unsigned int>::max() ||
-            (data == nullptr && size != 0)) {
-            return false;
-        }
-        if (size == 0) {
-            return true;
-        }
-
-        TlmPayload trans;
-        trans.set_command(command);
-        trans.set_address(address);
-        trans.set_data_ptr(data);
-        trans.set_data_length(static_cast<unsigned int>(size));
-        trans.set_streaming_width(static_cast<unsigned int>(size));
-        trans.set_byte_enable_ptr(nullptr);
-        trans.set_byte_enable_length(0);
-        trans.set_dmi_allowed(false);
-        trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
-        initiator_customize_tlm_payload(trans);
-
-        sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
-        socket->b_transport(trans, delay);
-        initiator_tidy_tlm_payload(trans);
-
-        return trans.is_response_ok();
-    }
-
-    bool guest_read_bytes_tlm(uint64_t address, uint64_t size,
-                              std::vector<uint8_t>& out, bool allow_tlm_fallback)
-    {
-        out.clear();
-        if (!allow_tlm_fallback || size > std::numeric_limits<unsigned int>::max()) {
-            return false;
-        }
-        if (size == 0) {
-            return true;
-        }
-
-        out.resize(static_cast<size_t>(size));
-        static constexpr uint64_t CHUNK_SIZE = 4096;
-        uint64_t offset = 0;
-        while (offset < size) {
-            const uint64_t chunk_addr = address + offset;
-            const uint64_t page_remaining = CHUNK_SIZE - (chunk_addr & (CHUNK_SIZE - 1));
-            const uint64_t chunk_size = std::min<uint64_t>(size - offset, page_remaining);
-            TlmPayload trans;
-            trans.set_command(tlm::TLM_READ_COMMAND);
-            trans.set_address(chunk_addr);
-            trans.set_data_ptr(out.data() + offset);
-            trans.set_data_length(static_cast<unsigned int>(chunk_size));
-            trans.set_streaming_width(static_cast<unsigned int>(chunk_size));
-            trans.set_byte_enable_ptr(nullptr);
-            trans.set_byte_enable_length(0);
-            trans.set_dmi_allowed(false);
-            trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
-            initiator_customize_tlm_payload(trans);
-
-            const unsigned int read = socket->transport_dbg(trans);
-            initiator_tidy_tlm_payload(trans);
-            if (read != chunk_size) {
-                out.clear();
-                return false;
-            }
-            offset += chunk_size;
-        }
-        return true;
-    }
-
-    bool guest_write_bytes_tlm(uint64_t address, const uint8_t* data,
-                               uint64_t size, bool allow_tlm_fallback)
-    {
-        if (!allow_tlm_fallback) {
-            return false;
-        }
-        static constexpr uint64_t CHUNK_SIZE = 4096;
-        uint64_t offset = 0;
-        while (offset < size) {
-            const uint64_t chunk_addr = address + offset;
-            const uint64_t page_remaining = CHUNK_SIZE - (chunk_addr & (CHUNK_SIZE - 1));
-            const uint64_t chunk_size = std::min<uint64_t>(size - offset, page_remaining);
-            if (!guest_tlm_access(chunk_addr, const_cast<uint8_t*>(data) + offset,
-                                  chunk_size, tlm::TLM_WRITE_COMMAND,
-                                  allow_tlm_fallback)) {
-                return false;
-            }
-            offset += chunk_size;
-        }
-        if (size != 0) {
-            m_inst.get().tb_invalidate_phys_range(address, address + size - 1);
-        }
-        return true;
-    }
-
-    bool guest_read_u32(uint64_t address, uint32_t& value,
-                        bool allow_tlm_fallback) override
+    bool guest_read_u32(uint64_t address, uint32_t& value) override
     {
         uint8_t* ptr = nullptr;
         if (guest_dmi_ptr(address, sizeof(value), true, false, ptr)) {
@@ -519,15 +422,14 @@ protected:
             return true;
         }
         std::vector<uint8_t> bytes;
-        if (!guest_read_bytes(address, sizeof(value), bytes, allow_tlm_fallback)) {
+        if (!guest_read_bytes(address, sizeof(value), bytes)) {
             return false;
         }
         std::memcpy(&value, bytes.data(), sizeof(value));
         return true;
     }
 
-    bool guest_read_u8(uint64_t address, uint8_t& value,
-                       bool allow_tlm_fallback) override
+    bool guest_read_u8(uint64_t address, uint8_t& value) override
     {
         uint8_t* ptr = nullptr;
         if (guest_dmi_ptr(address, sizeof(value), true, false, ptr)) {
@@ -535,7 +437,7 @@ protected:
             return true;
         }
         std::vector<uint8_t> bytes;
-        if (!guest_read_bytes(address, sizeof(value), bytes, allow_tlm_fallback)) {
+        if (!guest_read_bytes(address, sizeof(value), bytes)) {
             return false;
         }
         value = bytes[0];
@@ -543,8 +445,7 @@ protected:
     }
 
     bool guest_read_bytes(uint64_t address, uint64_t size,
-                          std::vector<uint8_t>& out,
-                          bool allow_tlm_fallback) override
+                          std::vector<uint8_t>& out) override
     {
         out.clear();
         if (size > std::numeric_limits<unsigned int>::max()) {
@@ -562,7 +463,8 @@ protected:
                 const uint64_t chunk_size = std::min<uint64_t>(size - offset, page_remaining);
                 uint8_t* chunk_ptr = nullptr;
                 if (!guest_dmi_ptr(chunk_addr, chunk_size, true, false, chunk_ptr)) {
-                    return guest_read_bytes_tlm(address, size, out, allow_tlm_fallback);
+                    out.clear();
+                    return false;
                 }
                 std::memcpy(out.data() + offset, chunk_ptr,
                             static_cast<size_t>(chunk_size));
@@ -580,8 +482,7 @@ protected:
 
     bool guest_read_bytes_or_alias(uint64_t address, uint64_t size,
                                    std::vector<uint8_t>& out,
-                                   bool& direct_file_alias,
-                                   bool allow_tlm_fallback) override
+                                   bool& direct_file_alias) override
     {
         out.clear();
         direct_file_alias = false;
@@ -606,8 +507,8 @@ protected:
                     if (!guest_dmi_ptr(chunk_addr, chunk_size, true, false, chunk_ptr)) {
                         if (!socket.direct_file_alias_ptr(chunk_addr, chunk_size,
                                                           false, chunk_ptr)) {
-                            return guest_read_bytes_tlm(address, size, out,
-                                                        allow_tlm_fallback);
+                            out.clear();
+                            return false;
                         }
                         direct_file_alias = true;
                     }
@@ -626,7 +527,7 @@ protected:
     }
 
     bool guest_write_bytes(uint64_t address, const uint8_t* data,
-                           uint64_t size, bool allow_tlm_fallback) override
+                           uint64_t size) override
     {
         if (size > std::numeric_limits<unsigned int>::max() ||
             (data == nullptr && size != 0)) {
@@ -643,8 +544,7 @@ protected:
                 const uint64_t chunk_size = std::min<uint64_t>(size - offset, page_remaining);
                 uint8_t* chunk_ptr = nullptr;
                 if (!guest_dmi_ptr(chunk_addr, chunk_size, false, true, chunk_ptr)) {
-                    return guest_write_bytes_tlm(address, data, size,
-                                                 allow_tlm_fallback);
+                    return false;
                 }
                 std::memcpy(chunk_ptr, data + offset, static_cast<size_t>(chunk_size));
                 offset += chunk_size;
@@ -662,8 +562,8 @@ protected:
     }
 
     bool guest_write_bytes_or_alias(uint64_t address, const uint8_t* data,
-                                    uint64_t size, bool& direct_file_alias,
-                                    bool allow_tlm_fallback) override
+                                    uint64_t size,
+                                    bool& direct_file_alias) override
     {
         direct_file_alias = false;
         if (size > std::numeric_limits<unsigned int>::max() ||
@@ -687,8 +587,7 @@ protected:
                     if (!guest_dmi_ptr(chunk_addr, chunk_size, false, true, chunk_ptr)) {
                         if (!socket.direct_file_alias_ptr(chunk_addr, chunk_size,
                                                           true, chunk_ptr)) {
-                            return guest_write_bytes_tlm(address, data, size,
-                                                         allow_tlm_fallback);
+                            return false;
                         }
                         direct_file_alias = true;
                     }
@@ -705,11 +604,10 @@ protected:
         return true;
     }
 
-    bool guest_write_u32(uint64_t address, uint32_t value,
-                         bool allow_tlm_fallback) override
+    bool guest_write_u32(uint64_t address, uint32_t value) override
     {
         return guest_write_bytes(address, reinterpret_cast<const uint8_t*>(&value),
-                                 sizeof(value), allow_tlm_fallback);
+                                 sizeof(value));
     }
 
     bool direct_file_alias_ptr(uint64_t address, uint64_t size,

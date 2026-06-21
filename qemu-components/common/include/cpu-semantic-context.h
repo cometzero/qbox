@@ -25,24 +25,19 @@ public:
     virtual bool set_v7m_state(qemu::CpuArm::V7MStateField field, uint64_t value) = 0;
     virtual bool guest_dmi_ptr(uint64_t address, uint64_t size, bool need_read,
                                bool need_write, uint8_t*& ptr) = 0;
-    virtual bool guest_read_u32(uint64_t address, uint32_t& value,
-                                bool allow_tlm_fallback) = 0;
-    virtual bool guest_read_u8(uint64_t address, uint8_t& value,
-                               bool allow_tlm_fallback) = 0;
+    virtual bool guest_read_u32(uint64_t address, uint32_t& value) = 0;
+    virtual bool guest_read_u8(uint64_t address, uint8_t& value) = 0;
     virtual bool guest_read_bytes(uint64_t address, uint64_t size,
-                                  std::vector<uint8_t>& out,
-                                  bool allow_tlm_fallback) = 0;
+                                  std::vector<uint8_t>& out) = 0;
     virtual bool guest_read_bytes_or_alias(uint64_t address, uint64_t size,
                                            std::vector<uint8_t>& out,
-                                           bool& direct_file_alias,
-                                           bool allow_tlm_fallback) = 0;
+                                           bool& direct_file_alias) = 0;
     virtual bool guest_write_bytes(uint64_t address, const uint8_t* data,
-                                   uint64_t size, bool allow_tlm_fallback) = 0;
+                                   uint64_t size) = 0;
     virtual bool guest_write_bytes_or_alias(uint64_t address, const uint8_t* data,
-                                            uint64_t size, bool& direct_file_alias,
-                                            bool allow_tlm_fallback) = 0;
-    virtual bool guest_write_u32(uint64_t address, uint32_t value,
-                                 bool allow_tlm_fallback) = 0;
+                                            uint64_t size,
+                                            bool& direct_file_alias) = 0;
+    virtual bool guest_write_u32(uint64_t address, uint32_t value) = 0;
     virtual bool direct_file_alias_ptr(uint64_t address, uint64_t size,
                                        bool need_write, uint8_t*& ptr) = 0;
     virtual void install_direct_file_aliases(const std::string& aliases) = 0;
