@@ -36,6 +36,11 @@ protected:
     cci::cci_param<std::vector<unsigned int> > p_redist_region;
     cci::cci_param<bool> p_has_security_extensions;
     cci::cci_param<bool> p_has_lpi; // Locality specific Peripheral Interrupts
+    cci::cci_param<bool> p_has_gicv4_1;
+    cci::cci_param<bool> p_has_direct_lpi;
+    cci::cci_param<bool> p_has_rvpeid;
+    cci::cci_param<bool> p_has_vpend_valid_dirty;
+    cci::cci_param<unsigned int> p_vpeid_bits;
 public:
     QemuTargetSocket<> dist_iface;
     sc_core::sc_vector<QemuTargetSocket<> > redist_iface;
@@ -83,6 +88,11 @@ public:
                           "Redistributor regions configuration")
         , p_has_security_extensions("has_security_extensions", false, "Enable security extensions")
         , p_has_lpi("has_lpi", false, "Enable LPI")
+        , p_has_gicv4_1("has_gicv4_1", false, "Expose GICv4.1 feature discovery")
+        , p_has_direct_lpi("has_direct_lpi", false, "Expose GICv4.1 DirectLPI")
+        , p_has_rvpeid("has_rvpeid", false, "Expose RVPEID support")
+        , p_has_vpend_valid_dirty("has_vpend_valid_dirty", false, "Expose VPENDBASER Valid+Dirty support")
+        , p_vpeid_bits("vpeid_bits", 16, "Number of VPEID bits")
         , dist_iface("dist_iface", inst)
         , redist_iface("redist_iface", p_redist_region.get_value().size(),
                        [&inst](const char* n, int i) { return new QemuTargetSocket<>(n, inst); })
@@ -108,8 +118,17 @@ public:
         bool irqchip_in_kernel = m_inst.is_kvm_enabled() || m_inst.is_whpx_enabled();
         bool has_security_extensions = irqchip_in_kernel ? false : p_has_security_extensions.get_value();
         bool has_lpi = irqchip_in_kernel ? false : p_has_lpi.get_value();
+        bool has_gicv4_1 = irqchip_in_kernel ? false : p_has_gicv4_1.get_value();
+        bool has_direct_lpi = irqchip_in_kernel ? false : p_has_direct_lpi.get_value();
+        bool has_rvpeid = irqchip_in_kernel ? false : p_has_rvpeid.get_value();
+        bool has_vpend_valid_dirty = irqchip_in_kernel ? false : p_has_vpend_valid_dirty.get_value();
         m_dev.set_prop_bool("has-security-extensions", has_security_extensions);
         m_dev.set_prop_bool("has-lpi", has_lpi);
+        m_dev.set_prop_bool("has-gicv4-1", has_gicv4_1);
+        m_dev.set_prop_bool("has-direct-lpi", has_direct_lpi);
+        m_dev.set_prop_bool("has-rvpeid", has_rvpeid);
+        m_dev.set_prop_bool("has-vpend-valid-dirty", has_vpend_valid_dirty);
+        m_dev.set_prop_int("vpeid-bits", p_vpeid_bits);
         if (has_lpi) {
             m_dev.set_prop_link("sysmem", *(this->get_qemu_inst().get().get_system_memory()));
         }
