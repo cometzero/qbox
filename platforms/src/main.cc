@@ -15,6 +15,7 @@
 #include <cciutils.h>
 #include <argparser.h>
 #include <module_factory_container.h>
+#include <remote.h>
 
 #if SC_VERSION_MAJOR < 3
 #warning PLEASE UPDATE TO SYSTEMC 3.0, OLDER VERSIONS ARE DEPRECATED AND MAY NOT WORK
