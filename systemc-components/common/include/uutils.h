@@ -17,7 +17,6 @@
 #include <atomic>
 #include <systemc>
 #include <unordered_map>
-#include <scp/report.h>
 #include <mutex>
 #include <cstdlib>
 #include <csignal>

@@ -18,7 +18,14 @@
 #include <filesystem>
 
 #include <dynlib_loader.h>
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#endif
 #include <scp/report.h>
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 #include <cci_configuration>
 
 extern "C" {

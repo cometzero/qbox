@@ -83,7 +83,7 @@ public:
     }
 };
 
-static std::vector<gs::tlm_quantumkeeper_multithread*> find_all_tlm_quantumkeeper_multithread()
+inline std::vector<gs::tlm_quantumkeeper_multithread*> find_all_tlm_quantumkeeper_multithread()
 {
     return find_sc_objects<gs::tlm_quantumkeeper_multithread>();
 }

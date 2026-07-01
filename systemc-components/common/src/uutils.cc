@@ -125,8 +125,8 @@ void gs::SigHandler::register_all_signal_handlers()
 gs::SigHandler::SigHandler()
     : sc_core::sc_prim_channel("SigHandler")
     , m_signals{ { SIGINT, Handler_CB::EXIT }, { SIGBREAK, Handler_CB::EXIT } }
-    , is_pass_handler_requested{ false }
     , stop_running{ false }
+    , is_pass_handler_requested{ false }
 {
     m_console_ctrl_event = CreateEvent(NULL,  // manual reset event
                                        FALSE, // initially not signaled
@@ -337,8 +337,8 @@ void gs::SigHandler::_start_pass_signal_handler()
 gs::SigHandler::SigHandler()
     : sc_core::sc_prim_channel("SigHandler")
     , m_signals{ { SIGINT, Handler_CB::EXIT }, { SIGQUIT, Handler_CB::EXIT } }
-    , is_pass_handler_requested{ false }
     , stop_running{ false }
+    , is_pass_handler_requested{ false }
 {
     memset(&dfl_act, 0, sizeof(dfl_act));
     memset(&ign_act, 0, sizeof(ign_act));

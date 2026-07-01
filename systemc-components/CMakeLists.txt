@@ -28,4 +28,3 @@ if(NOT WIN32)
     add_subdirectory(macs)
     add_subdirectory(component_constructor)
 endif()
-

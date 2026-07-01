@@ -72,7 +72,7 @@ tlm_quantumkeeper_multithread::~tlm_quantumkeeper_multithread()
 // but it's functions may be called from other threads
 // The QK may be instanced outside of elaboration
 tlm_quantumkeeper_multithread::tlm_quantumkeeper_multithread()
-    : m_systemc_thread_id(std::this_thread::get_id()), status(NONE), m_tick(false) /* handle attach manually */
+    : m_systemc_thread_id(std::this_thread::get_id()), m_tick(false), status(NONE) /* handle attach manually */
 {
     SCP_TRACE(())("Constructor");
     sc_core::sc_spawn_options opt;

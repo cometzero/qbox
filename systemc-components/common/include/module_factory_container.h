@@ -1097,19 +1097,21 @@ public:
         target_signal_sockets.init(p_target_signals_num.get_value(),
                                    [this](const char* n, int i) { return new TargetSignalSocket<bool>(n); });
 
-        for (int i = 0; i < p_tlm_target_ports_num.get_value(); i++) {
-            target_sockets[i].register_b_transport(this, &ContainerBase::b_transport, i);
-            target_sockets[i].register_transport_dbg(this, &ContainerBase::transport_dbg, i);
-            target_sockets[i].register_get_direct_mem_ptr(this, &ContainerBase::get_direct_mem_ptr, i);
+        for (unsigned int i = 0; i < p_tlm_target_ports_num.get_value(); i++) {
+            const int id = static_cast<int>(i);
+            target_sockets[i].register_b_transport(this, &ContainerBase::b_transport, id);
+            target_sockets[i].register_transport_dbg(this, &ContainerBase::transport_dbg, id);
+            target_sockets[i].register_get_direct_mem_ptr(this, &ContainerBase::get_direct_mem_ptr, id);
         }
 
-        for (int i = 0; i < p_tlm_initiator_ports_num.get_value(); i++) {
+        for (unsigned int i = 0; i < p_tlm_initiator_ports_num.get_value(); i++) {
             initiator_sockets[i].register_invalidate_direct_mem_ptr(this, &ContainerBase::invalidate_direct_mem_ptr);
         }
 
-        for (int i = 0; i < p_target_signals_num.get_value(); i++) {
-            target_signal_sockets[i].register_value_changed_cb([&, i](bool value) {
-                if (m_local_pass) m_local_pass->fw_handle_signal(i, value);
+        for (unsigned int i = 0; i < p_target_signals_num.get_value(); i++) {
+            const int id = static_cast<int>(i);
+            target_signal_sockets[i].register_value_changed_cb([&, id](bool value) {
+                if (m_local_pass) m_local_pass->fw_handle_signal(id, value);
             });
         }
 
@@ -1155,7 +1157,7 @@ public:
     {
         SCP_DEBUG(()) << " " << name() << " invalidate_direct_mem_ptr " << " start address 0x" << std::hex << start
                       << " end address 0x" << std::hex << end;
-        for (int i = 0; i < target_sockets.size(); i++) {
+        for (size_t i = 0; i < target_sockets.size(); i++) {
             target_sockets[i]->invalidate_direct_mem_ptr(start, end);
         }
     }
