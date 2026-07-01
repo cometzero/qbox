@@ -8,6 +8,7 @@
 #define _GREENSOCS_BASE_COMPONENTS_MEMORY_SERVICES_H
 
 #include <fstream>
+#include <map>
 #include <memory>
 
 #include <cci_configuration>
@@ -159,8 +160,18 @@ private:
         const size_t size;
     };
 
+    struct FileMappingDescriptor {
+        FileMappingDescriptor(uint8_t* addr, size_t size): addr(addr), size(size) {}
+
+        uint8_t* const addr;
+        const size_t size;
+    };
+
     std::string m_name;
     std::map<std::string, SharedMemoryDescriptor> m_shmem_desc_map;
+    std::map<std::string, FileMappingDescriptor> m_file_desc_map;
+
+    std::string file_mapping_key(const std::string& mapfile, uint64_t size, uint64_t offset);
 
 #ifndef _WIN32
     void initialize_shm_cleaner_service();
@@ -185,7 +196,12 @@ public:
 
     int get_shmem_fd(const std::string& memname);
 
+    int get_shmem_fd_for_ptr(const uint8_t* ptr, size_t size) const;
+    bool get_shmem_fd_offset_for_ptr(const uint8_t* ptr, size_t size, int& fd, uint64_t& offset) const;
+
     uint8_t* map_file(const std::string& mapfile, uint64_t size, uint64_t offset);
+
+    uint8_t* map_file_join(const std::string& mapfile, uint64_t size, uint64_t offset);
 
     void unmap_file(uint8_t* ptr, size_t size);
 

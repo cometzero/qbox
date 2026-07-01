@@ -70,7 +70,7 @@ void gs::SharedMemoryCleaner::add_shared_memory_region(const std::string& memnam
 
 void gs::SharedMemoryCleaner::cleanup()
 {
-    for (int i = 0; i < get_count(); i++) {
+    for (uint32_t i = 0; i < get_count(); i++) {
         std::cerr << "shm_cleaner (" << getpid() << ")  Deleting : " << m_named_shm_registry->name[i] << std::endl;
         shm_unlink(m_named_shm_registry->name[i]);
     }
@@ -119,7 +119,6 @@ uint8_t* gs::MemoryServices::map_mem_join_new(const std::string& memname, size_t
 
     m_shmem_desc_map.emplace(memname, SharedMemoryDescriptor(fd, ptr, size));
 
-    close(fd);
     return ptr;
 }
 
@@ -149,6 +148,20 @@ uint8_t* gs::MemoryServices::map_file(const std::string& mapfile, uint64_t size,
     return ptr;
 }
 
+uint8_t* gs::MemoryServices::map_file_join(const std::string& mapfile, uint64_t size, uint64_t offset)
+{
+    const std::string key = file_mapping_key(mapfile, size, offset);
+    auto cache = m_file_desc_map.find(key);
+    if (cache != m_file_desc_map.end()) {
+        assert(cache->second.size == size);
+        return cache->second.addr;
+    }
+
+    uint8_t* ptr = map_file(mapfile, size, offset);
+    m_file_desc_map.emplace(key, FileMappingDescriptor(ptr, size));
+    return ptr;
+}
+
 void gs::MemoryServices::unmap_file(uint8_t* ptr, size_t size)
 {
     if (ptr != nullptr) {
@@ -164,6 +177,11 @@ void gs::MemoryServices::die_sys_api(int error, const std::string& memname, cons
 
 void gs::MemoryServices::cleanup()
 {
+    for (auto& n : m_file_desc_map) {
+        unmap_file(n.second.addr, n.second.size);
+    }
+    m_file_desc_map.clear();
+
     for (auto n : m_shmem_desc_map) {
         SCP_INFO(()) << "Deleting " << n.first; // can't use SCP_ in global destructor
                                                 // as it's probably already destroyed
@@ -241,6 +259,20 @@ uint8_t* gs::MemoryServices::map_file(const std::string& mapfile, uint64_t size,
     return static_cast<uint8_t*>(pBuf);
 }
 
+uint8_t* gs::MemoryServices::map_file_join(const std::string& mapfile, uint64_t size, uint64_t offset)
+{
+    const std::string key = file_mapping_key(mapfile, size, offset);
+    auto cache = m_file_desc_map.find(key);
+    if (cache != m_file_desc_map.end()) {
+        assert(cache->second.size == size);
+        return cache->second.addr;
+    }
+
+    uint8_t* ptr = map_file(mapfile, size, offset);
+    m_file_desc_map.emplace(key, FileMappingDescriptor(ptr, size));
+    return ptr;
+}
+
 void gs::MemoryServices::unmap_file(uint8_t* ptr, size_t size)
 {
     (void)size;
@@ -254,7 +286,13 @@ void gs::MemoryServices::die_sys_api(int error, const std::string& memname, cons
     SCP_FATAL(()) << " Resource: " << memname << ", Error number: " << error << ", Error msg: " << die_msg;
 }
 
-void gs::MemoryServices::cleanup() {}
+void gs::MemoryServices::cleanup()
+{
+    for (auto& n : m_file_desc_map) {
+        unmap_file(n.second.addr, n.second.size);
+    }
+    m_file_desc_map.clear();
+}
 
 /* Windows/MSCV provides _aligned_malloc() instead of aligned_alloc() */
 inline void* aligned_alloc(size_t alignment, size_t size) { return _aligned_malloc(size, alignment); }
@@ -286,6 +324,11 @@ gs::MemoryServices& gs::MemoryServices::get()
     return instance;
 }
 
+std::string gs::MemoryServices::file_mapping_key(const std::string& mapfile, uint64_t size, uint64_t offset)
+{
+    return mapfile + ":" + std::to_string(offset) + ":" + std::to_string(size);
+}
+
 uint8_t* gs::MemoryServices::map_mem_join(const std::string& memname, size_t size)
 {
     auto cache = m_shmem_desc_map.find(memname);
@@ -300,7 +343,7 @@ uint8_t* gs::MemoryServices::map_mem_join(const std::string& memname, size_t siz
 uint8_t* gs::MemoryServices::map_mem_create(const std::string& memname, uint64_t size, int* fd)
 {
     uint8_t* addr = map_mem_create(memname, size);
-    if (addr == nullptr) {
+    if (addr != nullptr) {
         *fd = get_shmem_fd(memname);
     }
 
@@ -314,6 +357,42 @@ int gs::MemoryServices::get_shmem_fd(const std::string& memname)
         return it->second.file_descriptor;
     }
     return -1;
+}
+
+int gs::MemoryServices::get_shmem_fd_for_ptr(const uint8_t* ptr, size_t size) const
+{
+    int fd = -1;
+    uint64_t offset = 0;
+
+    if (get_shmem_fd_offset_for_ptr(ptr, size, fd, offset)) {
+        return fd;
+    }
+
+    return -1;
+}
+
+bool gs::MemoryServices::get_shmem_fd_offset_for_ptr(const uint8_t* ptr, size_t size, int& fd, uint64_t& offset) const
+{
+    if (ptr == nullptr || size == 0) {
+        return false;
+    }
+
+    const uintptr_t begin = reinterpret_cast<uintptr_t>(ptr);
+    const uintptr_t end = begin + size;
+
+    for (const auto& it : m_shmem_desc_map) {
+        const SharedMemoryDescriptor& desc = it.second;
+        const uintptr_t desc_begin = reinterpret_cast<uintptr_t>(desc.addr);
+        const uintptr_t desc_end = desc_begin + desc.size;
+
+        if (begin >= desc_begin && end <= desc_end) {
+            fd = desc.file_descriptor;
+            offset = begin - desc_begin;
+            return true;
+        }
+    }
+
+    return false;
 }
 
 gs::AllocatedMemory gs::MemoryServices::alloc(uint64_t size)
