@@ -44,6 +44,8 @@
 #define INT_E   (INT_OE | INT_BE | INT_PE | INT_FE)
 #define INT_MS  (INT_RI | INT_DSR | INT_DCD | INT_CTS)
 
+static constexpr uint64_t PL011_REGISTER_BLOCK_MASK = 0xfff;
+
 typedef struct PL011State {
     uint32_t readbuff;
     uint32_t flags;
@@ -193,6 +195,8 @@ public:
 
     uint32_t pl011_read(uint64_t offset)
     {
+        offset &= PL011_REGISTER_BLOCK_MASK;
+
         uint32_t c;
         uint64_t r;
 
@@ -281,6 +285,8 @@ public:
 
     void pl011_write(uint64_t offset, uint32_t value)
     {
+        offset &= PL011_REGISTER_BLOCK_MASK;
+
         unsigned char ch;
 
         switch (offset >> 2) {
