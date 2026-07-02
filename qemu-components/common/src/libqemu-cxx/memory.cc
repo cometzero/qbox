@@ -12,6 +12,8 @@
 
 #include <libqemu-cxx/libqemu-cxx.h>
 #include <internals.h>
+#include <scp/report.h>
+
 #include <limits>
 #include <math.h>
 
@@ -154,12 +156,26 @@ void MemoryRegion::init_io(Object owner, const char* name, uint64_t size, Memory
     m_int->exports().memory_region_init_io(mr, owner.get_qemu_obj(), qemu_ops, m_ops.get(), name, size);
 }
 
-void MemoryRegion::init_ram_ptr(Object owner, const char* name, uint64_t size, void* ptr, int fd)
+void MemoryRegion::init_ram_ptr(Object owner, const char* name, uint64_t size, void* ptr, int fd, uint64_t fd_offset)
 {
     QemuMemoryRegion* mr = reinterpret_cast<QemuMemoryRegion*>(m_obj);
 
-    m_int->exports().memory_region_init_ram_ptr(mr, owner.get_qemu_obj(), name, size, ptr);
-    m_int->exports().libqemu_memory_region_set_fd(mr, fd);
+    if (fd >= 0) {
+        if (!m_int->exports().libqemu_memory_region_init_ram_from_fd(mr, owner.get_qemu_obj(), name, size, fd,
+                                                                     fd_offset)) {
+            SCP_FATAL("MemoryRegion") << "failed to initialize RAM from shared-memory fd";
+        }
+    } else {
+        m_int->exports().memory_region_init_ram_ptr(mr, owner.get_qemu_obj(), name, size, ptr);
+        m_int->exports().libqemu_memory_region_set_fd(mr, fd);
+    }
+}
+
+void MemoryRegion::set_readonly(bool readonly)
+{
+    QemuMemoryRegion* mr = reinterpret_cast<QemuMemoryRegion*>(m_obj);
+
+    m_int->exports().memory_region_set_readonly(mr, readonly);
 }
 
 void MemoryRegion::init_alias(Object owner, const char* name, const MemoryRegion& root, uint64_t offset, uint64_t size)
