@@ -28,6 +28,10 @@ uint64_t CpuArm::get_exclusive_val() const { return m_int->exports().cpu_arm_get
 
 void CpuArm::set_exclusive_val(uint64_t val) { m_int->exports().cpu_arm_set_exclusive_val(m_obj, val); }
 
+void CpuArm::set_power_state(bool powered_on) { m_int->exports().cpu_arm_set_power_state(m_obj, powered_on); }
+
+int CpuArm::power_on_and_reset() { return m_int->exports().cpu_arm_power_on_and_reset(m_obj); }
+
 void CpuArm::post_init() { m_int->exports().cpu_arm_post_init(m_obj); }
 
 void CpuArm::register_reset() { m_int->exports().cpu_arm_register_reset(m_obj); }

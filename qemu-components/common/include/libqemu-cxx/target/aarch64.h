@@ -28,6 +28,8 @@ public:
     uint64_t get_exclusive_addr() const;
     uint64_t get_exclusive_val() const;
     void set_exclusive_val(uint64_t val);
+    void set_power_state(bool powered_on);
+    int power_on_and_reset();
 
     void post_init();
     void register_reset();

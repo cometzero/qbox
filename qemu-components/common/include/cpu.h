@@ -21,6 +21,7 @@
 #include <cci_configuration>
 
 #include <libgssync.h>
+#include <libqemu-cxx/target/aarch64.h>
 
 #include "device.h"
 #include "ports/initiator.h"
@@ -409,7 +410,7 @@ protected:
             }
         }
 
-        if (m_started) {
+        if (m_started && m_resetting == none) {
             m_cpu.set_soft_stopped(false);
         }
         /*
@@ -502,6 +503,8 @@ protected:
 
 public:
     cci::cci_param<unsigned int> p_gdb_port;
+    cci::cci_param<bool> p_start_in_reset;
+    cci::cci_param<bool> p_reset_power_on;
 
     /* The default memory socket. Mapped to the default CPU address space in QEMU */
     QemuInitiatorSocket<> socket;
@@ -515,6 +518,8 @@ public:
         , m_qemu_kick_ev(false)
         , m_signaled(false)
         , p_gdb_port("gdb_port", 0, "Wait for gdb connection on TCP port <gdb_port>")
+        , p_start_in_reset("start_in_reset", false, "Hold the CPU in reset when simulation starts")
+        , p_reset_power_on("reset_power_on", false, "Set Arm PSCI power state to ON when reset is released")
         , socket("mem", *this, inst)
         , m_insn_per_second("insn_per_second", 1'000'000'000, "number of instructions per second in mcips mode")
         , m_coroutines(false)
@@ -657,7 +662,9 @@ public:
         if (m_finished) return;
 
         if (val) {
-            if (m_resetting != none) return; // dont double reset!
+            if (m_resetting != none) {
+                return; // dont double reset!
+            }
             SCP_WARN(())("Start reset");
             m_resetting = start_reset;
             m_cpu.async_safe_run(make_tracked_async_job([this] {
@@ -666,7 +673,9 @@ public:
                 m_start_reset_done_ev.async_notify();
             })); // start the reset (which will pause the CPU)
         } else {
-            if (m_resetting == none) return; // dont finish a finished reset!
+            if (m_resetting == none) {
+                return; // dont finish a finished reset!
+            }
             while (m_resetting == start_reset) {
                 SCP_WARN(())("Hold reset");
                 m_cpu.kick(); // without this kick, async_safe_run may not be called (QEMU race)
@@ -675,10 +684,47 @@ public:
             m_inst.get().lock_iothread();
             socket.reset(); // remove DMI's (needs BQL for memory region updates)
             m_inst.get().unlock_iothread();
+            m_resetting = finish_reset;
+            if (p_start_in_reset.get_value()) {
+                const bool reset_power_on = p_reset_power_on.get_value();
+
+                m_time_sync->on_reset_finish();
+                m_resetting = none;
+                m_cpu.async_safe_run(make_tracked_async_job([this, reset_power_on] {
+                    if (reset_power_on) {
+                        qemu::CpuArm(m_cpu).set_power_state(true);
+                    }
+                    m_cpu.reset(false);
+                    if (reset_power_on) {
+                        qemu::CpuArm(m_cpu).set_power_state(true);
+                    }
+                    m_cpu.set_soft_stopped(false);
+                    m_time_sync->on_arm_deadline();
+                    m_cpu.kick();
+                    m_qemu_kick_ev.async_notify();
+                }));
+                m_qemu_kick_ev.async_notify();
+                return;
+            }
+            if (p_reset_power_on.get_value()) {
+                m_inst.get().lock_iothread();
+                qemu::CpuArm(m_cpu).power_on_and_reset();
+                m_inst.get().unlock_iothread();
+            }
             m_cpu.reset(false); // call the end-of-reset (which will unpause the CPU)
+            if (p_reset_power_on.get_value()) {
+                m_inst.get().lock_iothread();
+                qemu::CpuArm(m_cpu).set_power_state(true);
+                m_inst.get().unlock_iothread();
+            }
             m_time_sync->on_reset_finish();
-            SCP_WARN(())("Finished reset");
             m_resetting = none;
+            m_inst.get().lock_iothread();
+            m_cpu.set_soft_stopped(false);
+            m_time_sync->on_arm_deadline();
+            m_cpu.kick();
+            m_inst.get().unlock_iothread();
+            SCP_WARN(())("Finished reset");
         }
         m_time_sync->on_kick_notify();
     }
@@ -699,6 +745,12 @@ public:
         m_quantum_ns = int64_t(tlm_utils::tlm_quantumkeeper::get_global_quantum().to_seconds() * 1e9);
 
         QemuDevice::start_of_simulation();
+        const bool start_in_reset = p_start_in_reset.get_value();
+        if (start_in_reset) {
+            m_cpu.reset(true);
+            m_resetting = hold_reset;
+        }
+
         if (m_inst.get_tcg_mode() == QemuInstance::TCG_SINGLE) {
             if (m_inst.can_run()) {
                 m_time_sync->on_qk_start();
@@ -727,19 +779,21 @@ public:
              */
             m_time_sync->on_qk_start();
 
-            /* Prepare the CPU for its first run and release it
-             * Hold BQL to synchronize with the vCPU thread's idle-wait loop
-             * in qemu_process_cpu_events(). That loop checks cpu_thread_is_idle()
-             * (which reads soft_stopped) under BQL, then enters
-             * qemu_cond_wait(halt_cond, &bql) which atomically releases BQL.
-             * Without BQL here, the kick (broadcast on halt_cond) can be lost
-             * if the vCPU thread is between the idle check and the cond_wait.
-             */
-            m_inst.get().lock_iothread();
-            m_cpu.set_soft_stopped(false);
-            m_time_sync->on_arm_deadline();
-            m_cpu.kick();
-            m_inst.get().unlock_iothread();
+            if (!start_in_reset) {
+                /* Prepare the CPU for its first run and release it
+                 * Hold BQL to synchronize with the vCPU thread's idle-wait loop
+                 * in qemu_process_cpu_events(). That loop checks cpu_thread_is_idle()
+                 * (which reads soft_stopped) under BQL, then enters
+                 * qemu_cond_wait(halt_cond, &bql) which atomically releases BQL.
+                 * Without BQL here, the kick (broadcast on halt_cond) can be lost
+                 * if the vCPU thread is between the idle check and the cond_wait.
+                 */
+                m_inst.get().lock_iothread();
+                m_cpu.set_soft_stopped(false);
+                m_time_sync->on_arm_deadline();
+                m_cpu.kick();
+                m_inst.get().unlock_iothread();
+            }
         }
 
         // Have not managed to figure out the root cause of the issue, but the
