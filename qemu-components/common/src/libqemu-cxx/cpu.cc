@@ -33,6 +33,8 @@ void Cpu::remove_sync() { m_int->exports().cpu_remove_sync(m_obj); }
 
 void Cpu::register_thread() { m_int->exports().cpu_register_thread(m_obj); }
 
+uintptr_t Cpu::get_pc() const { return m_int->exports().cpu_get_pc(m_obj); }
+
 Cpu Cpu::set_as_current()
 {
     Cpu ret(Object(m_int->exports().current_cpu_get(), m_int));

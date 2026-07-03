@@ -32,6 +32,16 @@ void CpuArm::set_power_state(bool powered_on) { m_int->exports().cpu_arm_set_pow
 
 int CpuArm::power_on_and_reset() { return m_int->exports().cpu_arm_power_on_and_reset(m_obj); }
 
+uint64_t CpuArm::get_v7m_state(V7MStateField field) const
+{
+    return m_int->exports().cpu_arm_v7m_get_state(m_obj, static_cast<int>(field));
+}
+
+bool CpuArm::set_v7m_state(V7MStateField field, uint64_t value)
+{
+    return m_int->exports().cpu_arm_v7m_set_state(m_obj, static_cast<int>(field), value);
+}
+
 void CpuArm::post_init() { m_int->exports().cpu_arm_post_init(m_obj); }
 
 void CpuArm::register_reset() { m_int->exports().cpu_arm_register_reset(m_obj); }

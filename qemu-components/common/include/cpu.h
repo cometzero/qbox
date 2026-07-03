@@ -11,6 +11,8 @@
 
 #include <sstream>
 #include <algorithm>
+#include <cstring>
+#include <limits>
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
@@ -27,6 +29,7 @@
 #include <libqemu-cxx/target/aarch64.h>
 
 #include "cpu-pc-entry-observer.h"
+#include "cpu-semantic-context.h"
 #include "device.h"
 #include "ports/initiator.h"
 #include "tlm-extensions/qemu-cpu-hint.h"
@@ -92,7 +95,7 @@ protected:
     SCP_LOGGER();
 };
 
-class QemuCpu : public QemuDevice, public QemuInitiatorIface
+class QemuCpu : public QemuDevice, public QemuInitiatorIface, public QemuCpuSemanticContext
 {
     /*
      * The concrete time-sync strategies are nested classes so they can reach
@@ -199,6 +202,18 @@ protected:
     static constexpr int ASYNC_WORK_TIMEOUT_MS = 500;
 
     std::vector<QemuCpuPcEntryObserver*> m_pc_entry_observers;
+
+    uint64_t get_pc() const override { return m_cpu.get_pc(); }
+
+    uint64_t get_v7m_state(qemu::CpuArm::V7MStateField field) const override
+    {
+        return qemu::CpuArm(m_cpu).get_v7m_state(field);
+    }
+
+    bool set_v7m_state(qemu::CpuArm::V7MStateField field, uint64_t value) override
+    {
+        return qemu::CpuArm(m_cpu).set_v7m_state(field, value);
+    }
 
     /*
      * Wrap @job so that m_async_work_outstanding is incremented before the
@@ -445,6 +460,134 @@ protected:
                 break;
         }
     }
+
+    bool guest_dmi_ptr(uint64_t address, uint64_t size, bool need_read,
+                       bool need_write, uint8_t*& ptr) override
+    {
+        ptr = nullptr;
+        if (size == 0 || size > std::numeric_limits<unsigned int>::max()) {
+            return false;
+        }
+        if (address > std::numeric_limits<uint64_t>::max() - (size - 1)) {
+            return false;
+        }
+
+        uint8_t dummy = 0;
+        tlm::tlm_generic_payload trans;
+        tlm::tlm_dmi dmi;
+        const auto command = need_write ? tlm::TLM_WRITE_COMMAND : tlm::TLM_READ_COMMAND;
+
+        trans.set_command(command);
+        trans.set_address(address);
+        trans.set_data_ptr(&dummy);
+        trans.set_data_length(static_cast<unsigned int>(size));
+        trans.set_streaming_width(static_cast<unsigned int>(size));
+        trans.set_byte_enable_ptr(nullptr);
+        trans.set_byte_enable_length(0);
+        trans.set_dmi_allowed(false);
+        trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
+        initiator_customize_tlm_payload(trans);
+
+        if (!socket->get_direct_mem_ptr(trans, dmi) || dmi.is_none_allowed()) {
+            initiator_tidy_tlm_payload(trans);
+            return false;
+        }
+        initiator_tidy_tlm_payload(trans);
+
+        const uint64_t end = address + size - 1;
+        if (address < dmi.get_start_address() || end > dmi.get_end_address()) {
+            return false;
+        }
+        if (need_read && !dmi.is_read_allowed()) {
+            return false;
+        }
+        if (need_write && !dmi.is_write_allowed()) {
+            return false;
+        }
+
+        ptr = dmi.get_dmi_ptr() + (address - dmi.get_start_address());
+        return ptr != nullptr;
+    }
+
+    bool guest_read_bytes(uint64_t address, uint64_t size,
+                          std::vector<uint8_t>& out) override
+    {
+        out.clear();
+        if (size > std::numeric_limits<unsigned int>::max()) {
+            return false;
+        }
+
+        uint8_t* ptr = nullptr;
+        if (!guest_dmi_ptr(address, size, true, false, ptr)) {
+            static constexpr uint64_t CHUNK_SIZE = 4096;
+            out.resize(static_cast<size_t>(size));
+            uint64_t offset = 0;
+            while (offset < size) {
+                const uint64_t chunk_addr = address + offset;
+                const uint64_t page_remaining = CHUNK_SIZE - (chunk_addr & (CHUNK_SIZE - 1));
+                const uint64_t chunk_size = std::min<uint64_t>(size - offset, page_remaining);
+                uint8_t* chunk_ptr = nullptr;
+                if (!guest_dmi_ptr(chunk_addr, chunk_size, true, false, chunk_ptr)) {
+                    out.clear();
+                    return false;
+                }
+                std::memcpy(out.data() + offset, chunk_ptr,
+                            static_cast<size_t>(chunk_size));
+                offset += chunk_size;
+            }
+            return true;
+        }
+
+        out.resize(static_cast<size_t>(size));
+        if (size != 0) {
+            std::memcpy(out.data(), ptr, static_cast<size_t>(size));
+        }
+        return true;
+    }
+
+    bool guest_write_bytes(uint64_t address, const uint8_t* data,
+                           uint64_t size) override
+    {
+        if (size > std::numeric_limits<unsigned int>::max() ||
+            (data == nullptr && size != 0)) {
+            return false;
+        }
+
+        uint8_t* ptr = nullptr;
+        if (!guest_dmi_ptr(address, size, false, true, ptr)) {
+            static constexpr uint64_t CHUNK_SIZE = 4096;
+            uint64_t offset = 0;
+            while (offset < size) {
+                const uint64_t chunk_addr = address + offset;
+                const uint64_t page_remaining = CHUNK_SIZE - (chunk_addr & (CHUNK_SIZE - 1));
+                const uint64_t chunk_size = std::min<uint64_t>(size - offset, page_remaining);
+                uint8_t* chunk_ptr = nullptr;
+                if (!guest_dmi_ptr(chunk_addr, chunk_size, false, true, chunk_ptr)) {
+                    return false;
+                }
+                std::memcpy(chunk_ptr, data + offset, static_cast<size_t>(chunk_size));
+                offset += chunk_size;
+            }
+            if (size != 0) {
+                m_inst.get().tb_invalidate_phys_range(address, address + size - 1);
+            }
+            return true;
+        }
+        if (size != 0) {
+            std::memcpy(ptr, data, static_cast<size_t>(size));
+            m_inst.get().tb_invalidate_phys_range(address, address + size - 1);
+        }
+        return true;
+    }
+
+    void invalidate_guest_range(uint64_t start, uint64_t end) override
+    {
+        m_inst.get().tb_invalidate_phys_range(start, end);
+    }
+
+    void set_vcpu_dirty(bool dirty) override { m_cpu.set_vcpu_dirty(dirty); }
+
+    void kick_cpu() override { m_cpu.kick(); }
 
     bool dispatch_pc_entry(uintptr_t pc)
     {

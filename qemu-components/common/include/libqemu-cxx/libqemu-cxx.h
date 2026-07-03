@@ -707,6 +707,8 @@ public:
 
     void register_thread();
 
+    uintptr_t get_pc() const;
+
     Cpu set_as_current();
 
     void kick();
