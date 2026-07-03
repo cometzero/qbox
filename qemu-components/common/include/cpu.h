@@ -10,10 +10,13 @@
 #define _LIBQBOX_COMPONENTS_CPU_CPU_H
 
 #include <sstream>
+#include <algorithm>
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
 #include <chrono>
+#include <vector>
+#include <functional>
 
 #include <tlm>
 #include <tlm_utils/simple_initiator_socket.h>
@@ -23,6 +26,7 @@
 #include <libgssync.h>
 #include <libqemu-cxx/target/aarch64.h>
 
+#include "cpu-pc-entry-observer.h"
 #include "device.h"
 #include "ports/initiator.h"
 #include "tlm-extensions/qemu-cpu-hint.h"
@@ -193,6 +197,8 @@ protected:
     std::mutex m_async_work_mutex;
     std::condition_variable m_async_work_cv;
     static constexpr int ASYNC_WORK_TIMEOUT_MS = 500;
+
+    std::vector<QemuCpuPcEntryObserver*> m_pc_entry_observers;
 
     /*
      * Wrap @job so that m_async_work_outstanding is incremented before the
@@ -440,6 +446,26 @@ protected:
         }
     }
 
+    bool dispatch_pc_entry(uintptr_t pc)
+    {
+        bool handled = false;
+        for (auto* observer : m_pc_entry_observers) {
+            if (observer != nullptr && observer->enabled()) {
+                handled = observer->on_pc_entry(pc) || handled;
+            }
+        }
+        return handled;
+    }
+
+    void notify_observers_cpu_sync()
+    {
+        for (auto* observer : m_pc_entry_observers) {
+            if (observer != nullptr && observer->enabled()) {
+                observer->on_cpu_sync();
+            }
+        }
+    }
+
     /*
      * Called after a CPU loop run. It synchronizes with the kernel.
      */
@@ -448,6 +474,7 @@ protected:
         int64_t now = m_inst.get().get_virtual_clock();
 
         m_cpu.set_soft_stopped(true);
+        notify_observers_cpu_sync();
 
         m_inst.get().unlock_iothread();
         if (m_finished) return;
@@ -543,6 +570,23 @@ public:
         m_start_reset_done_ev.async_detach_suspending();
     }
 
+
+    void register_pc_entry_observer(QemuCpuPcEntryObserver& observer)
+    {
+        if (std::find(m_pc_entry_observers.begin(), m_pc_entry_observers.end(),
+                      &observer) == m_pc_entry_observers.end()) {
+            m_pc_entry_observers.push_back(&observer);
+        }
+    }
+
+    void unregister_pc_entry_observer(QemuCpuPcEntryObserver& observer)
+    {
+        m_pc_entry_observers.erase(
+            std::remove(m_pc_entry_observers.begin(), m_pc_entry_observers.end(),
+                        &observer),
+            m_pc_entry_observers.end());
+    }
+
     virtual ~QemuCpu()
     {
         end_of_simulation(); // catch the case we exited abnormally
@@ -571,6 +615,11 @@ public:
     // This gives time for QEMU to exit etc.
     void end_of_simulation() override
     {
+        for (auto* observer : m_pc_entry_observers) {
+            if (observer != nullptr) {
+                observer->end_of_simulation();
+            }
+        }
         if (m_finished) return;
         m_finished = true; // assert before taking lock (for co-routines too)
 
@@ -639,6 +688,18 @@ public:
         m_cpu.set_soft_stopped(true);
 
         m_time_sync->on_before_end_of_elaboration();
+        bool needs_pc_entry_callback = false;
+        for (auto* observer : m_pc_entry_observers) {
+            if (observer != nullptr && observer->enabled()) {
+                observer->configure_pc_watches(m_cpu);
+                needs_pc_entry_callback =
+                    observer->needs_pc_entry_callback() || needs_pc_entry_callback;
+            }
+        }
+        if (needs_pc_entry_callback) {
+            m_cpu.set_pc_entry_callback(
+                std::bind(&QemuCpu::dispatch_pc_entry, this, std::placeholders::_1));
+        }
 
         m_cpu_hint_ext.set_cpu(m_cpu);
     }

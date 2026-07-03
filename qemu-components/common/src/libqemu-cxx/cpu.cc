@@ -90,6 +90,8 @@ void Cpu::set_end_of_loop_callback(Cpu::EndOfLoopCallbackFn cb)
 
 void Cpu::set_kick_callback(Cpu::CpuKickCallbackFn cb) { m_int->get_cpu_kick_cb().register_cb(*this, cb); }
 
+void Cpu::add_pc_entry_watch(uintptr_t pc) { m_int->exports().add_cpu_pc_entry_watch(pc); }
+
 bool Cpu::is_in_exclusive_context() const { return m_int->exports().cpu_in_exclusive_context(m_obj); }
 
 void Cpu::set_vcpu_dirty(bool dirty) const { m_int->exports().cpu_set_vcpu_dirty(m_obj, dirty); }

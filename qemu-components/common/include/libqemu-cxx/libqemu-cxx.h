@@ -681,6 +681,7 @@ public:
     static constexpr const char* const TYPE = "cpu";
 
     using EndOfLoopCallbackFn = std::function<void()>;
+    using PcEntryCallbackFn = std::function<bool(uintptr_t)>;
     using CpuKickCallbackFn = std::function<void()>;
     using AsyncJobFn = std::function<void()>;
 
@@ -716,6 +717,9 @@ public:
     void async_safe_run(AsyncJobFn job);
 
     void set_end_of_loop_callback(EndOfLoopCallbackFn cb);
+    void set_pc_entry_callback(PcEntryCallbackFn cb);
+    void clear_pc_entry_callback();
+    void add_pc_entry_watch(uintptr_t pc);
     void set_kick_callback(CpuKickCallbackFn cb);
 
     bool is_in_exclusive_context() const;
