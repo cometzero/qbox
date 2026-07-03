@@ -257,7 +257,6 @@ void IOMMUMemoryRegion::init(const Object& owner, const char* name, uint64_t siz
     m_as_io->init(m_root_io, "IOMMU untranslated AddressSpace");
 
     QemuIOMMUMemoryRegion* mr = reinterpret_cast<QemuIOMMUMemoryRegion*>(m_obj);
-    typedef std::function<int(uint64_t, uint64_t*, unsigned int, MemTxAttrs)> LibQemuIOMMUTranslateCallBack;
 
     m_int->exports().iommu_memory_region_init(mr, owner.get_qemu_obj(), name, size);
 

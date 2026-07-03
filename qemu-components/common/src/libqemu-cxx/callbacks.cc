@@ -53,7 +53,15 @@ void LibQemu::init_callbacks()
 
     m_int->exports().set_cpu_kick_cb(generic_cpu_kick_cb, m_int.get());
 
-    m_int->exports().set_iommu_translate_cb((LibQemuIOMMUTranslateFn)generic_iommu_translate_cb, m_int.get());
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-function-type"
+#endif
+    m_int->exports().set_iommu_translate_cb(reinterpret_cast<LibQemuIOMMUTranslateFn>(generic_iommu_translate_cb),
+                                            m_int.get());
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
     if (m_int->exports().cpu_riscv_register_mip_update_callback != nullptr) {
         m_int->exports().cpu_riscv_register_mip_update_callback(generic_cpu_riscv_mip_update_cb, m_int.get());

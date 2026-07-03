@@ -495,6 +495,7 @@ public:
         uint64_t translated_addr;
         uint64_t addr_mask;
         IOMMUAccessFlags perm;
+        uint32_t pasid;
     };
 
     std::map<uint64_t, qemu::IOMMUMemoryRegion::IOMMUTLBEntry> m_mapped_te;

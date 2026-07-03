@@ -7,6 +7,7 @@
 #ifndef _LIBQBOX_TLM_EXTENSIONS_UNDERLYING_DMI_H
 #define _LIBQBOX_TLM_EXTENSIONS_UNDERLYING_DMI_H
 
+#include <scp/report.h>
 #include <tlm>
 namespace gs {
 
@@ -20,7 +21,7 @@ class tlm_dmi_ex : public tlm::tlm_dmi
 public:
     enum dmi_type { dmi_mapped, dmi_nomap, dmi_valid, dmi_iommu } type;
     sc_core::sc_module* module;
-    tlm_dmi_ex(sc_core::sc_module* m, tlm::tlm_dmi dmi, dmi_type t): module(m), tlm::tlm_dmi(dmi), type(t) {}
+    tlm_dmi_ex(sc_core::sc_module* m, tlm::tlm_dmi dmi, dmi_type t): tlm::tlm_dmi(dmi), type(t), module(m) {}
 };
 
 /**
@@ -35,6 +36,7 @@ class UnderlyingDMITlmExtension : public tlm::tlm_extension<UnderlyingDMITlmExte
 public:
     UnderlyingDMITlmExtension() = default;
     UnderlyingDMITlmExtension(const UnderlyingDMITlmExtension&) = default;
+    UnderlyingDMITlmExtension& operator=(const UnderlyingDMITlmExtension&) = default;
 
     virtual tlm_extension_base* clone() const override { return new UnderlyingDMITlmExtension(*this); }
 
