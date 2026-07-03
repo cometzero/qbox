@@ -13,6 +13,7 @@
 
 #include "qemu-instance.h"
 #include "tlm-extensions/qemu-cpu-hint.h"
+#include "tlm-extensions/qemu-memtx-attrs.h"
 #include "tlm-extensions/qemu-mr-hint.h"
 #include <tlm_sockets_buswidth.h>
 
@@ -90,10 +91,16 @@ public:
         MemTxAttrs attrs;
         MemTxResult res;
         qemu::Cpu current_cpu_save;
+        QemuMemTxAttrsTlmExtension* attrs_ext = nullptr;
 
         if (trans.get_command() == tlm::TLM_IGNORE_COMMAND) {
             trans.set_response_status(tlm::TLM_OK_RESPONSE);
             return;
+        }
+
+        trans.get_extension(attrs_ext);
+        if (attrs_ext != nullptr) {
+            attrs = attrs_ext->get_attrs();
         }
 
         current_cpu_save = push_current_cpu(trans);
