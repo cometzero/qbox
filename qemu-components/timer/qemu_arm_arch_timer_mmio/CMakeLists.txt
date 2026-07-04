@@ -1,0 +1,1 @@
+gs_create_dymod(qemu_arm_arch_timer_mmio)
