@@ -16,6 +16,7 @@ option(GS_ENABLE_SANITIZERS "Enable ASan+UBSan" OFF)
 option(GS_ENABLE_SCUDO "Enable Scudo allocator" OFF)
 option(GS_ENABLE_TSAN "Enable Thread Sanitizer" OFF)
 option(QEMU_ENABLE_USB_REDIRECT "enable qemu usb redirect" OFF)
+option(QBOX_USE_SYSTEM_LIBQEMU "Use an installed libqemu CMake package" OFF)
 
 option(ENABLE_PYTHON_BINDER "Enable python binder model" ON)
 option(WITHOUT_PYTHON_BINDER "[DEPRECATED] Use ENABLE_PYTHON_BINDER=OFF instead" OFF)
@@ -45,8 +46,15 @@ set(GIT_BRANCH "main" CACHE STRING "Git branch from which to clone all gs reposi
 set(PKG_LOCK "package-lock.cmake" CACHE STRING "Package lock which will be used by the user")
 set(QEMU_PATH_NAME "" CACHE STRING "The name of the path of qemu in the git directory")
 set(QEMU_SOURCE_DIR "" CACHE PATH "Path to a local qemu/libqemu source tree")
+set(CPM_SOURCE_FILE "" CACHE FILEPATH "Path to a local CPM.cmake file")
 
-if(QEMU_SOURCE_DIR)
+if(QBOX_USE_SYSTEM_LIBQEMU)
+    set(QEMU_SOURCE_DIR "" CACHE PATH "Path to a local qemu/libqemu source tree" FORCE)
+    unset(FETCHCONTENT_SOURCE_DIR_QEMU CACHE)
+    unset(FETCHCONTENT_SOURCE_DIR_LIBQEMU CACHE)
+    unset(qemu_SOURCE_DIR CACHE)
+    unset(libqemu_SOURCE_DIR CACHE)
+elseif(QEMU_SOURCE_DIR)
     get_filename_component(QEMU_SOURCE_DIR "${QEMU_SOURCE_DIR}" ABSOLUTE)
     set(QEMU_SOURCE_DIR "${QEMU_SOURCE_DIR}" CACHE PATH "Path to a local qemu/libqemu source tree" FORCE)
     set(FETCHCONTENT_SOURCE_DIR_QEMU "${QEMU_SOURCE_DIR}" CACHE PATH "Local qemu source override" FORCE)
@@ -91,12 +99,26 @@ if (WIN32)
 endif()
 
 
-file(
-    DOWNLOAD
-    https://github.com/cpm-cmake/CPM.cmake/releases/download/v0.40.5/CPM.cmake
-    ${CMAKE_CURRENT_BINARY_DIR}/cmake/CPM.cmake
-)
-include(${CMAKE_CURRENT_BINARY_DIR}/cmake/CPM.cmake)
+if(CPM_SOURCE_FILE)
+    get_filename_component(CPM_SOURCE_FILE "${CPM_SOURCE_FILE}" ABSOLUTE)
+    if(NOT EXISTS "${CPM_SOURCE_FILE}")
+        message(FATAL_ERROR "CPM_SOURCE_FILE does not exist: ${CPM_SOURCE_FILE}")
+    endif()
+    include("${CPM_SOURCE_FILE}")
+else()
+    file(
+        DOWNLOAD
+        https://github.com/cpm-cmake/CPM.cmake/releases/download/v0.40.5/CPM.cmake
+        ${CMAKE_CURRENT_BINARY_DIR}/cmake/CPM.cmake
+        STATUS _qbox_cpm_download_status
+    )
+    list(GET _qbox_cpm_download_status 0 _qbox_cpm_download_result)
+    list(GET _qbox_cpm_download_status 1 _qbox_cpm_download_error)
+    if(NOT _qbox_cpm_download_result EQUAL 0)
+        message(FATAL_ERROR "Failed to download CPM.cmake: ${_qbox_cpm_download_error}")
+    endif()
+    include(${CMAKE_CURRENT_BINARY_DIR}/cmake/CPM.cmake)
+endif()
 include(${PROJECT_SOURCE_DIR}/cmake/boilerplate.cmake)
 
 # Allow using package-lock.cmake files in projects using this boilerplate to
@@ -188,10 +210,12 @@ else()
   set(CMAKE_INSTALL_RPATH "\$ORIGIN/../lib;\$ORIGIN/../lib/libqemu")
 endif()
 
-list(APPEND CMAKE_BUILD_RPATH
-    "${CMAKE_BINARY_DIR}/_deps/libqemu-build/qemu-prefix/lib/"
-    "${CMAKE_BINARY_DIR}"
-)
+if(NOT QBOX_USE_SYSTEM_LIBQEMU)
+    list(APPEND CMAKE_BUILD_RPATH
+        "${CMAKE_BINARY_DIR}/_deps/libqemu-build/qemu-prefix/lib/"
+    )
+endif()
+list(APPEND CMAKE_BUILD_RPATH "${CMAKE_BINARY_DIR}")
 
 if ("${CMAKE_INSTALL_PREFIX}" STREQUAL "" OR "${CMAKE_INSTALL_PREFIX}" STREQUAL "/usr/local")
     set(CMAKE_INSTALL_PREFIX ${CMAKE_SOURCE_DIR}/install)
@@ -239,7 +263,9 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET libzip)
 
 # CPM packages (fetched from source)
-gs_addexpackage("gh:google/googletest#v1.15.2")
+if(BUILD_TESTING)
+    gs_addexpackage("gh:google/googletest#v1.15.2")
+endif()
 gs_addexpackage("gh:lua/lua#v5.4.2")
 gs_addexpackage("gh:TheLartians/PackageProject.cmake@1.4.1")
 
@@ -347,19 +373,30 @@ if (WIN32)
 endif()
 
 if (NOT WITHOUT_QEMU)
-    # TODO: Remove the "hack" in the future, once support for Ubuntu 20 can be
-    # dropped. A fix for it was added in CMake 3.18, but the default version of
-    # Ubuntu 20 is 3.16
-    # This is a hack to workaround a CMake issue. We specify an existing file
-    # which is _not_ a submodule so that FetchContent does not init any
-    # submodule. See https://gitlab.kitware.com/cmake/cmake/-/issues/20579
-    CPMAddPackage(
-        NAME qemu
-        GIT_REPOSITORY "${LIBQEMU_GIT}"
-        GIT_TAG "${GIT_BRANCH}"
-        GIT_SHALLOW TRUE
-        GIT_SUBMODULES "CMakeLists.txt"
-    )
+    if(QBOX_USE_SYSTEM_LIBQEMU)
+        find_package(libqemu CONFIG REQUIRED)
+        if(NOT TARGET libqemu)
+            if(TARGET libqemu::libqemu)
+                add_library(libqemu ALIAS libqemu::libqemu)
+            else()
+                message(FATAL_ERROR "The libqemu package did not define a libqemu target")
+            endif()
+        endif()
+    else()
+        # TODO: Remove the "hack" in the future, once support for Ubuntu 20 can be
+        # dropped. A fix for it was added in CMake 3.18, but the default version of
+        # Ubuntu 20 is 3.16
+        # This is a hack to workaround a CMake issue. We specify an existing file
+        # which is _not_ a submodule so that FetchContent does not init any
+        # submodule. See https://gitlab.kitware.com/cmake/cmake/-/issues/20579
+        CPMAddPackage(
+            NAME qemu
+            GIT_REPOSITORY "${LIBQEMU_GIT}"
+            GIT_TAG "${GIT_BRANCH}"
+            GIT_SHALLOW TRUE
+            GIT_SUBMODULES "CMakeLists.txt"
+        )
+    endif()
 
     if(TARGET libqemu)
         list(APPEND TARGET_LIBS "libqemu")
