@@ -56,4 +56,18 @@ qbox_add_cpu_test(aarch64-dmi-test-async-inval 100 dmi-test-async-inval.cc)
 qbox_add_cpu_test(halt-tests 100 halt-tests.cc)
 qbox_add_cpu_test(reset-test-system 100 reset-test-system.cc)
 qbox_add_cpu_test(reset-test-cpu 100 reset-test-cpu.cc)
+qbox_add_cpu_test_executable(aarch64-start-in-reset-release-test start-in-reset-release-test.cc)
+if(TARGET aarch64-start-in-reset-release-test)
+    add_test(
+        NAME aarch64-start-in-reset-release-test
+        COMMAND $<TARGET_FILE:aarch64-start-in-reset-release-test>
+            -p test-bench.inst.managed_start_in_reset_release=true
+            -p test-bench.inst.accel=tcg
+            -p test-bench.inst.tcg_mode=MULTI
+            -p test-bench.inst.sync_policy=multithread-quantum
+            -p test-bench.inst.time_sync_strategy=quantum_keeper
+            -p log_level=0
+    )
+    set_tests_properties(aarch64-start-in-reset-release-test PROPERTIES TIMEOUT 30)
+endif()
 qbox_add_cpu_test(aarch64-smmu-router-stress-test-v2 100 smmu_router_stress_test_v2.cc)

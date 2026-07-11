@@ -95,7 +95,9 @@ protected:
     SCP_LOGGER();
 };
 
-class QemuCpu : public QemuDevice, public QemuInitiatorIface, public QemuCpuSemanticContext
+class QemuCpu : public QemuDevice,
+                public QemuInitiatorIface,
+                public QemuCpuSemanticContext
 {
     /*
      * The concrete time-sync strategies are nested classes so they can reach
@@ -171,7 +173,9 @@ protected:
     std::shared_ptr<gs::tlm_quantumkeeper_extended> m_qk;
     std::atomic<bool> m_finished = false;
     std::atomic<bool> m_started = false;
-    enum { none, start_reset, hold_reset, finish_reset } m_resetting = none;
+    enum ResetState { none, start_reset, hold_reset, finish_reset };
+    std::atomic<ResetState> m_resetting{ none };
+    std::atomic<bool> m_managed_reset_released{ false };
     gs::async_event m_start_reset_done_ev;
 
     std::mutex m_can_delete;
@@ -369,7 +373,11 @@ protected:
     void wait_for_work()
     {
         SCP_TRACE(())("Wait for work");
-        m_qk->stop();
+        const bool keep_qk_running = m_inst.manages_start_in_reset_release() &&
+                                     m_managed_reset_released;
+        if (!keep_qk_running) {
+            m_qk->stop();
+        }
         if (m_finished) return;
 
         if (m_coroutines) {
@@ -387,7 +395,9 @@ protected:
         }
         if (m_finished) return;
         SCP_TRACE(())("Have work, running CPU");
-        m_qk->start();
+        if (!keep_qk_running) {
+            m_qk->start();
+        }
     }
 
     /*
@@ -431,15 +441,15 @@ protected:
             }
         }
 
-        if (m_started && m_resetting == none) {
-            m_cpu.set_soft_stopped(false);
-        }
         /*
          * The QEMU CPU loop expect us to enter it with the iothread mutex locked.
          * It is then unlocked when we come back from the CPU loop, in
          * sync_with_kernel().
          */
         m_inst.get().lock_iothread();
+        if (m_started && m_resetting == none) {
+            m_cpu.set_soft_stopped(false);
+        }
     }
 
     /*
@@ -859,6 +869,30 @@ public:
         }
     }
 
+    void release_start_in_reset()
+    {
+        m_inst.get().lock_iothread();
+        m_cpu.set_soft_stopped(true);
+        qemu::CpuArm(m_cpu).set_power_state(false);
+        m_inst.get().unlock_iothread();
+
+        m_cpu.reset(false);
+        m_time_sync->on_reset_finish();
+        m_inst.get().lock_iothread();
+        qemu::CpuArm(m_cpu).set_power_state(true);
+        m_resetting = none;
+        m_managed_reset_released = true;
+        m_cpu.set_soft_stopped(false);
+        m_cpu.halt(false);
+        m_time_sync->on_arm_deadline();
+        m_cpu.kick();
+        m_inst.get().unlock_iothread();
+        if (!m_coroutines) {
+            set_signaled();
+        }
+        m_qemu_kick_ev.async_notify();
+    }
+
     /* NB _MUST_ be called from an SC_THREAD */
     void reset_cb(const bool& val)
     {
@@ -869,6 +903,7 @@ public:
             if (m_resetting != none) {
                 return; // dont double reset!
             }
+            m_managed_reset_released = false;
             SCP_WARN(())("Start reset");
             m_resetting = start_reset;
             m_cpu.async_safe_run(make_tracked_async_job([this] {
@@ -889,6 +924,11 @@ public:
             socket.reset(); // remove DMI's (needs BQL for memory region updates)
             m_inst.get().unlock_iothread();
             m_resetting = finish_reset;
+            if (p_start_in_reset.get_value() && p_reset_power_on.get_value() &&
+                m_inst.manages_start_in_reset_release()) {
+                release_start_in_reset();
+                return;
+            }
             if (p_start_in_reset.get_value()) {
                 const bool reset_power_on = p_reset_power_on.get_value();
 

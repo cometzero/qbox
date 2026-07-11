@@ -167,6 +167,7 @@ protected:
     qemu::LibQemu m_inst;
     QemuInstanceDmiManager m_dmi_mgr;
 
+    cci::cci_param<bool> p_managed_start_in_reset_release;
     cci::cci_param<std::string> p_tcg_mode;
     cci::cci_param<std::string> p_sync_policy;
     TcgMode m_tcg_mode;
@@ -319,6 +320,8 @@ public:
         , reset("reset")
         , m_inst(loader, t)
         , m_dmi_mgr(m_inst)
+        , p_managed_start_in_reset_release("managed_start_in_reset_release", false,
+                                           "Use managed start-in-reset CPU release")
         , p_tcg_mode("tcg_mode", "MULTI", "The TCG mode required, SINGLE, COROUTINE or MULTI")
         , p_sync_policy("sync_policy", "multithread-quantum", "Synchronization Policy to use")
         , m_tcg_mode(StringToTcgMode(p_tcg_mode))
@@ -367,6 +370,11 @@ public:
     bool operator==(const QemuInstance& b) const { return this == &b; }
 
     bool operator!=(const QemuInstance& b) const { return this != &b; }
+
+    bool manages_start_in_reset_release() const
+    {
+        return p_managed_start_in_reset_release.get_value();
+    }
 
     /**
      * @brief Add a command line argument to the qemu instance.

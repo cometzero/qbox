@@ -60,17 +60,12 @@ list(APPEND QBOX_CPU_TEST_NUM_CPU_COMBINATION
         OPTIONS "BUILD_LIBS_ONLY"
     )
 
-function(qbox_add_cpu_test target timeout_s)
+#To disable MCIPS tests: pass -DQBOX_ENABLE_MCIPS_TESTS=OFF at configure time
+option(QBOX_ENABLE_MCIPS_TESTS "Enable mcips=true test variants" ON)
+
+function(qbox_add_cpu_test_executable target)
     if(NOT ${keystone_FOUND})
         return()
-    endif()
-
-    list(APPEND QBOX_TEST_ACCELS "tcg")
-    if ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "arm64")
-            list(APPEND QBOX_TEST_ACCELS "hvf")
-    endif()
-    if ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "aarch64")
-            list(APPEND QBOX_TEST_ACCELS "kvm")
     endif()
 
     add_executable(${target} ${ARGN})
@@ -87,12 +82,24 @@ function(qbox_add_cpu_test target timeout_s)
         )
     endif()
 
-    #To disable MCIPS tests: pass -DQBOX_ENABLE_MCIPS_TESTS=OFF at configure time
-    option(QBOX_ENABLE_MCIPS_TESTS "Enable mcips=true test variants" ON)
-
     target_include_directories(${target} PRIVATE ${PROJECT_SOURCE_DIR}/tests/qbox/include ${keystone_SOURCE_DIR}/include)
 
     target_link_libraries(${target} PRIVATE cpu_arm_cortexA53 qemu_cpu_hexagon cpu_riscv32 global_peripheral_initiator router reset_gpio gs_memory smmu500 pass exclusive_monitor display plic_sifive ${TARGET_LIBS} keystone hexagon_globalreg)
+endfunction()
+
+function(qbox_add_cpu_test target timeout_s)
+    qbox_add_cpu_test_executable(${target} ${ARGN})
+    if(NOT TARGET ${target})
+        return()
+    endif()
+
+    list(APPEND QBOX_TEST_ACCELS "tcg")
+    if ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "arm64")
+            list(APPEND QBOX_TEST_ACCELS "hvf")
+    endif()
+    if ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "aarch64")
+            list(APPEND QBOX_TEST_ACCELS "kvm")
+    endif()
 
     foreach (accel ${QBOX_TEST_ACCELS})
       foreach(sync_pol ${QBOX_CPU_TEST_SYNC_POLICY_COMBINATION})
