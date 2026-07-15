@@ -68,6 +68,8 @@ private:
 
     void map_dmi_start_end_addr(uint64_t& start_addr, uint64_t& end_addr)
     {
+        const uint64_t mapped_start_addr = start_addr;
+
         if (start_addr < p_mapped_base_addr.get_value()) {
             start_addr = m_base_addr;
         } else if ((start_addr >= p_mapped_base_addr.get_value()) &&
@@ -80,10 +82,11 @@ private:
         }
         if (end_addr >= (p_mapped_base_addr.get_value() + m_mapping_size)) {
             end_addr = m_base_addr + m_mapping_size;
-        } else if ((end_addr > start_addr) && (end_addr < (p_mapped_base_addr.get_value() + m_mapping_size))) {
+        } else if ((end_addr >= mapped_start_addr) &&
+                   (end_addr < (p_mapped_base_addr.get_value() + m_mapping_size))) {
             end_addr = addr_bw(end_addr);
         } else {
-            SCP_FATAL(()) << "DMI granted end address 0x" << std::hex << start_addr
+            SCP_FATAL(()) << "DMI granted end address 0x" << std::hex << end_addr
                           << " is smaller than the mapped area 0x" << std::hex << p_mapped_base_addr.get_value()
                           << " size: 0x" << std::hex << m_mapping_size;
         }

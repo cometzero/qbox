@@ -21,6 +21,8 @@
 class AddrtrTestBench : public TestBench
 {
 public:
+    static constexpr uint64_t TARGET_MMIO_BASE = 0x1000;
+    static constexpr uint64_t MAPPED_MMIO_BASE = 0x100;
     static constexpr size_t TARGET_MMIO_SIZE = 1024;
 
     class TargetTesterDMIinv : public TargetTester
@@ -43,7 +45,10 @@ private:
     TargetTesterDMIinv m_target;
 
     uint64_t sent_addr;
-    uint64_t offset = 0xDEADULL;
+    uint64_t mapped_addr(uint64_t addr) const
+    {
+        return MAPPED_MMIO_BASE + (addr - TARGET_MMIO_BASE);
+    }
 
     /* Initiator callback */
     void invalidate_direct_mem_ptr(uint64_t start_range, uint64_t end_range)
@@ -55,13 +60,16 @@ private:
     /* Target callbacks */
     TlmResponseStatus target_access(uint64_t addr, uint8_t* data, size_t len)
     {
-        EXPECT_EQ(sent_addr + offset, addr);
+        EXPECT_EQ(mapped_addr(sent_addr), addr);
         return tlm::TLM_OK_RESPONSE;
     }
 
     bool get_direct_mem_ptr(uint64_t addr, TlmDmi& dmi_data)
     {
-        EXPECT_EQ(addr, sent_addr + offset);
+        EXPECT_EQ(addr, mapped_addr(sent_addr));
+        dmi_data.set_start_address(MAPPED_MMIO_BASE);
+        dmi_data.set_end_address(MAPPED_MMIO_BASE + TARGET_MMIO_SIZE - 1);
+        dmi_data.allow_read_write();
         return true;
     }
 
@@ -83,8 +91,11 @@ protected:
         uint64_t data = 0x42ULL;
         TlmGenericPayload txn;
         sent_addr = addr;
-        m_initiator.do_dmi_request(addr);
-        m_target.do_dmi_invalidate(addr + offset);
+        ASSERT_TRUE(m_initiator.do_dmi_request(addr));
+        const auto& dmi = m_initiator.get_last_dmi_data();
+        EXPECT_EQ(dmi.get_start_address(), addr);
+        EXPECT_EQ(dmi.get_end_address(), addr + TARGET_MMIO_SIZE - 1);
+        m_target.do_dmi_invalidate(mapped_addr(addr));
     }
 
 public:
@@ -95,8 +106,6 @@ public:
         , m_target("target-tester", TARGET_MMIO_SIZE)
     {
         using namespace std::placeholders;
-
-        offset = 0x10ULL;
 
         m_initiator.register_invalidate_direct_mem_ptr(
             std::bind(&AddrtrTestBench::invalidate_direct_mem_ptr, this, _1, _2));
