@@ -30,7 +30,14 @@ class QemuTargetSignalSocket : public TargetSignalSocket<bool>
 protected:
     qemu::Gpio m_gpio_in;
 
-    void value_changed_cb(const bool& val) { m_gpio_in.set(val); }
+    void value_changed_cb(const bool& val)
+    {
+        qemu::LibQemu& inst = m_gpio_in.get_inst();
+
+        inst.lock_iothread();
+        m_gpio_in.set(val);
+        inst.unlock_iothread();
+    }
 
     void init_with_gpio(qemu::Gpio gpio)
     {

@@ -19,6 +19,7 @@
 class CpuArmStartInResetReleaseTest : public CpuTestBenchBase
 {
     static constexpr size_t CPU_COUNT = 4;
+    static constexpr unsigned int RELEASE_ROUNDS = 8;
     static constexpr const char* FIRMWARE = R"(
         _start:
             ldr x1, =0x%08)" PRIx64 R"(
@@ -84,6 +85,7 @@ public:
         set_firmware(firmware);
 
         SC_THREAD(release_cpus);
+        m_cpus[0].reset_cb(false);
     }
 
     void release_cpus()
@@ -91,7 +93,6 @@ public:
         sc_core::sc_unsuspendable();
         wait(sc_core::SC_ZERO_TIME);
 
-        m_reset[0].write(false);
         wait(m_cpu_write);
         TEST_ASSERT(m_writes[0] == 1);
         TEST_ASSERT(total_writes() == 1);
@@ -106,18 +107,20 @@ public:
             TEST_ASSERT(m_writes[i] == 1);
         }
 
-        for (auto& reset : m_reset) {
-            reset.write(true);
-        }
-        wait(sc_core::SC_ZERO_TIME);
-        for (auto& reset : m_reset) {
-            reset.write(false);
-        }
-        while (total_writes() != m_writes.size() * 2) {
-            wait(m_cpu_write);
-        }
-        for (auto writes : m_writes) {
-            TEST_ASSERT(writes == 2);
+        for (unsigned int round = 1; round < RELEASE_ROUNDS; ++round) {
+            for (auto& reset : m_reset) {
+                reset.write(true);
+            }
+            wait(sc_core::SC_ZERO_TIME);
+            for (auto& reset : m_reset) {
+                reset.write(false);
+            }
+            while (total_writes() != m_writes.size() * (round + 1)) {
+                wait(m_cpu_write);
+            }
+            for (auto writes : m_writes) {
+                TEST_ASSERT(writes == round + 1);
+            }
         }
 
         m_keepalive.async_detach_suspending();
@@ -133,7 +136,7 @@ public:
 
         TEST_ASSERT(cpuid < m_writes.size());
         TEST_ASSERT(data == 1);
-        TEST_ASSERT(m_writes[cpuid] < 2);
+        TEST_ASSERT(m_writes[cpuid] < RELEASE_ROUNDS);
         ++m_writes[cpuid];
         m_cpu_write.async_notify();
     }

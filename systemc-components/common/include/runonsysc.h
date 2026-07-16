@@ -8,6 +8,8 @@
 #ifndef RUNONSYSTEMC_H
 #define RUNONSYSTEMC_H
 
+#include "async_event.h"
+
 #include <systemc>
 #include <atomic>
 #include <functional>

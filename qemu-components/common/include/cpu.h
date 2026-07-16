@@ -176,7 +176,11 @@ protected:
     enum ResetState { none, start_reset, hold_reset, finish_reset };
     std::atomic<ResetState> m_resetting{ none };
     std::atomic<bool> m_managed_reset_released{ false };
+    std::atomic<bool> m_reset_signal_seen{ false };
+    std::atomic<bool> m_reset_signal_value{ false };
     gs::async_event m_start_reset_done_ev;
+    gs::async_event m_managed_reset_release_done_ev;
+    std::atomic<bool> m_managed_reset_release_done{ false };
 
     std::mutex m_can_delete;
     QemuCpuHintTlmExtension m_cpu_hint_ext;
@@ -631,6 +635,17 @@ protected:
 
         m_inst.get().unlock_iothread();
         if (m_finished) return;
+        if (m_resetting != none) {
+            /*
+             * A reset-held CPU has no executable time budget.  Starting its
+             * quantum keeper here can make its timehandler own a global
+             * SystemC suspend request which the idle vCPU cannot release.
+             * reset_cb(false) restarts and resets the QK before guest
+             * execution is enabled.
+             */
+            m_qk->stop();
+            return;
+        }
         if (!m_coroutines) {
             m_qk->start(); // we may have switched the QK off, so switch it on before setting
         }
@@ -720,7 +735,11 @@ public:
         m_time_sync->on_construct();
         m_inst.add_dev(this);
 
+        sc_core::sc_spawn(std::bind(&QemuCpu::replay_deferred_reset, this),
+                          "replay_deferred_reset");
+
         m_start_reset_done_ev.async_detach_suspending();
+        m_managed_reset_release_done_ev.async_detach_suspending();
     }
 
 
@@ -871,26 +890,35 @@ public:
 
     void release_start_in_reset()
     {
+        m_managed_reset_release_done.store(false, std::memory_order_relaxed);
         m_inst.get().lock_iothread();
         m_cpu.set_soft_stopped(true);
         qemu::CpuArm(m_cpu).set_power_state(false);
         m_inst.get().unlock_iothread();
 
-        m_cpu.reset(false);
         m_time_sync->on_reset_finish();
-        m_inst.get().lock_iothread();
-        qemu::CpuArm(m_cpu).set_power_state(true);
-        m_resetting = none;
-        m_managed_reset_released = true;
-        m_cpu.set_soft_stopped(false);
-        m_cpu.halt(false);
-        m_time_sync->on_arm_deadline();
-        m_cpu.kick();
-        m_inst.get().unlock_iothread();
-        if (!m_coroutines) {
-            set_signaled();
+        m_cpu.async_safe_run(make_tracked_async_job([this] {
+            qemu::CpuArm(m_cpu).set_power_state(true);
+            m_cpu.set_soft_stopped(false);
+            m_time_sync->on_arm_deadline();
+            m_cpu.reset(false);
+            m_managed_reset_released = true;
+            m_resetting = none;
+            if (m_coroutines) {
+                m_qemu_kick_ev.async_notify();
+            } else {
+                set_signaled();
+            }
+            m_managed_reset_release_done.store(true, std::memory_order_release);
+            m_managed_reset_release_done_ev.async_notify();
+        }));
+        while (!m_managed_reset_release_done.load(std::memory_order_acquire) &&
+               !m_finished) {
+            sc_core::wait(m_managed_reset_release_done_ev);
         }
-        m_qemu_kick_ev.async_notify();
+        if (m_finished) {
+            return;
+        }
     }
 
     /* NB _MUST_ be called from an SC_THREAD */
@@ -898,6 +926,12 @@ public:
     {
         /* Assume this is on the SystemC thread, so no race condition issues */
         if (m_finished) return;
+
+        m_reset_signal_value.store(val, std::memory_order_relaxed);
+        m_reset_signal_seen.store(true, std::memory_order_release);
+        if (!m_started.load(std::memory_order_acquire)) {
+            return;
+        }
 
         if (val) {
             if (m_resetting != none) {
@@ -944,7 +978,6 @@ public:
                     }
                     m_cpu.set_soft_stopped(false);
                     m_time_sync->on_arm_deadline();
-                    m_cpu.kick();
                     m_qemu_kick_ev.async_notify();
                 }));
                 m_qemu_kick_ev.async_notify();
@@ -972,6 +1005,22 @@ public:
         }
         m_time_sync->on_kick_notify();
     }
+
+    void replay_deferred_reset()
+    {
+        if (!m_reset_signal_seen.load(std::memory_order_acquire)) {
+            return;
+        }
+
+        const bool reset_asserted =
+            m_reset_signal_value.load(std::memory_order_relaxed);
+        if (reset_asserted && m_resetting == none) {
+            reset_cb(true);
+        } else if (!reset_asserted && m_resetting != none) {
+            reset_cb(false);
+        }
+    }
+
     virtual void end_of_elaboration() override
     {
         QemuDevice::end_of_elaboration();
@@ -989,17 +1038,21 @@ public:
         m_quantum_ns = int64_t(tlm_utils::tlm_quantumkeeper::get_global_quantum().to_seconds() * 1e9);
 
         QemuDevice::start_of_simulation();
-        const bool start_in_reset = p_start_in_reset.get_value();
+        const bool reset_signal_asserted =
+            m_reset_signal_seen.load(std::memory_order_acquire) &&
+            m_reset_signal_value.load(std::memory_order_relaxed);
+        const bool start_in_reset =
+            p_start_in_reset.get_value() || reset_signal_asserted;
         if (start_in_reset) {
             m_cpu.reset(true);
             m_resetting = hold_reset;
         }
 
         if (m_inst.get_tcg_mode() == QemuInstance::TCG_SINGLE) {
-            if (m_inst.can_run()) {
+            if (m_resetting == none && m_inst.can_run()) {
                 m_time_sync->on_qk_start();
             }
-        } else if (!m_coroutines) {
+        } else if (!m_coroutines && m_resetting == none) {
             /*
              * In MTTCG mode, start the QK to register a suspending channel
              * with the SystemC kernel. Without this, async_suspend() returns
@@ -1021,9 +1074,9 @@ public:
              * first called), leaving no suspending events and causing
              * premature simulation exit due to starvation.
              */
-            m_time_sync->on_qk_start();
+            if (m_resetting == none) {
+                m_time_sync->on_qk_start();
 
-            if (!start_in_reset) {
                 /* Prepare the CPU for its first run and release it
                  * Hold BQL to synchronize with the vCPU thread's idle-wait loop
                  * in qemu_process_cpu_events(). That loop checks cpu_thread_is_idle()
