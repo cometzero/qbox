@@ -23,6 +23,7 @@
 #include <module_factory_registery.h>
 
 #include <cinttypes>
+#include <limits>
 
 /*
  * This class wraps the qemu's GPEX: Generic Pci EXpress
@@ -94,6 +95,11 @@ protected:
     cci::cci_param<uint64_t> p_mmio_size;
     cci::cci_param<uint64_t> p_mmio_high_addr;
     cci::cci_param<uint64_t> p_mmio_high_size;
+    cci::cci_param<uint64_t> p_request_origin_id;
+    cci::cci_param<uint32_t> p_request_domain_id;
+    cci::cci_param<uint32_t> p_requester_id;
+    cci::cci_param<uint32_t> p_request_substream_id;
+    cci::cci_param<uint32_t> p_request_capabilities;
 
     qemu::MemoryRegion m_mmio_alias;
     qemu::MemoryRegion m_mmio_high_alias;
@@ -119,6 +125,11 @@ public:
         , p_mmio_size("mmio_iface.size", mmio_size, "Interface MMIO size")
         , p_mmio_high_addr("mmio_iface_high.address", mmio_high_addr, "High Interface MMIO address")
         , p_mmio_high_size("mmio_iface_high.size", mmio_high_size, "High Interface MMIO size")
+        , p_request_origin_id("request_origin_id", std::numeric_limits<uint64_t>::max(), "Opaque request origin ID")
+        , p_request_domain_id("request_domain_id", std::numeric_limits<uint32_t>::max(), "Request domain ID")
+        , p_requester_id("requester_id", std::numeric_limits<uint32_t>::max(), "Request SID or requester ID")
+        , p_request_substream_id("request_substream_id", std::numeric_limits<uint32_t>::max(), "Request SSID")
+        , p_request_capabilities("request_capabilities", REQUEST_CONTEXT_CAP_NONE, "Request capability flags")
         , devices()
     {
         sc_assert(p_mmio_addr != 0);
@@ -136,6 +147,9 @@ public:
     {
         QemuDevice::before_end_of_elaboration();
 
+        bus_master.set_request_context(make_request_context(
+            p_request_origin_id, p_request_domain_id, p_requester_id,
+            p_request_substream_id, p_request_capabilities));
         bus_master.init(m_dev, "bus-master");
     }
 

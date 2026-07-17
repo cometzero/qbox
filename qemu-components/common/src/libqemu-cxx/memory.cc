@@ -57,7 +57,9 @@ static inline uint32_t LIB_TO_QEMU_MEMTXRESULT_MAPPING(MemoryRegionOps::MemTxRes
  */
 
 MemoryRegionOps::MemTxAttrs::MemTxAttrs(const ::MemTxAttrs& qemu_attrs)
-    : secure(qemu_attrs.secure), debug(qemu_attrs.debug)
+    : secure(qemu_attrs.secure)
+    , debug(qemu_attrs.debug)
+    , requester_id(qemu_attrs.requester_id)
 {
 }
 
@@ -228,6 +230,7 @@ MemoryRegion::MemTxResult MemoryRegion::dispatch_read(uint64_t addr, uint64_t* d
     QemuMemoryRegion* mr = reinterpret_cast<QemuMemoryRegion*>(m_obj);
 
     qemu_attrs.secure = attrs.secure;
+    qemu_attrs.requester_id = attrs.requester_id;
 
     qemu_res = m_int->exports().memory_region_dispatch_read(mr, addr, data, size, qemu_attrs);
 
@@ -241,6 +244,7 @@ MemoryRegion::MemTxResult MemoryRegion::dispatch_write(uint64_t addr, uint64_t d
     QemuMemoryRegion* mr = reinterpret_cast<QemuMemoryRegion*>(m_obj);
 
     qemu_attrs.secure = attrs.secure;
+    qemu_attrs.requester_id = attrs.requester_id;
 
     qemu_res = m_int->exports().memory_region_dispatch_write(mr, addr, data, size, qemu_attrs);
 
@@ -304,6 +308,7 @@ AddressSpace::MemTxResult AddressSpace::read(uint64_t addr, void* data, size_t s
     ::MemTxResult qemu_res;
 
     qemu_attrs.secure = attrs.secure;
+    qemu_attrs.requester_id = attrs.requester_id;
 
     qemu_res = m_int->exports().address_space_read(m_as, addr, qemu_attrs, data, size);
 
@@ -317,6 +322,7 @@ AddressSpace::MemTxResult AddressSpace::write(uint64_t addr, const void* data, s
     ::MemTxResult qemu_res;
 
     qemu_attrs.secure = attrs.secure;
+    qemu_attrs.requester_id = attrs.requester_id;
 
     qemu_res = m_int->exports().address_space_write(m_as, addr, qemu_attrs, data, size);
 

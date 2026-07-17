@@ -501,11 +501,17 @@ protected:
         trans.set_dmi_allowed(false);
         trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
         initiator_customize_tlm_payload(trans);
+        RequestContext dmi_context = socket.get_request_context();
+        dmi_context.access_path = RequestAccessPath::DMI;
+        RequestContextTlmExtension request_context_ext(dmi_context);
+        trans.set_extension(&request_context_ext);
 
         if (!socket->get_direct_mem_ptr(trans, dmi) || dmi.is_none_allowed()) {
+            trans.clear_extension(&request_context_ext);
             initiator_tidy_tlm_payload(trans);
             return false;
         }
+        trans.clear_extension(&request_context_ext);
         initiator_tidy_tlm_payload(trans);
 
         const uint64_t end = address + size - 1;
@@ -700,6 +706,13 @@ public:
     cci::cci_param<unsigned int> p_gdb_port;
     cci::cci_param<bool> p_start_in_reset;
     cci::cci_param<bool> p_reset_power_on;
+    cci::cci_param<uint64_t> p_request_origin_id;
+    cci::cci_param<uint32_t> p_request_domain_id;
+    cci::cci_param<uint32_t> p_requester_id;
+    cci::cci_param<uint32_t> p_request_substream_id;
+    cci::cci_param<uint32_t> p_request_capabilities;
+    cci::cci_param<bool> p_request_secure;
+    cci::cci_param<bool> p_request_secure_valid;
 
     /* The default memory socket. Mapped to the default CPU address space in QEMU */
     QemuInitiatorSocket<> socket;
@@ -715,6 +728,13 @@ public:
         , p_gdb_port("gdb_port", 0, "Wait for gdb connection on TCP port <gdb_port>")
         , p_start_in_reset("start_in_reset", false, "Hold the CPU in reset when simulation starts")
         , p_reset_power_on("reset_power_on", false, "Set Arm PSCI power state to ON when reset is released")
+        , p_request_origin_id("request_origin_id", std::numeric_limits<uint64_t>::max(), "Opaque request origin ID")
+        , p_request_domain_id("request_domain_id", std::numeric_limits<uint32_t>::max(), "Request domain ID")
+        , p_requester_id("requester_id", std::numeric_limits<uint32_t>::max(), "Request SID or requester ID")
+        , p_request_substream_id("request_substream_id", std::numeric_limits<uint32_t>::max(), "Request SSID")
+        , p_request_capabilities("request_capabilities", REQUEST_CONTEXT_CAP_NONE, "Request capability flags")
+        , p_request_secure("request_secure", false, "Fixed request security state")
+        , p_request_secure_valid("request_secure_valid", false, "Fixed request security validity")
         , socket("mem", *this, inst)
         , m_insn_per_second("insn_per_second", 1'000'000'000, "number of instructions per second in mcips mode")
         , m_coroutines(false)
@@ -731,7 +751,6 @@ public:
         halt.register_value_changed_cb(haltcb);
         auto resetcb = std::bind(&QemuCpu::reset_cb, this, _1);
         reset.register_value_changed_cb(resetcb);
-
         m_time_sync->on_construct();
         m_inst.add_dev(this);
 
@@ -855,6 +874,12 @@ public:
 
         m_time_sync->on_after_cpu_created();
 
+        RequestContext request_context = make_request_context(
+            p_request_origin_id, p_request_domain_id, p_requester_id,
+            p_request_substream_id, p_request_capabilities);
+        request_context.secure = p_request_secure;
+        request_context.secure_valid = p_request_secure_valid;
+        socket.set_request_context(request_context);
         socket.init(m_dev, "memory");
 
         m_cpu.set_soft_stopped(true);

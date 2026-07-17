@@ -38,6 +38,7 @@ unsigned int smmuv3_zip_archive_size() noexcept;
 #include "smmuv3_gen.h"
 #include "smmuv3_memory_attrs.h"
 #include "smmuv3_extensions.h"
+#include <tlm-extensions/request-context.h>
 
 namespace gs {
 
@@ -917,13 +918,21 @@ class smmuv3_tbu : public sc_core::sc_module
     static uint32_t extract_substream_id(tlm::tlm_generic_payload& txn)
     {
         auto* ssx = txn.get_extension<smmuv3_ss_extension>();
-        return (ssx && ssx->ssv) ? ssx->substream_id : 0;
+        if (ssx && ssx->ssv) return ssx->substream_id;
+        auto* context = txn.get_extension<RequestContextTlmExtension>();
+        return context && context->get_context().substream_valid
+                   ? context->get_context().substream_id
+                   : 0;
     }
 
     static bool extract_secure(tlm::tlm_generic_payload& txn)
     {
         auto* sx = txn.get_extension<smmuv3_secure_extension>();
-        return sx && sx->secure;
+        if (sx) return sx->secure;
+        auto* context = txn.get_extension<RequestContextTlmExtension>();
+        return context && context->get_context().secure_valid
+                   ? context->get_context().secure
+                   : false;
     }
 
 public:

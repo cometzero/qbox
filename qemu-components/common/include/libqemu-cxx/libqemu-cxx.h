@@ -344,6 +344,7 @@ public:
     struct MemTxAttrs {
         bool secure = false;
         bool debug = false;
+        uint16_t requester_id = 0;
 
         MemTxAttrs() = default;
         MemTxAttrs(const ::MemTxAttrs& qemu_attrs);

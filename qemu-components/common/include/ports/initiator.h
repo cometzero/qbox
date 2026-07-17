@@ -31,6 +31,7 @@
 #include <tlm-extensions/qemu-memtx-attrs.h>
 #include <tlm-extensions/qemu-mr-hint.h>
 #include <tlm-extensions/exclusive-access.h>
+#include <tlm-extensions/request-context.h>
 #include <tlm-extensions/shmem_extension.h>
 #include <tlm-extensions/underlying-dmi.h>
 #include <tlm_sockets_buswidth.h>
@@ -83,6 +84,7 @@ public:
 protected:
     QemuInstance& m_inst;
     QemuInitiatorIface& m_initiator;
+    RequestContext m_request_context;
     qemu::Device m_dev;
     gs::runonsysc m_on_sysc;
     int reentrancy = 0;
@@ -292,7 +294,11 @@ protected:
 
         gs::UnderlyingDMITlmExtension lu_dmi;
         init_payload(ltrans, tlm::TLM_IGNORE_COMMAND, base_addr + addr, &tmp, 0);
+        RequestContext dmi_context = m_request_context;
+        dmi_context.access_path = RequestAccessPath::DMI;
+        RequestContextTlmExtension request_context_ext(dmi_context);
         ltrans.set_extension(&lu_dmi);
+        ltrans.set_extension(&request_context_ext);
         tlm::tlm_dmi ldmi_data;
 
         if ((*this)->get_direct_mem_ptr(ltrans, ldmi_data)) {
@@ -394,6 +400,7 @@ protected:
              te->addr_mask);
         }
         ltrans.clear_extension(&lu_dmi);
+        ltrans.clear_extension(&request_context_ext);
     }
 
     /**
@@ -665,7 +672,17 @@ protected:
         trans.set_address(addr);
         check_qemu_mr_hint(trans);
         if (trans.is_dmi_allowed()) {
+            RequestContextTlmExtension* context_ext = nullptr;
+            trans.get_extension(context_ext);
+            RequestAccessPath previous_path = RequestAccessPath::UNKNOWN;
+            if (context_ext != nullptr) {
+                previous_path = context_ext->get_context().access_path;
+                context_ext->set_access_path(RequestAccessPath::DMI);
+            }
             check_dmi_hint_locked(trans);
+            if (context_ext != nullptr) {
+                context_ext->set_access_path(previous_path);
+            }
         }
 
         m_initiator.initiator_set_local_time(now);
@@ -694,12 +711,17 @@ protected:
         TlmPayload trans;
         init_payload(trans, command, addr, val, size);
         QemuMemTxAttrsTlmExtension attrs_ext(attrs);
+        RequestContextTlmExtension context_ext(
+            normalize_qemu_request_context(m_request_context, attrs.secure,
+                                           RequestAccessPath::REGULAR));
         trans.set_extension(&attrs_ext);
+        trans.set_extension(&context_ext);
 
         if (trans.get_extension<ExclusiveAccessTlmExtension>()) {
             /* in the case of an exclusive access keep the iolock (and assume NO side-effects)
              * clearly dangerous, but exclusives are not guaranteed to work on IO space anyway
              */
+            context_ext.set_access_path(RequestAccessPath::DIRECT);
             do_direct_access(trans);
         } else {
             bool qemu_io_locked = m_inst.g_rec_qemu_io_lock.try_lock();
@@ -718,10 +740,13 @@ protected:
 
             /* Force re-entrant code to use a direct access (safe for reentrancy with no side effects) */
             if (reentrancy > 1) {
+                context_ext.set_access_path(RequestAccessPath::REENTRANT);
                 do_direct_access(trans);
             } else if (attrs.debug) {
+                context_ext.set_access_path(RequestAccessPath::DEBUG);
                 do_debug_access(trans);
             } else {
+                context_ext.set_access_path(RequestAccessPath::REGULAR);
                 do_regular_access(trans);
             }
 
@@ -731,6 +756,7 @@ protected:
             }
         }
         trans.clear_extension(&attrs_ext);
+        trans.clear_extension(&context_ext);
         m_initiator.initiator_tidy_tlm_payload(trans);
 
         MemTxResult result = qemu::MemoryRegionOps::MemTxError;
@@ -752,6 +778,9 @@ protected:
     }
 
 public:
+    void set_request_context(const RequestContext& context) { m_request_context = context; }
+    const RequestContext& get_request_context() const { return m_request_context; }
+
     MemTxResult qemu_io_read(uint64_t addr, uint64_t* val, unsigned int size, MemTxAttrs attrs)
     {
         return qemu_io_access(tlm::TLM_READ_COMMAND, addr, val, size, attrs);
@@ -828,6 +857,10 @@ public:
         uint64_t temp;
         init_payload(trans, tlm::TLM_IGNORE_COMMAND, current_addr, &temp, 0);
         trans.set_dmi_allowed(true);
+        RequestContext dmi_context = m_request_context;
+        dmi_context.access_path = RequestAccessPath::DMI;
+        RequestContextTlmExtension request_context_ext(dmi_context);
+        trans.set_extension(&request_context_ext);
 
         while (current_addr < addr + len) {
             tlm::tlm_dmi dmi_data = check_dmi_hint_locked(trans);
@@ -846,6 +879,7 @@ public:
             trans.set_address(current_addr);
         }
 
+        trans.clear_extension(&request_context_ext);
         m_initiator.initiator_tidy_tlm_payload(trans);
     }
 

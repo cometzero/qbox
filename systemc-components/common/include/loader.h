@@ -17,6 +17,7 @@
 #include <scp/report.h>
 #include <module_factory_registery.h>
 #include <ports/target-signal-socket.h>
+#include <tlm-extensions/request-context.h>
 #include <tlm_sockets_buswidth.h>
 
 #include "onmethod.h"
@@ -97,6 +98,13 @@ class loader : public sc_core::sc_module
 {
     SCP_LOGGER();
     cci::cci_broker_handle m_broker;
+    cci::cci_param<uint64_t> m_request_origin_id;
+    cci::cci_param<uint32_t> m_request_domain_id;
+    cci::cci_param<uint32_t> m_requester_id;
+    cci::cci_param<uint32_t> m_request_substream_id;
+    cci::cci_param<uint32_t> m_request_capabilities;
+    cci::cci_param<bool> m_request_secure;
+    cci::cci_param<bool> m_request_secure_valid;
 
     template <typename MODULE, typename TYPES = tlm::tlm_base_protocol_types>
     class simple_initiator_socket_zero
@@ -149,7 +157,17 @@ private:
             trans.set_data_length(len);
             trans.set_streaming_width(len);
             trans.set_byte_enable_length(0);
-            if (initiator_socket->transport_dbg(trans) != len) {
+            RequestContext context = make_request_context(
+                m_request_origin_id, m_request_domain_id, m_requester_id,
+                m_request_substream_id, m_request_capabilities);
+            context.secure = m_request_secure;
+            context.secure_valid = m_request_secure_valid;
+            context.access_path = RequestAccessPath::DEBUG;
+            RequestContextTlmExtension context_ext(context);
+            trans.set_extension(&context_ext);
+            unsigned int transferred = initiator_socket->transport_dbg(trans);
+            trans.clear_extension(&context_ext);
+            if (transferred != len) {
                 SCP_FATAL(()) << name() << " : Error loading data to memory @ "
                               << "0x" << std::hex << addr;
             }
@@ -182,6 +200,13 @@ private:
 public:
     loader(sc_core::sc_module_name name)
         : m_broker(cci::cci_get_broker())
+        , m_request_origin_id("request_origin_id", std::numeric_limits<uint64_t>::max(), "Opaque request origin ID")
+        , m_request_domain_id("request_domain_id", std::numeric_limits<uint32_t>::max(), "Request domain ID")
+        , m_requester_id("requester_id", std::numeric_limits<uint32_t>::max(), "Request SID or requester ID")
+        , m_request_substream_id("request_substream_id", std::numeric_limits<uint32_t>::max(), "Request SSID")
+        , m_request_capabilities("request_capabilities", REQUEST_CONTEXT_CAP_NONE, "Request capability flags")
+        , m_request_secure("request_secure", false, "Request security state")
+        , m_request_secure_valid("request_secure_valid", false, "Request security validity")
         , initiator_socket("initiator_socket") //, [&](std::string s) -> void { register_boundto(s); })
         , reset("reset")
     {
@@ -200,6 +225,13 @@ public:
     }
     loader(sc_core::sc_module_name name, std::function<void(const uint8_t* data, uint64_t offset, uint64_t len)> _write)
         : m_broker(cci::cci_get_broker())
+        , m_request_origin_id("request_origin_id", std::numeric_limits<uint64_t>::max(), "Opaque request origin ID")
+        , m_request_domain_id("request_domain_id", std::numeric_limits<uint32_t>::max(), "Request domain ID")
+        , m_requester_id("requester_id", std::numeric_limits<uint32_t>::max(), "Request SID or requester ID")
+        , m_request_substream_id("request_substream_id", std::numeric_limits<uint32_t>::max(), "Request SSID")
+        , m_request_capabilities("request_capabilities", REQUEST_CONTEXT_CAP_NONE, "Request capability flags")
+        , m_request_secure("request_secure", false, "Request security state")
+        , m_request_secure_valid("request_secure_valid", false, "Request security validity")
         , initiator_socket("initiator_socket") //, [&](std::string s) -> void { register_boundto(s); })
         , reset("reset")
         , write_cb(_write)
