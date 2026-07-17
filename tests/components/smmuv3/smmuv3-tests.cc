@@ -12,9 +12,20 @@ TEST_BENCH(smmuv3_bench, ID_Registers)
     ASSERT_TRUE(idr0 & 0x1);
     ASSERT_TRUE(idr0 & 0x2);
     ASSERT_EQ((idr0 >> 2) & 0x3, 0x2);
+    ASSERT_EQ((idr0 >> 6) & 0x3, 0x2);
+    ASSERT_TRUE(idr0 & (1u << 9));
+    ASSERT_TRUE(idr0 & (1u << 14));
+    ASSERT_TRUE(idr0 & (1u << 19));
+    ASSERT_EQ((idr0 >> 27) & 0x3, 0x1);
 
     uint32_t idr1 = mmio_read32(smmuv3_regs::IDR1);
     ASSERT_GT(idr1 & 0x3F, 0u);
+    ASSERT_TRUE(idr1 & (1u << 27));
+
+    uint32_t idr3 = mmio_read32(0x00c);
+    ASSERT_TRUE(idr3 & (1u << 8));
+    ASSERT_TRUE(idr3 & (1u << 10));
+    ASSERT_EQ((idr3 >> 11) & 0x3, 0x2);
 
     uint32_t idr5 = mmio_read32(smmuv3_regs::IDR5);
     ASSERT_NE(idr5 & 0x7, 0u);
@@ -1900,6 +1911,15 @@ TEST_BENCH(smmuv3_bench_pamax40, PAMAX40_Reports_OAS_Two) { ASSERT_EQ(mmio_read3
 TEST_BENCH(smmuv3_bench_pamax42, PAMAX42_Reports_OAS_Three) { ASSERT_EQ(mmio_read32(smmuv3_regs::IDR5) & 0x7u, 3u); }
 
 TEST_BENCH(smmuv3_bench_pamax44, PAMAX44_Reports_OAS_Four) { ASSERT_EQ(mmio_read32(smmuv3_regs::IDR5) & 0x7u, 4u); }
+
+TEST_BENCH(smmuv3_bench_pamax52, PAMAX52_Reports_OAS_SixAndVAX)
+{
+    const uint32_t idr5 = mmio_read32(smmuv3_regs::IDR5);
+    ASSERT_EQ(idr5 & 0x7u, 6u);
+    ASSERT_EQ((idr5 >> 10) & 0x3u, 1u);
+    ASSERT_EQ(gs::PA_BITS, 52u);
+    ASSERT_EQ(gs::OUTPUT_SIZE_MAP[6], 52u);
+}
 
 TEST_BENCH(smmuv3_bench, GBPA_BypassFromInvalidSTE_NoAbort)
 {

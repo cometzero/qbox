@@ -942,4 +942,13 @@ public:
     }
 };
 
+class smmuv3_bench_pamax52 : private pamax_preset_, public smmuv3_bench
+{
+public:
+    smmuv3_bench_pamax52(const sc_core::sc_module_name& n)
+        : pamax_preset_(static_cast<const char*>(n), 52), smmuv3_bench(n)
+    {
+    }
+};
+
 #endif

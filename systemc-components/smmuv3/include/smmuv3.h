@@ -260,7 +260,7 @@ constexpr uint32_t SYNC_CS_SEV = 2;  // SEV = Send EVent (SystemC: not modelled,
 constexpr uint32_t GATOS_PAR_FAULT_TRANSLATION = 0x10; // GATOS PAR fault-status code meaning "translation fault"
 
 constexpr uint32_t IDR0_TTF_AARCH64 = 0x2;  // TTF (Translation Table Format) value advertising AArch64 page tables
-constexpr uint32_t IDR0_STLEVEL_2LVL = 0x2; // Stream-table level value advertising the 2-level format
+constexpr uint32_t IDR0_STLEVEL_2LVL = 0x1; // Stream-table level value advertising the 2-level format
 constexpr uint32_t IDR1_DEFAULT_QUEUE_LOG2 = 19;
 
 // OAS = Output Address Size encoding (3-bit field, expands to a number of physical-address bits).
@@ -270,8 +270,9 @@ constexpr uint32_t OAS_40 = 2;
 constexpr uint32_t OAS_42 = 3;
 constexpr uint32_t OAS_44 = 4;
 constexpr uint32_t OAS_48 = 5;
+constexpr uint32_t OAS_52 = 6;
 
-constexpr uint32_t PA_BITS = 48; // PA = Physical Address: largest physical address width this model supports
+constexpr uint32_t PA_BITS = 52; // PA = Physical Address: largest physical address width this model supports
 constexpr uint32_t
     VA_SIGN_BIT_SHIFT = 63; // VA = Virtual Address: bit 63 selects the upper/lower half of the address space
 constexpr uint32_t IPA_PAGE_SHIFT = 12; // page shift used when treating an address as an IPA
@@ -280,7 +281,7 @@ constexpr uint32_t INPUT_SIZE_MIN = 25;
 constexpr uint32_t INPUT_SIZE_MAX = 48;
 
 // Translates an OAS/IPS (Intermediate Physical Size) 3-bit code into the actual number of address bits.
-constexpr std::array<uint32_t, 8> OUTPUT_SIZE_MAP = { 32, 36, 40, 42, 44, 48, 48, 48 };
+constexpr std::array<uint32_t, 8> OUTPUT_SIZE_MAP = { 32, 36, 40, 42, 44, 48, 52, 52 };
 
 // Twelve bytes of fixed identification that appear in the top-of-page ID registers
 // (vendor/part/revision/Class). These values are consumed by the IDREGS array; they are not arbitrary.
@@ -355,7 +356,7 @@ public:
     };
 
     // Configuration parameters (CCI = Configuration & Communication Interface — the SystemC parameter system):
-    cci::cci_param<uint32_t> p_pamax;      // PAMAX = max Physical Address bits this instance advertises (32..48)
+    cci::cci_param<uint32_t> p_pamax;      // PAMAX = max Physical Address bits this instance advertises (32..52)
     cci::cci_param<uint16_t> p_sidsize;    // SIDSIZE = number of StreamID bits this instance accepts
     cci::cci_param<bool> p_ato;            // ATO = Address Translation Operations: enable the GATOS debug channel
     cci::cci_param<uint8_t> p_num_tbu;     // number of Translation Buffer Units (upstream front-ends) to expose
@@ -1198,15 +1199,20 @@ void smmuv3<BUSWIDTH>::start_of_simulation()
     IDR0[IDR0_VMID16] = 1;
     IDR0[IDR0_PRI] = 1;
     IDR0[IDR0_ATOS] = static_cast<uint32_t>(p_ato.get_value());
-    IDR0[IDR0_HTTU] = 3;
+    IDR0[IDR0_HTTU] = 2;
     IDR0[IDR0_STLEVEL] = IDR0_STLEVEL_2LVL;
     IDR0[IDR0_MSI] = 1;
     IDR0[IDR0_ATS] = 1;
+    IDR0 = static_cast<uint32_t>(IDR0) | (1u << 19) | (1u << 14) |
+           (1u << 9);
 
     IDR1 = 0;
     IDR1[IDR1_SIDSIZE] = p_sidsize.get_value();
     IDR1[IDR1_EVENTQS] = IDR1_DEFAULT_QUEUE_LOG2;
     IDR1[IDR1_CMDQS] = IDR1_DEFAULT_QUEUE_LOG2;
+    IDR1 = static_cast<uint32_t>(IDR1) | (1u << 27);
+
+    IDR3 = (1u << 8) | (1u << 10) | (2u << 11);
 
     IDR5 = 0;
     uint32_t oas_val = OAS_48;
@@ -1229,6 +1235,9 @@ void smmuv3<BUSWIDTH>::start_of_simulation()
     case 48:
         oas_val = OAS_48;
         break;
+    case 52:
+        oas_val = OAS_52;
+        break;
     default:
         oas_val = OAS_48;
         break;
@@ -1237,6 +1246,9 @@ void smmuv3<BUSWIDTH>::start_of_simulation()
     IDR5[IDR5_GRAN4K] = 1;
     IDR5[IDR5_GRAN16K] = 1;
     IDR5[IDR5_GRAN64K] = 1;
+    if (p_pamax.get_value() == 52) {
+        IDR5 = static_cast<uint32_t>(IDR5) | (1u << 10);
+    }
 
     for (size_t i = 0; i < PRIMECELL_IDS.size(); ++i) {
         *IDREGS[i] = PRIMECELL_IDS[i];
