@@ -22,6 +22,7 @@ class virtio_net_pci : public qemu_gpex::Device
     std::string m_netdev_id;
     cci::cci_param<std::string> p_mac;
     cci::cci_param<std::string> p_netdev_str;
+    cci::cci_param<std::string> p_addr;
 
 public:
     virtio_net_pci(const sc_core::sc_module_name& name, sc_core::sc_object* o, sc_core::sc_object* t)
@@ -33,6 +34,7 @@ public:
         , m_netdev_id(std::string(sc_core::sc_module::name()) + "-id")
         , p_mac("mac", "", "MAC address of NIC")
         , p_netdev_str("netdev_str", "type=user", "netdev string for QEMU (do not specify ID)")
+        , p_addr("addr", "", "PCI slot pinning, e.g. \"01.0\"; empty leaves it to gpex auto-assignment")
     {
         std::stringstream opts;
         opts << p_netdev_str.get_value();
@@ -50,6 +52,7 @@ public:
         if (!p_mac.get_value().empty()) m_dev.set_prop_str("mac", p_mac.get_value().c_str());
         m_dev.set_prop_str("netdev", m_netdev_id.c_str());
         m_dev.set_prop_str("romfile", "");
+        if (!p_addr.get_value().empty()) m_dev.set_prop_str("addr", p_addr.get_value().c_str());
     }
 };
 
