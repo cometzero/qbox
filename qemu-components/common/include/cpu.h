@@ -170,6 +170,10 @@ protected:
     std::mutex m_signaled_lock;
     std::condition_variable m_signaled_cond;
 
+    std::atomic<bool> m_sync_hold{ false };
+    std::mutex m_sync_hold_lock;
+    std::condition_variable m_sync_hold_cond;
+
     std::shared_ptr<gs::tlm_quantumkeeper_extended> m_qk;
     std::atomic<bool> m_finished = false;
     std::atomic<bool> m_started = false;
@@ -341,6 +345,35 @@ protected:
         }
     }
 
+    void sync_hold_cb(const bool& asserted)
+    {
+        m_sync_hold.store(asserted, std::memory_order_release);
+        if (asserted && m_started && !m_finished && m_cpu.valid()) {
+            m_cpu.kick();
+        } else if (!asserted) {
+            m_sync_hold_cond.notify_all();
+        }
+    }
+
+    void wait_for_sync_hold()
+    {
+        if (!m_sync_hold.load(std::memory_order_acquire)) {
+            return;
+        }
+
+        if (m_qk) {
+            m_qk->stop();
+        }
+        std::unique_lock<std::mutex> lock(m_sync_hold_lock);
+        m_sync_hold_cond.wait(lock, [this] {
+            return !m_sync_hold.load(std::memory_order_acquire) || m_finished;
+        });
+        if (!m_finished && m_qk) {
+            m_qk->reset();
+            m_qk->start();
+        }
+    }
+
     /*
      * Called by the QEMU iothread when the deadline timer expires. We kick the
      * CPU out of its execution loop for it to call the end_of_loop_cb callback.
@@ -427,6 +460,11 @@ protected:
          */
 
         SCP_TRACE(())("Prepare run");
+        wait_for_sync_hold();
+        if (m_finished) {
+            return;
+        }
+
         if (m_inst.get_tcg_mode() == QemuInstance::TCG_SINGLE) {
             while (!m_inst.can_run() && !m_finished) {
                 wait_for_work();
@@ -641,6 +679,12 @@ protected:
 
         m_inst.get().unlock_iothread();
         if (m_finished) return;
+        if (m_sync_hold.load(std::memory_order_acquire)) {
+            if (m_qk) {
+                m_qk->stop();
+            }
+            return;
+        }
         if (m_resetting != none) {
             /*
              * A reset-held CPU has no executable time budget.  Starting its
@@ -718,11 +762,14 @@ public:
     QemuInitiatorSocket<> socket;
     TargetSignalSocket<bool> halt;
     TargetSignalSocket<bool> reset;
+    /* Co-simulation scheduler hold; it neither halts nor resets the guest. */
+    TargetSignalSocket<bool> sync_hold;
 
     QemuCpu(const sc_core::sc_module_name& name, QemuInstance& inst, const std::string& type_name)
         : QemuDevice(name, inst, (type_name + "-cpu").c_str())
         , halt("halt")
         , reset("reset")
+        , sync_hold("sync_hold")
         , m_qemu_kick_ev(false)
         , m_signaled(false)
         , p_gdb_port("gdb_port", 0, "Wait for gdb connection on TCP port <gdb_port>")
@@ -751,6 +798,8 @@ public:
         halt.register_value_changed_cb(haltcb);
         auto resetcb = std::bind(&QemuCpu::reset_cb, this, _1);
         reset.register_value_changed_cb(resetcb);
+        auto holdcb = std::bind(&QemuCpu::sync_hold_cb, this, _1);
+        sync_hold.register_value_changed_cb(holdcb);
         m_time_sync->on_construct();
         m_inst.add_dev(this);
 
@@ -813,6 +862,7 @@ public:
         }
         if (m_finished) return;
         m_finished = true; // assert before taking lock (for co-routines too)
+        m_sync_hold_cond.notify_all();
 
         if (!m_cpu.valid()) {
             /* CPU hasn't been created yet */
