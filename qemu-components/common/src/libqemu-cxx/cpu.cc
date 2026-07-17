@@ -67,6 +67,11 @@ void Cpu::async_safe_run(AsyncJobFn job)
     m_int->exports().async_safe_run_on_cpu(m_obj, &generic_async_run, dyn_job);
 }
 
+void Cpu::tlb_flush_all_cpus()
+{
+    m_int->exports().libqemu_tlb_flush_all_cpus(m_obj);
+}
+
 [[noreturn]] void Cpu::exit_loop_from_io()
 {
     uintptr_t pc = m_int->exports().cpu_get_mem_io_pc(m_obj);

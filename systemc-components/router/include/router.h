@@ -815,8 +815,11 @@ private:
     void invalidate_direct_mem_ptr(int id, sc_dt::uint64 start, sc_dt::uint64 end)
     {
         if (id_targets[id]->use_offset) {
-            start = id_targets[id]->address + start;
-            end = id_targets[id]->address + end;
+            const sc_dt::uint64 address = id_targets[id]->address;
+            const sc_dt::uint64 max =
+                std::numeric_limits<sc_dt::uint64>::max();
+            start = start > max - address ? max : address + start;
+            end = end > max - address ? max : address + end;
         }
 #if defined(THREAD_SAFE) and THREAD_SAFE
         std::lock_guard<std::mutex> lock(m_dmi_mutex);
@@ -868,6 +871,11 @@ private:
                 initiators.insert(t);
             }
             it = m_dmi_info_map.erase(it);
+        }
+        if (broadcast_invalidation.get_value()) {
+            for (int t = 0; t < static_cast<int>(target_socket.size()); ++t) {
+                initiators.insert(t);
+            }
         }
         for (auto t : initiators) {
             SCP_INFO((DMI)) << "Invalidating initiator " << t << " [0x" << std::hex << start << " - 0x" << end << "]";
@@ -1027,6 +1035,7 @@ private:
 
     /// @brief CCI parameter to control lazy initialization.
     cci::cci_param<bool> lazy_init;
+    cci::cci_param<bool> broadcast_invalidation;
 
     /**
      * @brief Constructor for the router module.
@@ -1045,6 +1054,7 @@ public:
         , m_address_map()
         , m_broker(broker)
         , lazy_init("lazy_init", false, "Initialize the router lazily (eg. during simulation rather than BEOL)")
+        , broadcast_invalidation("broadcast_invalidation", false)
     {
         SCP_DEBUG(()) << "router constructed";
 

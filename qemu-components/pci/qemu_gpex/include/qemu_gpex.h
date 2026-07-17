@@ -213,6 +213,7 @@ public:
      * QemuInitiatorIface
      */
     virtual void initiator_async_run(qemu::Cpu::AsyncJobFn job) override {}
+    virtual void initiator_tlb_flush_all_cpus() override {}
 };
 
 extern "C" void module_register();

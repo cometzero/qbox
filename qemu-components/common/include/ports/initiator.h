@@ -46,6 +46,7 @@ public:
     virtual sc_core::sc_time initiator_get_local_time() = 0;
     virtual void initiator_set_local_time(const sc_core::sc_time&) = 0;
     virtual void initiator_async_run(qemu::Cpu::AsyncJobFn job) = 0;
+    virtual void initiator_tlb_flush_all_cpus() = 0;
 };
 
 /**
@@ -459,8 +460,8 @@ protected:
          * rather than getting a translation done. We should invalidate any mmio 1-1 mapping
          * for this address */
         for (auto m : m_mmio_mrs) {
-            auto mr_start = m.first;
-            auto mr_end = m.first + m.second->get_size() - 1;
+            sc_dt::uint64 mr_start = m.first;
+            sc_dt::uint64 mr_end = m.first + m.second->get_size() - 1;
             if (mr_start <= addr && addr <= mr_end) {
                 // Use masked floor lookup to find the TE covering 'addr'
                 auto it = find_region(m.second->m_mapped_te, addr - mr_start);
@@ -1013,6 +1014,7 @@ private:
             invalidate_single_range(rit->first, rit->second);
             rit = m_ranges.erase(rit);
         }
+        m_initiator.initiator_tlb_flush_all_cpus();
     }
 
     bool region_match(uint64_t mr_rel_start, uint64_t mr_rel_end, uint64_t addr, uint64_t mask)
@@ -1029,13 +1031,15 @@ public:
 
         std::lock_guard<std::mutex> lock(m_mutex);
 
+        bool mmio_overlap = false;
         for (auto m : m_mmio_mrs) {
-            auto mr_start = m.first;
-            auto mr_end = m.first + m.second->get_size() - 1;
+            sc_dt::uint64 mr_start = m.first;
+            sc_dt::uint64 mr_end = m.first + m.second->get_size() - 1;
             // if the MR overlaps or is overlapped by the invalidation range
             if (start_range <= mr_end && mr_start <= end_range) {
-                auto mr_rel_start = start_range - mr_start;
-                auto mr_rel_end = end_range - mr_start;
+                mmio_overlap = true;
+                auto mr_rel_start = std::max(start_range, mr_start) - mr_start;
+                auto mr_rel_end = std::min(end_range, mr_end) - mr_start;
                 auto it = m.second->m_mapped_te.lower_bound(mr_rel_start);
 
                 // Check the previous interval (it might still match)
@@ -1043,18 +1047,22 @@ public:
                     auto prev = std::prev(it);
                     // only checking if the start of the region is in the area requested.
                     if (region_match(mr_rel_start, mr_rel_end, prev->first, prev->second.addr_mask)) {
+                        auto addr = prev->first;
+                        auto mask = prev->second.addr_mask;
                         m.second->iommu_unmap(&(prev->second));
                         m.second->m_mapped_te.erase(prev);
-                        SCP_TRACE(())("Region removed 0x{:x} (mask 0x{:x})", prev->first, it->second.addr_mask);
+                        SCP_TRACE(())("Region removed 0x{:x} (mask 0x{:x})", addr, mask);
                     }
                 }
 
                 // Scan forward while region bases are <= end
                 while (it != m.second->m_mapped_te.end() && it->first <= mr_rel_end) {
                     if (region_match(mr_rel_start, mr_rel_end, it->first, it->second.addr_mask)) {
+                        auto addr = it->first;
+                        auto mask = it->second.addr_mask;
                         m.second->iommu_unmap(&(it->second));
                         it = m.second->m_mapped_te.erase(it); // erase returns next iterator
-                        SCP_TRACE(())("Region removed 0x{:x} (mask 0x{:x})", it->first, it->second.addr_mask);
+                        SCP_TRACE(())("Region removed 0x{:x} (mask 0x{:x})", addr, mask);
                     } else {
                         ++it;
                     }
@@ -1062,11 +1070,12 @@ public:
 
                 SCP_DEBUG(())("Region(s) removed in range [0x{:x} - 0x{:x}] from mr [0x{:x} - 0x{:x}]", start_range,
                               end_range, mr_start, mr_end);
-                return;
             }
         }
 
-        m_ranges.push_back(std::make_pair(start_range, end_range));
+        if (!mmio_overlap) {
+            m_ranges.push_back(std::make_pair(start_range, end_range));
+        }
         m_initiator.initiator_async_run([&]() { invalidate_ranges_safe_cb(); });
     }
 

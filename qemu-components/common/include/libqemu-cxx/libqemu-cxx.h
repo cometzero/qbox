@@ -721,6 +721,7 @@ public:
 
     void async_run(AsyncJobFn job);
     void async_safe_run(AsyncJobFn job);
+    void tlb_flush_all_cpus();
 
     void set_end_of_loop_callback(EndOfLoopCallbackFn cb);
     void set_pc_entry_callback(PcEntryCallbackFn cb);

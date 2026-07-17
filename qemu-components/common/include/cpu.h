@@ -1212,6 +1212,11 @@ public:
     {
         if (!m_finished) m_cpu.async_run(make_tracked_async_job(std::move(job)));
     }
+
+    virtual void initiator_tlb_flush_all_cpus() override
+    {
+        if (!m_finished) m_cpu.tlb_flush_all_cpus();
+    }
 };
 
 /*

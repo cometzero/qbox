@@ -63,6 +63,15 @@ public:
     InitiatorTester i10;
     TargetTester t10;
 
+    gs::router<> r11;
+    InitiatorTester i11a;
+    InitiatorTester i11b;
+    TargetTester t11;
+    bool m_inv11a_called;
+    bool m_inv11b_called;
+    uint64_t m_inv11_start;
+    uint64_t m_inv11_end;
+
     RouterCoverageTests(sc_core::sc_module_name nm)
         : sc_core::sc_module(nm)
         // Preset CCI
@@ -92,12 +101,21 @@ public:
         , r10("r10")
         , i10("i10")
         , t10("t10", 0x1000)
+        , r11("r11")
+        , i11a("i11a")
+        , i11b("i11b")
+        , t11("t11", 0x1000)
+        , m_inv11a_called(false)
+        , m_inv11b_called(false)
+        , m_inv11_start(0)
+        , m_inv11_end(0)
     {
         setup_preset_cci();
         setup_aliases();
         setup_dmi_overlap();
         setup_dmi_invalidation();
         setup_underlying_dmi();
+        setup_invalidation_broadcast();
 
         SC_THREAD(run_all_tests);
     }
@@ -199,6 +217,24 @@ public:
         });
     }
 
+    void setup_invalidation_broadcast()
+    {
+        r11.add_target(t11.socket, 0x8000, 0x1000, true);
+        i11a.socket.bind(r11.target_socket);
+        i11b.socket.bind(r11.target_socket);
+
+        i11a.register_invalidate_direct_mem_ptr([this](uint64_t start, uint64_t end) {
+            m_inv11a_called = true;
+            m_inv11_start = start;
+            m_inv11_end = end;
+        });
+        i11b.register_invalidate_direct_mem_ptr([this](uint64_t start, uint64_t end) {
+            m_inv11b_called = true;
+            m_inv11_start = start;
+            m_inv11_end = end;
+        });
+    }
+
     // --- Test methods ---
 
     void run_all_tests()
@@ -214,6 +250,8 @@ public:
         ok &= test_dmi_invalidation();
         ok &= test_underlying_dmi_mapped();
         ok &= test_underlying_dmi_unmapped();
+        ok &= test_invalidation_broadcast_without_dmi();
+        ok &= test_invalidation_offset_saturates();
 
         exit_code = ok ? 0 : 1;
         if (ok) {
@@ -457,6 +495,55 @@ public:
         std::cout << "PASS: UnderlyingDMI extension records dmi_nomap for unmapped address" << std::endl;
         return true;
     }
+
+    bool test_invalidation_broadcast_without_dmi()
+    {
+        std::cout << "--- Invalidation broadcast without DMI ---" << std::endl;
+
+        t11.socket.get_base_port()->invalidate_direct_mem_ptr(0, 0xFFF);
+
+        if (!m_inv11a_called || !m_inv11b_called) {
+            std::cout << "FAIL: Broadcast did not reach every upstream initiator" << std::endl;
+            return false;
+        }
+        if (m_inv11_start != 0x8000 || m_inv11_end != 0x8FFF) {
+            std::cout << "FAIL: Expected broadcast range [0x8000, 0x8FFF], got [0x"
+                      << std::hex << m_inv11_start << ", 0x" << m_inv11_end << "]"
+                      << std::dec << std::endl;
+            return false;
+        }
+
+        std::cout << "PASS: Invalidation broadcast reached initiators without DMI"
+                  << std::endl;
+        return true;
+    }
+
+    bool test_invalidation_offset_saturates()
+    {
+        std::cout << "--- Invalidation offset saturation ---" << std::endl;
+        m_inv11a_called = false;
+        m_inv11b_called = false;
+
+        t11.socket.get_base_port()->invalidate_direct_mem_ptr(
+            0, std::numeric_limits<uint64_t>::max());
+
+        if (!m_inv11a_called || !m_inv11b_called) {
+            std::cout << "FAIL: Saturated invalidation did not reach every initiator"
+                      << std::endl;
+            return false;
+        }
+        if (m_inv11_start != 0x8000 ||
+            m_inv11_end != std::numeric_limits<uint64_t>::max()) {
+            std::cout << "FAIL: Saturated invalidation range is [0x" << std::hex
+                      << m_inv11_start << ", 0x" << m_inv11_end << "]"
+                      << std::dec << std::endl;
+            return false;
+        }
+
+        std::cout << "PASS: Invalidation offset saturated without wrapping"
+                  << std::endl;
+        return true;
+    }
 };
 
 int sc_main(int argc, char* argv[])
@@ -504,6 +591,9 @@ int sc_main(int argc, char* argv[])
                                 originator);
     broker.set_preset_cci_value(loop_socket + ".aliases.myalias.size", cci::cci_value(static_cast<uint64_t>(0x1000)),
                                 originator);
+
+    broker.set_preset_cci_value("cov_test.r11.broadcast_invalidation",
+                                cci::cci_value(true), originator);
 
     // Initialize SCP logging
     scp::LoggingGuard logging_guard(scp::LogConfig()
