@@ -7,9 +7,11 @@
 
 #pragma once
 
+#include <array>
 #include <mutex>
 #include <queue>
 
+#include <cci_configuration>
 #include "tlm.h"
 #include "tlm_utils/simple_target_socket.h"
 #include <systemc>
@@ -85,6 +87,8 @@ class Pl011 : public sc_core::sc_module
     SCP_LOGGER();
 
 public:
+    cci::cci_param<unsigned int> p_revision;
+    std::array<unsigned char, 8> m_id;
     PL011State* s;
 
     tlm_utils::simple_target_socket<Pl011, DEFAULT_TLM_BUSWIDTH> socket;
@@ -96,7 +100,12 @@ public:
     sc_core::sc_event update_event;
 
     Pl011(sc_core::sc_module_name name)
-        : irq("irq"), s(nullptr), socket("target_socket"), backend_socket("backend_socket")
+        : p_revision("revision", 1)
+        , m_id {{ 0x11, 0x10, 0x14, 0x00, 0x0d, 0xf0, 0x05, 0xb1 }}
+        , s(nullptr)
+        , socket("target_socket")
+        , backend_socket("backend_socket")
+        , irq("irq")
     {
         SCP_TRACE(()) << "Pl011 constructor";
 
@@ -110,9 +119,9 @@ public:
         s->cr = 0x300;
         s->flags = 0x90;
 
-        static const unsigned char pl011_id_arm[8] = { 0x11, 0x10, 0x14, 0x00, 0x0d, 0xf0, 0x05, 0xb1 };
-
-        s->id = pl011_id_arm;
+        m_id[2] = static_cast<unsigned char>(
+            ((p_revision.get_value() & 0xfu) << 4) | 0x4u);
+        s->id = m_id.data();
 
         SC_METHOD(pl011_update_sysc);
         sensitive << update_event;
