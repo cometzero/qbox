@@ -67,6 +67,23 @@ TEST_BENCH(smmuv3_bench, LinearStreamTable_S1_4KPage)
     uint32_t readback = 0;
     read_dram(page_pa, &readback, 4);
     ASSERT_EQ(readback, 0xDEADBEEFu);
+
+    const uint32_t expected_read = 0x12345678u;
+    write_dram(page_pa + 4, &expected_read, 4);
+    tlm::tlm_generic_payload txn;
+    uint32_t translated_read = 0;
+    txn.set_command(tlm::TLM_READ_COMMAND);
+    txn.set_address(4);
+    txn.set_data_ptr(reinterpret_cast<unsigned char*>(&translated_read));
+    txn.set_data_length(4);
+    txn.set_streaming_width(4);
+    txn.set_byte_enable_length(0);
+    txn.set_dmi_allowed(false);
+    txn.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
+    sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+    tbu_initiator->b_transport(txn, delay);
+    ASSERT_EQ(txn.get_response_status(), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(translated_read, expected_read);
 }
 
 TEST_BENCH(smmuv3_bench, LinearStreamTable_S1_2MBlock)
@@ -360,18 +377,28 @@ TEST_BENCH(smmuv3_bench, Fault_Walk_UnmappedTable)
     const uint64_t l0 = DRAM_BASE + 0x2000;
     const uint64_t l1 = DRAM_BASE + 0x3000;
     const uint64_t eventq_base = DRAM_BASE + 0x00010000;
+    const uint64_t unmapped_iova = DRAM_BASE + 0x08000000;
+    const uint32_t sentinel = 0xA5A55A5Au;
 
     setup_linear_stream_table(strtab, 4);
     write_ste_s1(strtab, cd_base);
     write_cd_identity(cd_base, l0, 16, 0, 5);
     write_table_desc(l0, 0, l1);
     setup_eventq(eventq_base, 4);
+    write_dram(unmapped_iova, &sentinel, sizeof(sentinel));
     enable_eventq();
+    enable_irqs();
     enable_smmu();
 
-    ASSERT_EQ(tbu_txn(0x0, true, 0), tlm::TLM_ADDRESS_ERROR_RESPONSE);
+    ASSERT_EQ(tbu_txn(unmapped_iova, true, 0xDEADBEEFu),
+              tlm::TLM_ADDRESS_ERROR_RESPONSE);
     sc_core::wait(5, sc_core::SC_NS);
     ASSERT_EQ(event_type_at(eventq_base, 0), 0x10);
+    ASSERT_GT(irq_eventq_cnt.count, 0u);
+
+    uint32_t readback = 0;
+    read_dram(unmapped_iova, &readback, sizeof(readback));
+    ASSERT_EQ(readback, sentinel);
 }
 
 TEST_BENCH(smmuv3_bench, Fault_L3_ReservedType2)
@@ -485,6 +512,7 @@ TEST_BENCH(smmuv3_bench, CMDQ_TLBI_NH_ASID_InvalidatesIOTLB)
     const uint64_t l2 = DRAM_BASE + 0x4000;
     const uint64_t l3 = DRAM_BASE + 0x5000;
     const uint64_t page_pa = DRAM_BASE + 0x06000000;
+    const uint64_t new_page_pa = DRAM_BASE + 0x07000000;
     const uint64_t cmdq_base = DRAM_BASE + 0x00020000;
 
     setup_linear_stream_table(strtab, 4);
@@ -500,12 +528,21 @@ TEST_BENCH(smmuv3_bench, CMDQ_TLBI_NH_ASID_InvalidatesIOTLB)
 
     ASSERT_EQ(tbu_txn(0x0, true, 0x1u), tlm::TLM_OK_RESPONSE);
     ASSERT_GT(smmu.test_iotlb_size(), 0u);
+    write_page_4k(l3, 0, new_page_pa);
 
     std::array<uint8_t, gs::SMMUV3_CMD_SIZE> cmd{};
     cmd[0] = 0x11;
     issue_cmd(cmdq_base, 0, cmd.data());
 
     ASSERT_EQ(smmu.test_iotlb_size(), 0u);
+    ASSERT_EQ(tbu_txn(0x0, true, 0x2u), tlm::TLM_OK_RESPONSE);
+
+    uint32_t old_page = 0;
+    uint32_t new_page = 0;
+    read_dram(page_pa, &old_page, sizeof(old_page));
+    read_dram(new_page_pa, &new_page, sizeof(new_page));
+    ASSERT_EQ(old_page, 0x1u);
+    ASSERT_EQ(new_page, 0x2u);
 }
 
 TEST_BENCH(smmuv3_bench, CMDQ_CFGI_STE_InvalidatesSteCache)
