@@ -825,6 +825,14 @@ public:
         m_dev = dev;
     }
 
+    void map_local_region(qemu::MemoryRegion region, uint64_t address,
+                          int priority)
+    {
+        sc_assert(m_r != nullptr);
+        region.set_priority(priority);
+        m_r->m_root->add_subregion_overlap(region, address);
+    }
+
     void end_of_simulation()
     {
         m_finished = true;

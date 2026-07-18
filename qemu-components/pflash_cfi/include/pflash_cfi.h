@@ -8,9 +8,12 @@
 #ifndef _LIBQBOX_COMPONENTS_PFLASH_CFI_H
 #define _LIBQBOX_COMPONENTS_PFLASH_CFI_H
 
+#include <limits>
+
 #include <cci_configuration>
 #include <module_factory_registery.h>
 #include <qemu-instance.h>
+#include <cpu.h>
 #include <device.h>
 #include <ports/target.h>
 
@@ -47,6 +50,14 @@ private:
     cci::cci_param<uint16_t> p_unlock_addr0;
     cci::cci_param<uint16_t> p_unlock_addr1;
     cci::cci_param<std::string> p_name;
+    cci::cci_param<uint64_t> p_local_address;
+    cci::cci_param<int> p_local_priority;
+    cci::cci_param<std::string> p_local_cpu;
+    cci::cci_param<bool> p_program_ff_erases_sector;
+    cci::cci_param<bool> p_io_mode_only;
+    cci::cci_param<bool> p_defer_backing_write;
+    cci::cci_param<uint64_t> p_defer_backing_flush_interval;
+    cci::cci_param<uint64_t> p_defer_backing_flush_delay_ms;
 
 public:
     pflash_cfi(const sc_core::sc_module_name& name, sc_core::sc_object* o, uint8_t pflash_type)
@@ -85,6 +96,24 @@ public:
         , p_unlock_addr0("unlock_addr0", 0, "unlock address 0")
         , p_unlock_addr1("unlock_addr1", 0, "unlock address 1")
         , p_name("name", "", "name of the device")
+        , p_local_address("local_address", std::numeric_limits<uint64_t>::max(),
+                          "optional address in this QEMU instance's system memory")
+        , p_local_priority("local_priority", 1,
+                           "overlap priority for the optional QEMU-local mapping")
+        , p_local_cpu("local_cpu", "",
+                      "QemuCpu SystemC path owning the optional local address space")
+        , p_program_ff_erases_sector("program_ff_erases_sector", false,
+                                     "treat an aligned one-byte 0xff program as a sector erase")
+        , p_io_mode_only("io_mode_only", false,
+                         "keep the QEMU CFI device in callback I/O mode")
+        , p_defer_backing_write("defer_backing_write", false,
+                                "coalesce block-backend writes by dirty sector")
+        , p_defer_backing_flush_interval(
+              "defer_backing_flush_interval", 0,
+              "QEMU CFI updates between deferred backing flushes")
+        , p_defer_backing_flush_delay_ms(
+              "defer_backing_flush_delay_ms", 0,
+              "real-time delay before flushing pending backing sectors")
     {
         if (!blkdev_str.get_value().empty()) {
             std::stringstream opts;
@@ -124,6 +153,18 @@ public:
             if (!p_secure.is_default_value()) m_dev.set_prop_uint("secure", p_secure.get_value());
             if (!p_old_multiple_chip_handling.is_default_value())
                 m_dev.set_prop_bool("old-multiple-chip-handling", p_old_multiple_chip_handling.get_value());
+            if (!p_program_ff_erases_sector.is_default_value())
+                m_dev.set_prop_bool("program-ff-erases-sector", p_program_ff_erases_sector.get_value());
+            if (!p_io_mode_only.is_default_value())
+                m_dev.set_prop_bool("io-mode-only", p_io_mode_only.get_value());
+            if (!p_defer_backing_write.is_default_value())
+                m_dev.set_prop_bool("defer-backing-write", p_defer_backing_write.get_value());
+            if (!p_defer_backing_flush_interval.is_default_value())
+                m_dev.set_prop_uint("defer-backing-flush-interval",
+                                    p_defer_backing_flush_interval.get_value());
+            if (!p_defer_backing_flush_delay_ms.is_default_value())
+                m_dev.set_prop_uint("defer-backing-flush-delay-ms",
+                                    p_defer_backing_flush_delay_ms.get_value());
         }
         if (!p_mappings.is_default_value()) m_dev.set_prop_uint("mappings", p_mappings.get_value());
         if (!p_big_endian.is_default_value()) m_dev.set_prop_uint("big-endian", p_big_endian.get_value());
@@ -146,6 +187,19 @@ public:
         qemu::SysBusDevice sbd(m_dev);
 
         socket.init(sbd, 0);
+        if (p_local_address.get_value() != std::numeric_limits<uint64_t>::max()) {
+            qemu::MemoryRegion region = sbd.mmio_get_region(0);
+            sc_core::sc_object* object =
+                sc_core::sc_find_object(p_local_cpu.get_value().c_str());
+            QemuCpu* cpu = dynamic_cast<QemuCpu*>(object);
+            if (cpu == nullptr) {
+                SCP_FATAL(()) << "local_cpu is not a QemuCpu: "
+                              << p_local_cpu.get_value();
+            }
+            cpu->socket.map_local_region(
+                region, p_local_address.get_value(),
+                p_local_priority.get_value());
+        }
     }
 };
 
