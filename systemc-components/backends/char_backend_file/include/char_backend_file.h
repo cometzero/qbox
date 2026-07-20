@@ -21,13 +21,9 @@
 #include <ports/biflow-socket.h>
 #include <module_factory_registery.h>
 
-#include <atomic>
-#include <chrono>
 #include <cerrno>
-#include <queue>
 #include <stdio.h>
 #include <stdlib.h>
-#include <thread>
 #ifndef _WIN32
 #include <fcntl.h>
 #include <unistd.h>
@@ -45,8 +41,6 @@ protected:
 private:
     FILE* r_file = nullptr;
     FILE* w_file = nullptr;
-    std::atomic_bool m_poll_running = false;
-    std::thread m_poll_thread;
     double delay;
     SCP_LOGGER();
 
@@ -110,8 +104,6 @@ public:
             if (r_file == NULL) SCP_ERR(()) << "Error opening the input file " << p_read_file.get_value() << ".\n";
             if (r_file != NULL && poll_read_enabled()) {
                 set_nonblocking(r_file);
-                m_poll_running = true;
-                m_poll_thread = std::thread(&char_backend_file::poll_read_thread, this);
             }
             update_event.notify(sc_core::SC_ZERO_TIME);
         }
@@ -145,12 +137,13 @@ public:
             delay = 0;
         else
             delay = (1.0 / p_baudrate.get_value());
+        if (r_file == nullptr) sc_core::wait(update_event);
+        if (r_file == nullptr) return;
         if (poll_read_enabled()) {
+            poll_read_file();
             return;
         }
         char c;
-        if (r_file == nullptr) sc_core::wait(update_event);
-        if (r_file == nullptr) return;
         while (fread(&c, sizeof(char), 1, r_file) == 1) {
             socket.enqueue(c);
             sc_core::wait(delay, sc_core::SC_SEC);
@@ -160,28 +153,22 @@ public:
         r_file = nullptr;
     }
 
-    void poll_read_thread()
+    void poll_read_file()
     {
 #ifndef _WIN32
         const unsigned int poll_ms = p_poll_interval_ms.get_value() == 0 ? 1 : p_poll_interval_ms.get_value();
         char buffer[256];
-        while (m_poll_running) {
-            if (r_file == nullptr) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(poll_ms));
-                continue;
-            }
-
+        while (r_file != nullptr) {
             ssize_t count = read(fileno(r_file), buffer, sizeof(buffer));
             if (count > 0) {
                 for (ssize_t i = 0; i < count; ++i) {
                     socket.enqueue(buffer[i]);
                 }
-                continue;
             }
             if (count < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
                 SCP_ERR(()) << "Error reading the input file " << p_read_file.get_value() << ".\n";
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(poll_ms));
+            sc_core::wait(poll_ms, sc_core::SC_MS);
         }
 #endif
     }
@@ -198,20 +185,8 @@ public:
         fflush(w_file);
     }
 
-    void stop_poll_thread()
-    {
-        m_poll_running = false;
-        if (m_poll_thread.joinable()) {
-            m_poll_thread.join();
-        }
-    }
-
-    void end_of_simulation() { stop_poll_thread(); }
-
     ~char_backend_file()
     {
-        stop_poll_thread();
-
         if (w_file != NULL) {
             fclose(w_file);
         }
