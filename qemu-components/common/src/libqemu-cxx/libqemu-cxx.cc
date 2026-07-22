@@ -8,6 +8,7 @@
 
 #include <cstring>
 #include <cassert>
+#include <cstddef>
 
 #include <libqemu/libqemu.h>
 
@@ -57,6 +58,8 @@ void LibQemu::init()
     const char* libname;
     LibQemuInitFct qemu_init = nullptr;
     LibQemuExports* exports = nullptr;
+    uint32_t abi_version = 1;
+    size_t exports_size = 0;
 
     if (m_lib_path == nullptr) {
         /* constructed with a Target */
@@ -80,15 +83,41 @@ void LibQemu::init()
         throw LibraryLoadErrorException(libname, m_library_loader.get_last_error());
     }
 
-    if (!m_lib->symbol_exists(LIBQEMU_INIT_SYM_STR)) {
-        throw InvalidLibraryException(libname, LIBQEMU_INIT_SYM_STR);
+    if (m_lib->symbol_exists(LIBQEMU_INIT_V2_SYM_STR)) {
+        LibQemuInitV2Fct qemu_init_v2 = reinterpret_cast<LibQemuInitV2Fct>(
+            m_lib->get_symbol(LIBQEMU_INIT_V2_SYM_STR));
+        exports = qemu_init_v2(m_qemu_argv.size(), &m_qemu_argv[0],
+                               LIBQEMU_ABI_VERSION, sizeof(LibQemuExports),
+                               &exports_size);
+        if (exports == nullptr) {
+            throw LibQemuException("libqemu v2 ABI negotiation failed");
+        }
+        if (exports_size < LIBQEMU_ARM_TIMER_REQUIRED_STRUCT_SIZE) {
+            throw LibQemuException(
+                "libqemu v2 export table lacks required Arm timer API");
+        }
+        abi_version = LIBQEMU_ABI_VERSION;
+    } else {
+        if (!m_lib->symbol_exists(LIBQEMU_INIT_SYM_STR)) {
+            throw InvalidLibraryException(libname, LIBQEMU_INIT_SYM_STR);
+        }
+        qemu_init = reinterpret_cast<LibQemuInitFct>(
+            m_lib->get_symbol(LIBQEMU_INIT_SYM_STR));
+        exports = qemu_init(m_qemu_argv.size(), &m_qemu_argv[0]);
     }
 
-    qemu_init = reinterpret_cast<LibQemuInitFct>(m_lib->get_symbol(LIBQEMU_INIT_SYM_STR));
-    exports = qemu_init(m_qemu_argv.size(), &m_qemu_argv[0]);
-
-    m_int = std::make_shared<LibQemuInternals>(*this, exports);
+    m_int = std::make_shared<LibQemuInternals>(
+        *this, exports, abi_version, exports_size);
     init_callbacks();
+}
+
+void LibQemuInternals::require_v2_export(size_t field_end,
+                                         const char* name) const
+{
+    if (m_abi_version < 2 || m_exports_size < field_end) {
+        throw LibQemuException(std::string("libqemu v2 export is unavailable: ") +
+                               name);
+    }
 }
 
 const LibQemuExports& LibQemu::plugin_api() const { return m_int->exports(); }

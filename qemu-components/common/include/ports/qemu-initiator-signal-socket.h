@@ -176,6 +176,13 @@ public:
         init_internal(sbd);
         sbd.connect_gpio_out(gpio_idx, m_proxy);
     }
+
+    void init_arm_generic_timer(qemu::Device dev,
+                                qemu::ArmGenericTimerOutput output)
+    {
+        init_internal(dev);
+        dev.connect_arm_generic_timer_output(output, m_proxy);
+    }
 };
 
 #endif

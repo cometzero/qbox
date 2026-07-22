@@ -1,1 +1,3 @@
 gs_create_dymod(qemu_arm_arch_timer_mmio)
+target_link_libraries(qemu_arm_arch_timer_mmio PUBLIC
+    qemu_arm_generic_timer_counter_bridge)

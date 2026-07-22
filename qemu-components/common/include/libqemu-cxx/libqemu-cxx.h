@@ -12,6 +12,8 @@
 #include <unordered_map>
 #include <memory>
 #include <functional>
+#include <exception>
+#include <mutex>
 #include <set>
 #include <vector>
 #include <map>
@@ -49,6 +51,8 @@ struct QemuIOMMUMemoryRegion;
 struct QemuAddressSpace;
 struct QemuMemoryListener;
 struct QemuTimer;
+struct QemuClock;
+struct LibQemuIOThreadJob;
 struct FWCfgState;
 typedef void* QEMUGLContext;
 struct QEMUGLParams;
@@ -72,6 +76,7 @@ namespace qemu {
 
 class LibQemuInternals;
 class Object;
+class Device;
 class MemoryRegion;
 class MemoryRegionOps;
 class IOMMUMemoryRegion;
@@ -79,6 +84,9 @@ class AddressSpace;
 class MemoryListener;
 class Gpio;
 class Timer;
+class Clock;
+class IOThreadJob;
+class ArmGenericTimerCounterProxy;
 class Bus;
 class Chardev;
 class DisplayOptions;
@@ -88,6 +96,51 @@ class SDL2Console;
 class Dcl;
 class DclOps;
 class RcuReadLock;
+
+enum class ArmGenericTimerOutput {
+    PHYS = LIBQEMU_ARM_GENERIC_TIMER_PHYS,
+    VIRT = LIBQEMU_ARM_GENERIC_TIMER_VIRT,
+    HYP = LIBQEMU_ARM_GENERIC_TIMER_HYP,
+    SEC = LIBQEMU_ARM_GENERIC_TIMER_SEC,
+    HYPVIRT = LIBQEMU_ARM_GENERIC_TIMER_HYPVIRT,
+    S_EL2_PHYS = LIBQEMU_ARM_GENERIC_TIMER_S_EL2_PHYS,
+    S_EL2_VIRT = LIBQEMU_ARM_GENERIC_TIMER_S_EL2_VIRT,
+};
+
+struct ArmCpuGenericTimerSnapshot {
+    int64_t qemu_virtual_ns = 0;
+    uint64_t physical_count = 0;
+    uint64_t cval = 0;
+    uint32_t cntfrq = 0;
+    uint32_t ctl = 0;
+    uint32_t irq_level = 0;
+};
+
+struct ArmArchTimerMMIOFrameSnapshot {
+    int64_t qemu_virtual_ns = 0;
+    uint64_t count = 0;
+    uint64_t cval = 0;
+    uint32_t cntfrq = 0;
+    uint32_t cntacr = 0;
+    uint32_t cntpl0acr = 0;
+    uint32_t cntnsar = 0;
+    bool cntnsar_implemented = false;
+    uint32_t ctl = 0;
+    uint32_t irq_level = 0;
+    bool count_accessible = false;
+    bool frequency_accessible = false;
+    bool timer_accessible = false;
+};
+
+struct ArmSSETimerSnapshot {
+    int64_t qemu_virtual_ns = 0;
+    uint64_t count = 0;
+    uint64_t cval = 0;
+    uint64_t counter_frequency_hz = 0;
+    uint32_t cntfrq = 0;
+    uint32_t ctl = 0;
+    uint32_t irq_level = 0;
+};
 
 class LibQemu
 {
@@ -173,6 +226,20 @@ public:
     Gpio gpio_new();
 
     std::shared_ptr<Timer> timer_new();
+    Clock clock_new(const Object& parent, const char* name);
+    std::shared_ptr<IOThreadJob> iothread_job_new(std::function<void()> callback);
+    void execute_on_iothread_sync(std::function<void()> callback);
+    ArmGenericTimerCounterProxy arm_generic_timer_counter_proxy_new(
+        const LibQemuArmGenericTimerCounterCallbacks& callbacks, void* opaque);
+    ArmCpuGenericTimerSnapshot arm_cpu_generic_timer_snapshot(
+        const Device& cpu, ArmGenericTimerOutput output);
+    ArmArchTimerMMIOFrameSnapshot arm_arch_timer_mmio_frame_snapshot(
+        const Device& timer, uint32_t frame);
+    ArmArchTimerMMIOFrameSnapshot
+    arm_arch_timer_mmio_frame_snapshot_on_iothread(
+        const Device& timer, uint32_t frame);
+    ArmSSETimerSnapshot arm_sse_timer_snapshot(const Device& counter,
+                                               const Device& timer);
 
     Chardev chardev_new(const char* label, const char* type);
 
@@ -343,6 +410,7 @@ public:
 
     struct MemTxAttrs {
         bool secure = false;
+        bool user = false;
         bool debug = false;
         uint16_t requester_id = 0;
 
@@ -651,6 +719,10 @@ public:
 
     void set_prop_chardev(const char* name, Chardev chr);
     void set_prop_uint_array(const char* name, std::vector<unsigned int> vec);
+    void connect_clock_in(const char* name, const Clock& clock);
+    void cold_reset();
+    void connect_arm_generic_timer_output(ArmGenericTimerOutput output,
+                                          Gpio gpio);
 };
 
 class SysBusDevice : public Device
@@ -752,6 +824,57 @@ public:
 
     void mod(int64_t deadline);
     void del();
+};
+
+class Clock
+{
+private:
+    QemuClock* m_clock = nullptr;
+    std::shared_ptr<LibQemuInternals> m_int;
+
+    friend class LibQemu;
+    friend class Device;
+    Clock(QemuClock* clock, std::shared_ptr<LibQemuInternals> internals);
+
+public:
+    Clock() = default;
+    bool valid() const { return m_clock != nullptr; }
+    bool update_hz(uint64_t frequency_hz);
+};
+
+class IOThreadJob
+{
+private:
+    std::shared_ptr<LibQemuInternals> m_int;
+    LibQemuIOThreadJob* m_job = nullptr;
+    std::function<void()> m_callback;
+    std::mutex m_exception_mutex;
+    std::exception_ptr m_exception;
+
+    static void invoke(void* opaque);
+
+public:
+    IOThreadJob(std::shared_ptr<LibQemuInternals> internals,
+                std::function<void()> callback);
+    ~IOThreadJob();
+    IOThreadJob(const IOThreadJob&) = delete;
+    IOThreadJob& operator=(const IOThreadJob&) = delete;
+
+    bool schedule();
+    void cancel();
+    void stop();
+    void drain();
+    void rethrow_if_failed();
+};
+
+class ArmGenericTimerCounterProxy : public Object
+{
+public:
+    ArmGenericTimerCounterProxy() = default;
+    ArmGenericTimerCounterProxy(const Object& object): Object(object) {}
+
+    void clear();
+    void notify();
 };
 
 class Bus : public Object

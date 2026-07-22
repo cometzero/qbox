@@ -1,3 +1,7 @@
+add_subdirectory(qemu_arm_generic_timer_counter_bridge)
 add_subdirectory(qemu_arm_arch_timer_mmio)
+add_subdirectory(qemu_clock_source)
 add_subdirectory(qemu_hexagon_qtimer)
+add_subdirectory(qemu_sse_counter)
+add_subdirectory(qemu_sse_timer)
 add_subdirectory(riscv_aclint_mtimer)

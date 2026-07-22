@@ -64,12 +64,17 @@ inline RequestContext make_request_context(uint64_t origin_id, uint32_t domain_i
 
 inline RequestContext normalize_qemu_request_context(const RequestContext& base,
                                                      bool secure,
+                                                     bool user,
                                                      RequestAccessPath access_path)
 {
     RequestContext context = base;
     if (!context.secure_valid) {
         context.secure = secure;
         context.secure_valid = true;
+    }
+    if (!context.privileged_valid) {
+        context.privileged = !user;
+        context.privileged_valid = true;
     }
     context.access_path = access_path;
     return context;

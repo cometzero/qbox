@@ -335,6 +335,7 @@ endif()
 if (NOT WITHOUT_QEMU)
     set (qemu_srcs
             qemu-components/common/src/libqemu-cxx/callbacks.cc
+            qemu-components/common/src/libqemu-cxx/arm-generic-timer.cc
             qemu-components/common/src/libqemu-cxx/console.cc
             qemu-components/common/src/libqemu-cxx/cpu.cc
             qemu-components/common/src/libqemu-cxx/device.cc
@@ -482,6 +483,8 @@ if (NOT DEFINED GS_ONLY)
 endif()
 
 list(APPEND TARGET_LIBS ${PROJECT_NAME})
+
+add_subdirectory(systemc-components/arm_system_counter)
 
 if(NOT WITHOUT_QEMU)
     add_subdirectory(qemu-components)

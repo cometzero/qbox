@@ -50,6 +50,12 @@ int CpuArm::arm_set_cpu_on_and_reset() { return m_int->exports().cpu_arm_set_cpu
 
 int CpuArm::arm_set_cpu_off() { return m_int->exports().cpu_arm_set_cpu_off(m_obj); }
 
+ArmCpuGenericTimerSnapshot CpuArm::generic_timer_snapshot(
+    ArmGenericTimerOutput output)
+{
+    return get_inst().arm_cpu_generic_timer_snapshot(*this, output);
+}
+
 void CpuAarch64::set_aarch64_mode(bool aarch64_mode)
 {
     m_int->exports().cpu_aarch64_set_aarch64_mode(m_obj, aarch64_mode);

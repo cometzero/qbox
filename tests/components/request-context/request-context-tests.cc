@@ -28,29 +28,34 @@ TEST(RequestContext, QemuNormalizationOnlyAddsKnownAttributes)
 {
     RequestContext base = make_request_context(0x1100, 1, 0x40, 7);
     RequestContext context = normalize_qemu_request_context(
-        base, true, RequestAccessPath::REENTRANT);
+        base, true, false, RequestAccessPath::REENTRANT);
 
     EXPECT_TRUE(context.secure_valid);
     EXPECT_TRUE(context.secure);
     EXPECT_EQ(context.access_path, RequestAccessPath::REENTRANT);
-    EXPECT_FALSE(context.privileged_valid);
+    EXPECT_TRUE(context.privileged_valid);
+    EXPECT_TRUE(context.privileged);
     EXPECT_FALSE(context.instruction_valid);
     EXPECT_FALSE(context.ats_valid);
     EXPECT_EQ(context.requester_id, 0x40u);
     EXPECT_EQ(context.substream_id, 7u);
 }
 
-TEST(RequestContext, FixedSecurityContextOverridesQemuAttribute)
+TEST(RequestContext, FixedSecurityAndPrivilegeOverrideQemuAttributes)
 {
     RequestContext base = make_request_context(0x4000, 4, 0, 0);
     base.secure = true;
     base.secure_valid = true;
+    base.privileged = true;
+    base.privileged_valid = true;
 
     RequestContext context = normalize_qemu_request_context(
-        base, false, RequestAccessPath::REGULAR);
+        base, false, true, RequestAccessPath::REGULAR);
 
     EXPECT_TRUE(context.secure_valid);
     EXPECT_TRUE(context.secure);
+    EXPECT_TRUE(context.privileged_valid);
+    EXPECT_TRUE(context.privileged);
     EXPECT_EQ(context.access_path, RequestAccessPath::REGULAR);
 }
 
@@ -90,10 +95,28 @@ TEST(RequestContext, CloneAndCopyPreserveEveryField)
 
 TEST(RequestContext, QemuMemTxAttrsCarryPciRequesterId)
 {
-    qemu::MemoryRegionOps::MemTxAttrs attrs;
-    attrs.requester_id = 0x8;
+    ::MemTxAttrs qemu_attrs = {};
+    qemu_attrs.requester_id = 0x8;
+    qemu_attrs.user = true;
+    qemu::MemoryRegionOps::MemTxAttrs attrs(qemu_attrs);
 
     EXPECT_EQ(attrs.requester_id, 0x8u);
+    EXPECT_TRUE(attrs.user);
+}
+
+TEST(RequestContext, QemuSecurityAndPrivilegeCombinationsArePreserved)
+{
+    for (bool secure : { false, true }) {
+        for (bool user : { false, true }) {
+            RequestContext context = normalize_qemu_request_context(
+                RequestContext(), secure, user, RequestAccessPath::REGULAR);
+
+            EXPECT_TRUE(context.secure_valid);
+            EXPECT_EQ(context.secure, secure);
+            EXPECT_TRUE(context.privileged_valid);
+            EXPECT_EQ(context.privileged, !user);
+        }
+    }
 }
 
 int sc_main(int argc, char** argv)

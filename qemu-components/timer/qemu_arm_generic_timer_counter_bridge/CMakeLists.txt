@@ -1,0 +1,3 @@
+gs_create_dymod(qemu_arm_generic_timer_counter_bridge)
+target_link_libraries(qemu_arm_generic_timer_counter_bridge PUBLIC
+    arm_system_counter)

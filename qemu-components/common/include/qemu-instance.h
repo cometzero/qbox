@@ -10,8 +10,10 @@
 #define LIBQBOX_QEMU_INSTANCE_H_
 
 #include <cassert>
+#include <functional>
 #include <sstream>
 #include <systemc>
+#include <utility>
 
 #include <cci_configuration>
 #include <vector>
@@ -533,6 +535,11 @@ public:
         }
 
         return m_inst;
+    }
+
+    void execute_on_iothread_sync(std::function<void()> callback)
+    {
+        get().execute_on_iothread_sync(std::move(callback));
     }
 
     /**

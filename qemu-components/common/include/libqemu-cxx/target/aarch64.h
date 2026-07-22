@@ -88,6 +88,8 @@ public:
 
     int arm_set_cpu_on_and_reset();
     int arm_set_cpu_off();
+    ArmCpuGenericTimerSnapshot generic_timer_snapshot(
+        ArmGenericTimerOutput output);
 };
 
 class CpuAarch64 : public CpuArm

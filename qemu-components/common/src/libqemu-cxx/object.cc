@@ -9,6 +9,8 @@
 #include <libqemu-cxx/libqemu-cxx.h>
 #include <internals.h>
 
+#include <cstddef>
+
 namespace qemu {
 
 Object::Object(QemuObject* obj, std::shared_ptr<LibQemuInternals>& internals): m_obj(obj), m_int(internals)
@@ -118,5 +120,24 @@ Object Object::get_prop_link(const char* name)
 }
 
 void Object::clear_callbacks() { m_int->clear_callbacks(*this); }
+
+void ArmGenericTimerCounterProxy::clear()
+{
+    const size_t field_end =
+        offsetof(LibQemuExports, arm_generic_timer_counter_proxy_clear) +
+        sizeof(((LibQemuExports*)nullptr)->arm_generic_timer_counter_proxy_clear);
+    m_int->require_v2_export(field_end,
+                             "arm_generic_timer_counter_proxy_clear");
+    m_int->exports().arm_generic_timer_counter_proxy_clear(m_obj);
+}
+
+void ArmGenericTimerCounterProxy::notify()
+{
+    const size_t field_end =
+        offsetof(LibQemuExports, arm_generic_timer_counter_notify) +
+        sizeof(((LibQemuExports*)nullptr)->arm_generic_timer_counter_notify);
+    m_int->require_v2_export(field_end, "arm_generic_timer_counter_notify");
+    m_int->exports().arm_generic_timer_counter_notify(m_obj);
+}
 
 } // namespace qemu

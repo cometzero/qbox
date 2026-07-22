@@ -10,6 +10,7 @@
 #define _LIBQEMU_CXX_INTERNALS_
 
 #include <atomic>
+#include <cstddef>
 #include <map>
 #include <memory>
 
@@ -85,6 +86,8 @@ class LibQemuInternals
 private:
     LibQemu& m_inst;
     LibQemuExports* m_exports = nullptr;
+    uint32_t m_abi_version = 1;
+    size_t m_exports_size = 0;
 
     LibQemuObjectCallback<Cpu::EndOfLoopCallbackFn> m_cpu_end_of_loop_cbs;
     LibQemuObjectCallback<Cpu::PcEntryCallbackFn> m_cpu_pc_entry_cbs;
@@ -101,10 +104,18 @@ private:
     };
 
 public:
-    LibQemuInternals(LibQemu& inst, LibQemuExports* exports): m_inst(inst), m_exports(exports) {}
+    LibQemuInternals(LibQemu& inst, LibQemuExports* exports,
+                     uint32_t abi_version, size_t exports_size)
+        : m_inst(inst)
+        , m_exports(exports)
+        , m_abi_version(abi_version)
+        , m_exports_size(exports_size)
+    {
+    }
 
     const LibQemuExports& exports() const { return *m_exports; };
     LibQemu& get_inst() { return m_inst; }
+    void require_v2_export(size_t field_end, const char* name) const;
 
     void clear_callbacks(Object obj)
     {

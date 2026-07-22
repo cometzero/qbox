@@ -11,6 +11,8 @@
 #include <libqemu-cxx/libqemu-cxx.h>
 #include <internals.h>
 
+#include <cstddef>
+
 namespace qemu {
 
 void Device::connect_gpio_out(int idx, Gpio gpio)
@@ -84,6 +86,36 @@ void Device::set_prop_uint_array(const char* name, std::vector<unsigned int> vec
     unsigned int* v = &vec[0];
 
     m_int->exports().qdev_prop_set_uint_array(qemu_dev, name, v, vec.size());
+}
+
+void Device::connect_clock_in(const char* name, const Clock& clock)
+{
+    const size_t field_end = offsetof(LibQemuExports, qdev_connect_clock_in) +
+        sizeof(((LibQemuExports*)nullptr)->qdev_connect_clock_in);
+    m_int->require_v2_export(field_end, "qdev_connect_clock_in");
+    m_int->exports().qdev_connect_clock_in(
+        reinterpret_cast<QemuDevice*>(m_obj), name, clock.m_clock);
+}
+
+void Device::cold_reset()
+{
+    const size_t field_end = offsetof(LibQemuExports, device_cold_reset) +
+        sizeof(((LibQemuExports*)nullptr)->device_cold_reset);
+    m_int->require_v2_export(field_end, "device_cold_reset");
+    m_int->exports().device_cold_reset(reinterpret_cast<QemuDevice*>(m_obj));
+}
+
+void Device::connect_arm_generic_timer_output(
+    ArmGenericTimerOutput output, Gpio gpio)
+{
+    const size_t field_end =
+        offsetof(LibQemuExports, cpu_arm_connect_generic_timer_output) +
+        sizeof(((LibQemuExports*)nullptr)->cpu_arm_connect_generic_timer_output);
+    m_int->require_v2_export(field_end,
+                             "cpu_arm_connect_generic_timer_output");
+    m_int->exports().cpu_arm_connect_generic_timer_output(
+        m_obj, static_cast<LibQemuArmGenericTimerOutput>(output),
+        reinterpret_cast<QemuGpio*>(gpio.get_qemu_obj()));
 }
 
 } // namespace qemu
