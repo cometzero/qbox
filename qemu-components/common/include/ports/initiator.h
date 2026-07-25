@@ -714,6 +714,7 @@ protected:
         QemuMemTxAttrsTlmExtension attrs_ext(attrs);
         RequestContextTlmExtension context_ext(
             normalize_qemu_request_context(m_request_context, attrs.secure,
+                                           attrs.user,
                                            RequestAccessPath::REGULAR));
         trans.set_extension(&attrs_ext);
         trans.set_extension(&context_ext);

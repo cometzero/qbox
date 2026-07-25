@@ -343,6 +343,7 @@ public:
 
     struct MemTxAttrs {
         bool secure = false;
+        bool user = false;
         bool debug = false;
         uint16_t requester_id = 0;
 

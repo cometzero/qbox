@@ -24,16 +24,17 @@ TEST(RequestContext, IdentityValidityIsExplicit)
     EXPECT_EQ(context.capabilities, REQUEST_CONTEXT_CAP_BOOT_LOADER);
 }
 
-TEST(RequestContext, QemuNormalizationOnlyAddsKnownAttributes)
+TEST(RequestContext, QemuNormalizationMapsSecurityAndPrivilege)
 {
     RequestContext base = make_request_context(0x1100, 1, 0x40, 7);
     RequestContext context = normalize_qemu_request_context(
-        base, true, RequestAccessPath::REENTRANT);
+        base, true, true, RequestAccessPath::REENTRANT);
 
     EXPECT_TRUE(context.secure_valid);
     EXPECT_TRUE(context.secure);
+    EXPECT_TRUE(context.privileged_valid);
+    EXPECT_FALSE(context.privileged);
     EXPECT_EQ(context.access_path, RequestAccessPath::REENTRANT);
-    EXPECT_FALSE(context.privileged_valid);
     EXPECT_FALSE(context.instruction_valid);
     EXPECT_FALSE(context.ats_valid);
     EXPECT_EQ(context.requester_id, 0x40u);
@@ -47,11 +48,24 @@ TEST(RequestContext, FixedSecurityContextOverridesQemuAttribute)
     base.secure_valid = true;
 
     RequestContext context = normalize_qemu_request_context(
-        base, false, RequestAccessPath::REGULAR);
+        base, false, false, RequestAccessPath::REGULAR);
 
     EXPECT_TRUE(context.secure_valid);
     EXPECT_TRUE(context.secure);
     EXPECT_EQ(context.access_path, RequestAccessPath::REGULAR);
+}
+
+TEST(RequestContext, FixedPrivilegeContextOverridesQemuAttribute)
+{
+    RequestContext base = make_request_context(0x4000, 4, 0, 0);
+    base.privileged = false;
+    base.privileged_valid = true;
+
+    RequestContext context = normalize_qemu_request_context(
+        base, false, false, RequestAccessPath::REGULAR);
+
+    EXPECT_TRUE(context.privileged_valid);
+    EXPECT_FALSE(context.privileged);
 }
 
 TEST(RequestContext, CloneAndCopyPreserveEveryField)
@@ -91,8 +105,10 @@ TEST(RequestContext, CloneAndCopyPreserveEveryField)
 TEST(RequestContext, QemuMemTxAttrsCarryPciRequesterId)
 {
     qemu::MemoryRegionOps::MemTxAttrs attrs;
+    attrs.user = true;
     attrs.requester_id = 0x8;
 
+    EXPECT_TRUE(attrs.user);
     EXPECT_EQ(attrs.requester_id, 0x8u);
 }
 

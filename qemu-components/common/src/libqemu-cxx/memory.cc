@@ -58,6 +58,7 @@ static inline uint32_t LIB_TO_QEMU_MEMTXRESULT_MAPPING(MemoryRegionOps::MemTxRes
 
 MemoryRegionOps::MemTxAttrs::MemTxAttrs(const ::MemTxAttrs& qemu_attrs)
     : secure(qemu_attrs.secure)
+    , user(qemu_attrs.user)
     , debug(qemu_attrs.debug)
     , requester_id(qemu_attrs.requester_id)
 {
