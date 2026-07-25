@@ -80,6 +80,10 @@ public:
     void set_exclusive_val(uint64_t val);
     void set_power_state(bool powered_on);
     int power_on_and_reset();
+    void set_gt_counter_mirror(bool active, bool running, uint64_t count,
+                               uint32_t frequency_hz, uint64_t generation);
+    uint64_t get_gt_counter_value() const;
+    uint64_t get_gt_counter_generation() const;
     uint64_t get_v7m_state(V7MStateField field) const;
     bool set_v7m_state(V7MStateField field, uint64_t value);
 

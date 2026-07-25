@@ -32,6 +32,24 @@ void CpuArm::set_power_state(bool powered_on) { m_int->exports().cpu_arm_set_pow
 
 int CpuArm::power_on_and_reset() { return m_int->exports().cpu_arm_power_on_and_reset(m_obj); }
 
+void CpuArm::set_gt_counter_mirror(bool active, bool running, uint64_t count,
+                                   uint32_t frequency_hz,
+                                   uint64_t generation)
+{
+    m_int->exports().cpu_arm_set_gt_counter_mirror(
+        m_obj, active, running, count, frequency_hz, generation);
+}
+
+uint64_t CpuArm::get_gt_counter_value() const
+{
+    return m_int->exports().cpu_arm_get_gt_counter_value(m_obj);
+}
+
+uint64_t CpuArm::get_gt_counter_generation() const
+{
+    return m_int->exports().cpu_arm_get_gt_counter_generation(m_obj);
+}
+
 uint64_t CpuArm::get_v7m_state(V7MStateField field) const
 {
     return m_int->exports().cpu_arm_v7m_get_state(m_obj, static_cast<int>(field));

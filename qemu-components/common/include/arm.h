@@ -29,6 +29,33 @@ public:
     /// count is incremented and decremented correctly by the destructor.
     qemu::CpuAarch64 get_cpu_aarch64() const { return qemu::CpuAarch64(m_cpu); }
 
+    void set_gt_counter_mirror(bool active, bool running, uint64_t count,
+                               uint32_t frequency_hz, uint64_t generation)
+    {
+        m_inst.get().lock_iothread();
+        get_cpu_aarch64().set_gt_counter_mirror(
+            active, running, count, frequency_hz, generation);
+        m_inst.get().unlock_iothread();
+        m_qemu_kick_ev.async_notify();
+    }
+
+    uint64_t get_gt_counter_value()
+    {
+        m_inst.get().lock_iothread();
+        const uint64_t value = get_cpu_aarch64().get_gt_counter_value();
+        m_inst.get().unlock_iothread();
+        return value;
+    }
+
+    uint64_t get_gt_counter_generation()
+    {
+        m_inst.get().lock_iothread();
+        const uint64_t generation =
+            get_cpu_aarch64().get_gt_counter_generation();
+        m_inst.get().unlock_iothread();
+        return generation;
+    }
+
     void end_of_elaboration() override
     {
         QemuCpu::end_of_elaboration();
