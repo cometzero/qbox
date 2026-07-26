@@ -19,6 +19,7 @@
 #include <chrono>
 #include <vector>
 #include <functional>
+#include <iostream>
 
 #include <tlm>
 #include <tlm_utils/simple_initiator_socket.h>
@@ -214,6 +215,8 @@ protected:
     static constexpr int ASYNC_WORK_TIMEOUT_MS = 500;
 
     std::vector<QemuCpuPcEntryObserver*> m_pc_entry_observers;
+    std::atomic<bool> m_gdb_breakpoint_hit{ false };
+    std::atomic<bool> m_gdb_breakpoint_announced{ false };
 
     uint64_t get_pc() const override { return m_cpu.get_pc(); }
 
@@ -650,6 +653,11 @@ protected:
     bool dispatch_pc_entry(uintptr_t pc)
     {
         bool handled = false;
+        if (p_gdb_breakpoint.get_value() == pc &&
+            !m_gdb_breakpoint_hit.exchange(true, std::memory_order_acq_rel)) {
+            m_cpu.halt(true);
+            handled = true;
+        }
         for (auto* observer : m_pc_entry_observers) {
             if (observer != nullptr && observer->enabled()) {
                 handled = observer->on_pc_entry(pc) || handled;
@@ -723,6 +731,15 @@ protected:
          */
         if (!m_started) return;
 
+        if (m_gdb_breakpoint_hit.load(std::memory_order_acquire) &&
+            !m_cpu.can_run() &&
+            !m_gdb_breakpoint_announced.exchange(
+                true, std::memory_order_acq_rel)) {
+            std::cerr << "QBox GDB entry breakpoint reached: 0x"
+                      << std::hex << p_gdb_breakpoint.get_value()
+                      << std::dec << std::endl;
+        }
+
         if (m_coroutines) {
             m_inst.get().coroutine_yield();
         } else {
@@ -748,6 +765,7 @@ protected:
 
 public:
     cci::cci_param<unsigned int> p_gdb_port;
+    cci::cci_param<uint64_t> p_gdb_breakpoint;
     cci::cci_param<bool> p_start_in_reset;
     cci::cci_param<bool> p_reset_power_on;
     cci::cci_param<uint64_t> p_request_origin_id;
@@ -773,6 +791,8 @@ public:
         , m_qemu_kick_ev(false)
         , m_signaled(false)
         , p_gdb_port("gdb_port", 0, "Wait for gdb connection on TCP port <gdb_port>")
+        , p_gdb_breakpoint("gdb_breakpoint", 0,
+                           "Stop at guest PC before GDB connects")
         , p_start_in_reset("start_in_reset", false, "Hold the CPU in reset when simulation starts")
         , p_reset_power_on("reset_power_on", false, "Set Arm PSCI power state to ON when reset is released")
         , p_request_origin_id("request_origin_id", std::numeric_limits<uint64_t>::max(), "Opaque request origin ID")
@@ -936,6 +956,10 @@ public:
 
         m_time_sync->on_before_end_of_elaboration();
         bool needs_pc_entry_callback = false;
+        if (!p_gdb_breakpoint.is_default_value()) {
+            m_cpu.add_pc_entry_watch(p_gdb_breakpoint.get_value());
+            needs_pc_entry_callback = true;
+        }
         for (auto* observer : m_pc_entry_observers) {
             if (observer != nullptr && observer->enabled()) {
                 observer->configure_pc_watches(m_cpu);
@@ -1104,6 +1128,9 @@ public:
             std::stringstream ss;
             SCP_INFO(()) << "Starting gdb server on TCP port " << p_gdb_port;
             ss << "tcp::" << p_gdb_port;
+            if (!p_start_in_reset.get_value()) {
+                m_cpu.reset(true);
+            }
             m_inst.get().start_gdb_server(ss.str());
         }
     }
