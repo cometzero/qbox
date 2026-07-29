@@ -171,7 +171,9 @@ protected:
     std::mutex m_signaled_lock;
     std::condition_variable m_signaled_cond;
 
-    std::atomic<bool> m_sync_hold{ false };
+    static constexpr uint32_t EXTERNAL_SYNC_HOLD = 1U << 0;
+    static constexpr uint32_t DEBUG_SYNC_HOLD = 1U << 1;
+    std::atomic<uint32_t> m_sync_hold_mask{ 0 };
     std::mutex m_sync_hold_lock;
     std::condition_variable m_sync_hold_cond;
 
@@ -348,19 +350,36 @@ protected:
         }
     }
 
-    void sync_hold_cb(const bool& asserted)
+    void update_sync_hold(uint32_t hold, bool asserted)
     {
-        m_sync_hold.store(asserted, std::memory_order_release);
-        if (asserted && m_started && !m_finished && m_cpu.valid()) {
+        uint32_t previous =
+            m_sync_hold_mask.load(std::memory_order_acquire);
+        uint32_t desired;
+        do {
+            desired = asserted ? previous | hold : previous & ~hold;
+            if (desired == previous) {
+                return;
+            }
+        } while (!m_sync_hold_mask.compare_exchange_weak(
+            previous, desired, std::memory_order_acq_rel,
+            std::memory_order_acquire));
+
+        if (previous == 0 && desired != 0 &&
+            m_started && !m_finished && m_cpu.valid()) {
             m_cpu.kick();
-        } else if (!asserted) {
+        } else if (previous != 0 && desired == 0) {
             m_sync_hold_cond.notify_all();
         }
     }
 
+    void sync_hold_cb(const bool& asserted)
+    {
+        update_sync_hold(EXTERNAL_SYNC_HOLD, asserted);
+    }
+
     void wait_for_sync_hold()
     {
-        if (!m_sync_hold.load(std::memory_order_acquire)) {
+        if (m_sync_hold_mask.load(std::memory_order_acquire) == 0) {
             return;
         }
 
@@ -369,7 +388,8 @@ protected:
         }
         std::unique_lock<std::mutex> lock(m_sync_hold_lock);
         m_sync_hold_cond.wait(lock, [this] {
-            return !m_sync_hold.load(std::memory_order_acquire) || m_finished;
+            return m_sync_hold_mask.load(std::memory_order_acquire) == 0 ||
+                   m_finished;
         });
         if (!m_finished && m_qk) {
             m_qk->reset();
@@ -656,6 +676,9 @@ protected:
         if (p_gdb_breakpoint.get_value() == pc &&
             !m_gdb_breakpoint_hit.exchange(true, std::memory_order_acq_rel)) {
             m_cpu.halt(true);
+            if (p_gdb_pause_all.get_value()) {
+                m_inst.request_global_gdb_pause(pc);
+            }
             handled = true;
         }
         for (auto* observer : m_pc_entry_observers) {
@@ -687,7 +710,7 @@ protected:
 
         m_inst.get().unlock_iothread();
         if (m_finished) return;
-        if (m_sync_hold.load(std::memory_order_acquire)) {
+        if (m_sync_hold_mask.load(std::memory_order_acquire) != 0) {
             if (m_qk) {
                 m_qk->stop();
             }
@@ -731,8 +754,11 @@ protected:
          */
         if (!m_started) return;
 
-        if (m_gdb_breakpoint_hit.load(std::memory_order_acquire) &&
-            !m_cpu.can_run() &&
+        const bool entry_breakpoint_stopped =
+            m_gdb_breakpoint_hit.load(std::memory_order_acquire) &&
+            !m_cpu.can_run();
+        if (entry_breakpoint_stopped &&
+            !p_gdb_pause_all.get_value() &&
             !m_gdb_breakpoint_announced.exchange(
                 true, std::memory_order_acq_rel)) {
             std::cerr << "QBox GDB entry breakpoint reached: 0x"
@@ -766,6 +792,7 @@ protected:
 public:
     cci::cci_param<unsigned int> p_gdb_port;
     cci::cci_param<uint64_t> p_gdb_breakpoint;
+    cci::cci_param<bool> p_gdb_pause_all;
     cci::cci_param<bool> p_start_in_reset;
     cci::cci_param<bool> p_reset_power_on;
     cci::cci_param<uint64_t> p_request_origin_id;
@@ -793,6 +820,8 @@ public:
         , p_gdb_port("gdb_port", 0, "Wait for gdb connection on TCP port <gdb_port>")
         , p_gdb_breakpoint("gdb_breakpoint", 0,
                            "Stop at guest PC before GDB connects")
+        , p_gdb_pause_all("gdb_pause_all", false,
+                          "Pause every QEMU instance and SystemC for GDB")
         , p_start_in_reset("start_in_reset", false, "Hold the CPU in reset when simulation starts")
         , p_reset_power_on("reset_power_on", false, "Set Arm PSCI power state to ON when reset is released")
         , p_request_origin_id("request_origin_id", std::numeric_limits<uint64_t>::max(), "Opaque request origin ID")
@@ -875,6 +904,9 @@ public:
     // This gives time for QEMU to exit etc.
     void end_of_simulation() override
     {
+        if (p_gdb_pause_all.get_value()) {
+            m_inst.request_global_gdb_resume();
+        }
         for (auto* observer : m_pc_entry_observers) {
             if (observer != nullptr) {
                 observer->end_of_simulation();
@@ -935,6 +967,10 @@ public:
      * for the m_inst.can_run calculation
      */
     bool can_run() override { return m_cpu.can_run(); }
+    void set_debug_sync_hold(bool asserted) override
+    {
+        update_sync_hold(DEBUG_SYNC_HOLD, asserted);
+    }
 
     void before_end_of_elaboration() override
     {
@@ -955,6 +991,9 @@ public:
         m_cpu.set_soft_stopped(true);
 
         m_time_sync->on_before_end_of_elaboration();
+        if (p_gdb_pause_all.get_value()) {
+            m_inst.enable_global_gdb_pause();
+        }
         bool needs_pc_entry_callback = false;
         if (!p_gdb_breakpoint.is_default_value()) {
             m_cpu.add_pc_entry_watch(p_gdb_breakpoint.get_value());

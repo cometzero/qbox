@@ -25,6 +25,13 @@ static void generic_cpu_kick_cb(QemuObject* cpu, void* opaque)
     internals->get_cpu_kick_cb().call(cpu);
 }
 
+static void generic_vm_state_cb(bool running, void* opaque)
+{
+    LibQemuInternals* internals = reinterpret_cast<LibQemuInternals*>(opaque);
+
+    internals->call_vm_state_callback(running);
+}
+
 static bool generic_cpu_pc_entry_cb(QemuObject* cpu, uint64_t pc, void* opaque)
 {
     LibQemuInternals* internals = reinterpret_cast<LibQemuInternals*>(opaque);
@@ -79,6 +86,15 @@ void Cpu::clear_pc_entry_callback()
     m_int->get_cpu_pc_entry_cb().clear(*this);
     m_int->exports().clear_cpu_pc_entry_watches();
     m_int->exports().set_cpu_pc_entry_cb(nullptr, nullptr);
+}
+
+void LibQemu::set_vm_state_callback(VmStateCallbackFn cb)
+{
+    const bool enabled = static_cast<bool>(cb);
+    m_int->set_vm_state_callback(std::move(cb));
+    m_int->exports().set_vm_state_cb(
+        enabled ? generic_vm_state_cb : nullptr,
+        enabled ? m_int.get() : nullptr);
 }
 
 } // namespace qemu

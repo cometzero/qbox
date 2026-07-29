@@ -10,8 +10,10 @@
 #define _LIBQEMU_CXX_INTERNALS_
 
 #include <atomic>
+#include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 
 #include <libqemu/libqemu.h>
 #include <libqemu-cxx/libqemu-cxx.h>
@@ -91,6 +93,8 @@ private:
     LibQemuObjectCallback<Cpu::CpuKickCallbackFn> m_cpu_kick_cbs;
     LibQemuObjectCallback<IOMMUMemoryRegion::IOMMUTranslateCallbackFn> m_iommu_translate_cbs;
     LibQemuObjectCallback<CpuRiscv64::MipUpdateCallbackFn> m_riscv_mip_update_cbs;
+    LibQemu::VmStateCallbackFn m_vm_state_cb;
+    std::mutex m_vm_state_cb_mutex;
 
     std::vector<LibQemuObjectCallbackBase*> m_cbs{
         &m_cpu_end_of_loop_cbs,
@@ -126,6 +130,24 @@ public:
     LibQemuObjectCallback<CpuRiscv64::MipUpdateCallbackFn>& get_cpu_riscv_mip_update_cb()
     {
         return m_riscv_mip_update_cbs;
+    }
+
+    void set_vm_state_callback(LibQemu::VmStateCallbackFn cb)
+    {
+        std::lock_guard<std::mutex> lock(m_vm_state_cb_mutex);
+        m_vm_state_cb = std::move(cb);
+    }
+
+    void call_vm_state_callback(bool running)
+    {
+        LibQemu::VmStateCallbackFn cb;
+        {
+            std::lock_guard<std::mutex> lock(m_vm_state_cb_mutex);
+            cb = m_vm_state_cb;
+        }
+        if (cb) {
+            cb(running);
+        }
     }
 };
 

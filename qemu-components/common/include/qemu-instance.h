@@ -10,8 +10,12 @@
 #define LIBQBOX_QEMU_INSTANCE_H_
 
 #include <cassert>
+#include <condition_variable>
+#include <cstdint>
+#include <mutex>
 #include <sstream>
 #include <systemc>
+#include <thread>
 
 #include <cci_configuration>
 #include <vector>
@@ -34,6 +38,7 @@ class QemuDeviceBaseIF
 {
 public:
     virtual bool can_run() { return true; }
+    virtual void set_debug_sync_hold(bool) {}
     SCP_LOGGER();
 };
 
@@ -91,8 +96,43 @@ private:
     std::list<QemuDeviceBaseIF*> devices;
     cci::cci_broker_handle m_conf_broker;
 
+    enum class GlobalDebugSystemcAction {
+        NONE,
+        PAUSE,
+        RESUME,
+    };
+
+    gs::async_event m_global_debug_systemc_event;
+    std::mutex m_global_debug_lock;
+    std::condition_variable m_global_debug_cond;
+    std::thread m_global_debug_worker;
+    bool m_global_debug_enabled = false;
+    bool m_global_debug_worker_exit = false;
+    bool m_global_debug_desired_paused = false;
+    bool m_global_debug_applied_paused = false;
+    bool m_global_debug_systemc_paused = false;
+    bool m_global_debug_entry_marker_pending = false;
+    uint64_t m_global_debug_entry_pc = 0;
+    uint64_t m_global_debug_systemc_request = 0;
+    uint64_t m_global_debug_systemc_ack = 0;
+    GlobalDebugSystemcAction m_global_debug_systemc_action =
+        GlobalDebugSystemcAction::NONE;
+    std::vector<QemuInstance*> m_global_debug_paused_instances;
+
     bool m_running = false;
     SCP_LOGGER();
+
+    static void register_debug_instance(QemuInstance* instance);
+    static void unregister_debug_instance(QemuInstance* instance);
+    static std::vector<QemuInstance*> debug_instances();
+
+    void global_debug_vm_state_changed(bool running);
+    void global_debug_worker_loop();
+    void global_debug_systemc_handler();
+    bool global_debug_run_systemc_action(
+        std::unique_lock<std::mutex>& lock,
+        GlobalDebugSystemcAction action);
+    void disable_global_gdb_pause();
 
 public:
     TargetSignalSocket<bool> reset;
@@ -317,6 +357,7 @@ public:
     QemuInstance(const sc_core::sc_module_name& n, LibLoader& loader, Target t)
         : sc_core::sc_module(n)
         , m_conf_broker(cci::cci_get_broker())
+        , m_global_debug_systemc_event(false)
         , reset("reset")
         , m_inst(loader, t)
         , m_dmi_mgr(m_inst)
@@ -336,6 +377,7 @@ public:
                                "via the multi core instructions per second plugin.")
     {
         SCP_DEBUG(()) << "Libqbox QemuInstance constructor";
+        register_debug_instance(this);
 
         auto resetcb = std::bind(&QemuInstance::reset_cb, this, sc_unnamed::_1);
         reset.register_value_changed_cb(resetcb);
@@ -361,6 +403,8 @@ public:
 
     virtual ~QemuInstance()
     {
+        disable_global_gdb_pause();
+        unregister_debug_instance(this);
         m_running = false;
         if (m_mcips_plugin) {
             m_mcips_plugin.reset();
@@ -370,6 +414,11 @@ public:
     bool operator==(const QemuInstance& b) const { return this == &b; }
 
     bool operator!=(const QemuInstance& b) const { return this != &b; }
+
+    void enable_global_gdb_pause();
+    void request_global_gdb_pause(uint64_t entry_pc = 0);
+    void request_global_gdb_resume();
+    void set_debug_sync_hold_on_cpus(bool asserted);
 
     bool manages_start_in_reset_release() const
     {

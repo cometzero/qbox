@@ -103,6 +103,8 @@ void LibQemu::vm_start() { m_int->exports().vm_start(); }
 
 void LibQemu::vm_stop_paused() { m_int->exports().vm_stop_paused(); }
 
+bool LibQemu::vm_is_running() { return m_int->exports().vm_is_running(); }
+
 int64_t LibQemu::get_virtual_clock() { return m_int->exports().clock_virtual_get_ns(); }
 
 void LibQemu::tb_invalidate_phys_range(uint64_t start, uint64_t end)

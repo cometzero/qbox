@@ -91,6 +91,9 @@ class RcuReadLock;
 
 class LibQemu
 {
+public:
+    using VmStateCallbackFn = std::function<void(bool running)>;
+
 private:
     std::shared_ptr<LibQemuInternals> m_int;
     LibraryLoaderIface& m_library_loader;
@@ -132,6 +135,8 @@ public:
     void start_gdb_server(std::string port);
     void vm_start();
     void vm_stop_paused();
+    bool vm_is_running();
+    void set_vm_state_callback(VmStateCallbackFn cb);
 
     void lock_iothread();
     void unlock_iothread();
