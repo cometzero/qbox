@@ -474,7 +474,7 @@ protected:
      * Called before running the CPU. Lock the BQL and set the deadline timer
      * to not run beyond the time budget.
      */
-    void prepare_run_cpu()
+    bool prepare_run_cpu()
     {
         /*
          * The QEMU CPU loop expect us to enter it with the iothread mutex locked.
@@ -485,7 +485,7 @@ protected:
         SCP_TRACE(())("Prepare run");
         wait_for_sync_hold();
         if (m_finished) {
-            return;
+            return false;
         }
 
         if (m_inst.get_tcg_mode() == QemuInstance::TCG_SINGLE) {
@@ -515,6 +515,7 @@ protected:
         if (m_started && m_resetting == none) {
             m_cpu.set_soft_stopped(false);
         }
+        return true;
     }
 
     /*
@@ -770,8 +771,11 @@ protected:
             m_inst.get().coroutine_yield();
         } else {
             std::lock_guard<std::mutex> lock(m_can_delete);
+            if (m_finished) return;
             sync_with_kernel();
-            prepare_run_cpu();
+            if (!prepare_run_cpu()) {
+                m_inst.get().lock_iothread();
+            }
         }
     }
 
@@ -783,7 +787,7 @@ protected:
         m_cpu.register_thread();
 
         for (; !m_finished;) {
-            prepare_run_cpu();
+            if (!prepare_run_cpu()) break;
             run_cpu_loop();
             sync_with_kernel();
         }
@@ -961,6 +965,8 @@ public:
         m_inst.get().unlock_iothread();
         m_cpu.kick(); // Just in case the CPU is currently in the big lock waiting
         m_cpu.set_unplug(true);
+
+        std::lock_guard<std::mutex> lock(m_can_delete);
     }
 
     /* NB this is usd to determin if this cpu can run in SINGLE mode

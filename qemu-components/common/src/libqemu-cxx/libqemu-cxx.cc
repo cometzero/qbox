@@ -28,8 +28,16 @@ LibQemu::LibQemu(LibraryLoaderIface& library_loader, Target t)
 
 LibQemu::~LibQemu()
 {
+    shutdown();
     for (auto s : m_qemu_argv) {
         delete[] s;
+    }
+}
+
+void LibQemu::shutdown()
+{
+    if (is_inited()) {
+        m_int->exports().shutdown();
     }
 }
 

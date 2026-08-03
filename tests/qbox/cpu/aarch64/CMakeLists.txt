@@ -1,4 +1,21 @@
 qbox_add_cpu_test(aarch64-simple-write-test 100 simple-write-test.cc)
+qbox_add_cpu_test_executable(
+    aarch64-single-tcg-five-cpu-shutdown-test
+    single-tcg-five-cpu-shutdown-test.cc)
+if(TARGET aarch64-single-tcg-five-cpu-shutdown-test)
+    add_test(
+        NAME aarch64-single-tcg-five-cpu-shutdown-test
+        COMMAND $<TARGET_FILE:aarch64-single-tcg-five-cpu-shutdown-test>
+            -p test-bench.inst.accel=tcg
+            -p test-bench.inst.tcg_mode=SINGLE
+            -p test-bench.inst.sync_policy=multithread-quantum
+            -p test-bench.inst.time_sync_strategy=quantum_keeper
+            -p log_level=0
+    )
+    set_tests_properties(
+        aarch64-single-tcg-five-cpu-shutdown-test
+        PROPERTIES TIMEOUT 30)
+endif()
 qbox_add_cpu_test(aarch64-dmi-test 100 dmi-test.cc)
 qbox_add_cpu_test(aarch64-dmi-test-concurrent-inval 100 dmi-test-concurrent-inval.cc)
 # Build assembly firmware for DMI reset test

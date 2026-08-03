@@ -10,6 +10,7 @@
 #define _LIBQBOX_COMPONENTS_IRQ_CTRL_ARM_GICV3_H
 
 #include <sstream>
+#include <stdexcept>
 
 #include <systemc>
 #include <cci_configuration>
@@ -18,6 +19,7 @@
 #include <libqemu-cxx/libqemu-cxx.h>
 
 #include <device.h>
+#include <cpu.h>
 #include <ports/target.h>
 #include <ports/qemu-initiator-signal-socket.h>
 #include <ports/qemu-target-signal-socket.h>
@@ -60,6 +62,43 @@ public:
     sc_core::sc_vector<QemuInitiatorSignalSocket> fiq_out;
     sc_core::sc_vector<QemuInitiatorSignalSocket> virq_out;
     sc_core::sc_vector<QemuInitiatorSignalSocket> vfiq_out;
+
+protected:
+    unsigned count_owned_cpus(sc_core::sc_object* object) const
+    {
+        unsigned count = 0;
+        auto* cpu = dynamic_cast<QemuCpu*>(object);
+        if (cpu != nullptr && &cpu->get_qemu_inst() == &m_inst) {
+            ++count;
+        }
+        for (auto* child : object->get_child_objects()) {
+            count += count_owned_cpus(child);
+        }
+        return count;
+    }
+
+    void validate_cpu_ownership() const
+    {
+        unsigned owned_cpus = 0;
+        for (auto* object : sc_core::sc_get_top_level_objects()) {
+            owned_cpus += count_owned_cpus(object);
+        }
+
+        const unsigned required_cpus =
+            p_first_cpu_index.get_value() + p_num_cpu.get_value();
+        if (owned_cpus < required_cpus) {
+            std::ostringstream message;
+            message << name() << " realize error: QEMU instance "
+                    << m_inst.name() << " owns " << owned_cpus
+                    << " CPU(s), but GIC CPU index range ["
+                    << p_first_cpu_index.get_value() << ", "
+                    << (required_cpus - 1) << "] requires "
+                    << required_cpus;
+            throw std::runtime_error(message.str());
+        }
+    }
+
+public:
     arm_gicv3(const sc_core::sc_module_name& name, sc_core::sc_object* o)
         : arm_gicv3(name, *(dynamic_cast<QemuInstance*>(o)))
     {
@@ -140,6 +179,7 @@ public:
 
     void end_of_elaboration()
     {
+        validate_cpu_ownership();
         QemuDevice::set_sysbus_as_parent_bus();
         QemuDevice::end_of_elaboration();
 

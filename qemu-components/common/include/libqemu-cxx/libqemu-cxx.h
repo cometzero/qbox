@@ -128,6 +128,7 @@ public:
     const std::vector<char*>& get_qemu_args() const { return m_qemu_argv; }
 
     void init();
+    void shutdown();
     bool is_inited() const { return m_lib != nullptr; }
 
     /* QEMU GDB stub
