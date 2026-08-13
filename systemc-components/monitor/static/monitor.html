@@ -3,11 +3,11 @@
 
 <head>
     <title>Monitor</title>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
-    <link rel=stylesheet href=https://cdn.jsdelivr.net/npm/pretty-print-json@3.0/dist/css/pretty-print-json.css>
-    <script src=https://cdn.jsdelivr.net/npm/pretty-print-json@3.0/dist/pretty-print-json.min.js></script>
+    <script async id="xterm-script" src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+    <link rel="stylesheet" media="print" onload="this.media='all'" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+    <script async id="xterm-fit-script" src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+    <link rel="stylesheet" media="print" onload="this.media='all'" href="https://cdn.jsdelivr.net/npm/pretty-print-json@3.0/dist/css/pretty-print-json.css">
+    <script async src="https://cdn.jsdelivr.net/npm/pretty-print-json@3.0/dist/pretty-print-json.min.js"></script>
 
     <style>
         body {
@@ -227,6 +227,7 @@
 
         var sock;
         var term;
+        var fitAddon;
         var vnc_file = "res/vnc.html"
 
         // Simple counter to generate unique message ids for QMP messages
@@ -246,16 +247,47 @@
         // Maps QMP request ids to response calls
         const callbacksRegister = new Map()
 
-        var term = new window.Terminal({
-            cursorBlink: false,
-            cursorInactiveStyle: "outline"
-        });
-        term.open(document.getElementById('terminal'));
-        term.onData((data) => { sock.send(data) });
-        var fitAddon = new FitAddon.FitAddon();
-        term.loadAddon(fitAddon);
+        function createTerminalFallback() {
+            const terminalElement = document.getElementById('terminal');
+            terminalElement.textContent = "Terminal support is loading; system status remains available.";
+            return {
+                reset: () => { terminalElement.textContent = ""; },
+                write: (data) => { terminalElement.textContent += data; },
+                loadAddon: () => {},
+                onData: () => {},
+            };
+        }
+
+        function initializeTerminal() {
+            if (!window.Terminal || !window.FitAddon) return false;
+
+            const terminalElement = document.getElementById('terminal');
+            terminalElement.textContent = "";
+            term = new window.Terminal({
+                cursorBlink: false,
+                cursorInactiveStyle: "outline"
+            });
+            fitAddon = new window.FitAddon.FitAddon();
+            term.loadAddon(fitAddon);
+            term.open(terminalElement);
+            term.onData((data) => {
+                if (sock && sock.readyState === WebSocket.OPEN) sock.send(data);
+            });
+            return true;
+        }
+
+        term = createTerminalFallback();
+        fitAddon = { fit: () => {} };
+        document.getElementById('xterm-script').addEventListener('load', initializeTerminal);
+        document.getElementById('xterm-fit-script').addEventListener('load', initializeTerminal);
+        initializeTerminal();
 
         function popupWindow(biflowName) {
+            if (!window.Terminal || !window.FitAddon) {
+                alert('Terminal support is unavailable. Check access to jsDelivr and reload.');
+                return;
+            }
+
             var tw = window.open('', '_blank', 'popup=true,toolbar=no,scrollbars=no,menubar=no,directories=no,location=no,status=no,resizable=yes, width=500, height=300');
 
             if (!tw || tw.closed || typeof tw.closed == 'undefined') {
@@ -444,8 +476,11 @@
         }
         function prettyPrintServerInfo(serverInfo) {
             const vncInfoDiv = document.getElementById("vncInfo");
-            const prettyVncServerInfo = prettyPrintJson.toHtml(serverInfo);
-            vncInfoDiv.innerHTML = prettyVncServerInfo;
+            if (window.prettyPrintJson) {
+                vncInfoDiv.innerHTML = window.prettyPrintJson.toHtml(serverInfo);
+            } else {
+                vncInfoDiv.textContent = JSON.stringify(serverInfo, null, 2);
+            }
         }
 
         const vncWindows = {};
@@ -1088,8 +1123,7 @@
             fetchObjects();
         };
 
-        // Fetch top-level objects on page load
-        window.onload = fetchObjects;
+        fetchObjects();
 
         window.addEventListener('resize', () => {
             const container = document.getElementById('terminal');

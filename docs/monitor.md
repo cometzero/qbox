@@ -47,3 +47,9 @@ platform["monitor_0"] = {
 
 After the simulation starts, open `http://localhost:18080/` in
 a browser to access the dashboard.
+
+The SystemC status, quantum-keeper tables, REST data, and object
+browser render without external web resources. The enhanced xterm
+presentation loads asynchronously from jsDelivr; if the CDN is
+unavailable, the dashboard remains usable and shows a basic terminal
+fallback instead of blocking on a blank page.
