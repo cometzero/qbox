@@ -66,11 +66,16 @@ protected:
             return;
         }
 
-        m_proxy.get_inst().unlock_iothread();
+        bool iothread_locked = m_proxy.get_inst().iothread_locked();
+        if (iothread_locked) {
+            m_proxy.get_inst().unlock_iothread();
+        }
 
         m_on_sysc.run_on_sysc([this, val] { (*this)->write(val); });
 
-        m_proxy.get_inst().lock_iothread();
+        if (iothread_locked) {
+            m_proxy.get_inst().lock_iothread();
+        }
     }
 
     void init_qemu_to_sysc_gpio_proxy(qemu::Device& dev)

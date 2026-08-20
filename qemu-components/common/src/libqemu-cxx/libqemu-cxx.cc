@@ -211,6 +211,11 @@ void LibQemu::lock_iothread() { m_int->exports().qemu_mutex_lock_iothread(); }
 
 void LibQemu::unlock_iothread() { m_int->exports().qemu_mutex_unlock_iothread(); }
 
+bool LibQemu::iothread_locked()
+{
+    return m_int->exports().qemu_mutex_iothread_locked() != 0;
+}
+
 void LibQemu::rcu_read_lock() { m_int->exports().rcu_read_lock(); }
 
 void LibQemu::rcu_read_unlock() { m_int->exports().rcu_read_unlock(); }
