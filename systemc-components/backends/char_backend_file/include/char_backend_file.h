@@ -22,10 +22,16 @@
 #include <module_factory_registery.h>
 
 #include <cerrno>
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <stdio.h>
 #include <stdlib.h>
+#include <thread>
 #ifndef _WIN32
 #include <fcntl.h>
+#include <poll.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 #include <scp/report.h>
@@ -44,9 +50,50 @@ private:
     double delay;
     SCP_LOGGER();
 
+#ifndef _WIN32
+    gs::async_event m_read_ready;
+    std::atomic_bool m_stop_readiness_thread{ false };
+    std::thread m_readiness_thread;
+    std::mutex m_readiness_mutex;
+    std::condition_variable m_readiness_consumed;
+    bool m_readiness_pending = false;
+    bool m_readiness_attached = false;
+    int m_readiness_fd = -1;
+    int m_cancel_pipe[2] = { -1, -1 };
+#endif
+
 public:
     gs::biflow_socket<char_backend_file> socket;
     sc_core::sc_event update_event;
+
+#ifndef _WIN32
+    using WriteFunction = ssize_t (*)(int, const void*, size_t);
+
+    static bool write_cancel_byte(int fd, WriteFunction write_function = ::write)
+    {
+        const char cancel = 1;
+        ssize_t written;
+        do {
+            written = write_function(fd, &cancel, sizeof(cancel));
+        } while (written < 0 && errno == EINTR);
+        return written == sizeof(cancel);
+    }
+
+    static bool signal_cancel(int& fd, WriteFunction write_function = ::write)
+    {
+        if (write_cancel_byte(fd, write_function)) {
+            return true;
+        }
+        close(fd);
+        fd = -1;
+        return false;
+    }
+
+    static bool cancellation_requested(short events)
+    {
+        return events & (POLLIN | POLLHUP | POLLERR | POLLNVAL);
+    }
+#endif
 
     /**
      * char_backend_file() - Construct the file-backend
@@ -60,6 +107,9 @@ public:
         , p_baudrate("baudrate", 0, "number of bytes per second")
         , p_poll_read("poll_read", false, "poll read_file instead of sending EOF at initial end of file")
         , p_poll_interval_ms("poll_interval_ms", 1, "polling interval for poll_read in milliseconds")
+#ifndef _WIN32
+        , m_read_ready(false)
+#endif
         , socket("biflow_socket")
     {
         SCP_TRACE(()) << "constructor";
@@ -104,6 +154,9 @@ public:
             if (r_file == NULL) SCP_ERR(()) << "Error opening the input file " << p_read_file.get_value() << ".\n";
             if (r_file != NULL && poll_read_enabled()) {
                 set_nonblocking(r_file);
+#ifndef _WIN32
+                start_readiness_thread();
+#endif
             }
             update_event.notify(sc_core::SC_ZERO_TIME);
         }
@@ -130,6 +183,98 @@ public:
         (void)file;
 #endif
     }
+
+#ifndef _WIN32
+    void start_readiness_thread()
+    {
+        struct stat status;
+        if (fstat(fileno(r_file), &status) != 0 || !S_ISFIFO(status.st_mode)) {
+            return;
+        }
+
+        m_readiness_fd = open(p_read_file.get_value().c_str(), O_RDWR | O_NONBLOCK);
+        if (m_readiness_fd < 0 || pipe(m_cancel_pipe) != 0) {
+            if (m_readiness_fd >= 0) {
+                close(m_readiness_fd);
+                m_readiness_fd = -1;
+            }
+            return;
+        }
+
+        m_stop_readiness_thread = false;
+        m_read_ready.async_attach_suspending();
+        m_readiness_attached = true;
+        m_readiness_thread = std::thread(&char_backend_file::readiness_thread, this);
+    }
+
+    void readiness_thread()
+    {
+        struct pollfd monitors[2] = {
+            { m_readiness_fd, POLLIN, 0 },
+            { m_cancel_pipe[0], POLLIN, 0 },
+        };
+
+        while (!m_stop_readiness_thread) {
+            int result = poll(monitors, 2, -1);
+            if (result < 0 && errno == EINTR) {
+                continue;
+            }
+            if (result <= 0 || cancellation_requested(monitors[1].revents)) {
+                break;
+            }
+            if (monitors[0].revents & POLLIN) {
+                std::unique_lock<std::mutex> lock(m_readiness_mutex);
+                if (m_stop_readiness_thread) {
+                    break;
+                }
+                m_readiness_pending = true;
+                m_read_ready.async_notify();
+                m_readiness_consumed.wait(lock, [this] {
+                    return m_stop_readiness_thread || !m_readiness_pending;
+                });
+            }
+            if (monitors[0].revents & (POLLERR | POLLNVAL)) {
+                break;
+            }
+        }
+    }
+
+    void acknowledge_readiness()
+    {
+        std::lock_guard<std::mutex> lock(m_readiness_mutex);
+        m_readiness_pending = false;
+        m_readiness_consumed.notify_one();
+    }
+
+    void stop_readiness_thread()
+    {
+        m_stop_readiness_thread = true;
+        m_readiness_consumed.notify_all();
+        if (m_cancel_pipe[1] >= 0) {
+            if (!signal_cancel(m_cancel_pipe[1])) {
+                SCP_WARN(()) << "Cancellation write failed; closed pipe to "
+                                "release file-readiness thread";
+            }
+        }
+        if (m_readiness_thread.joinable()) {
+            m_readiness_thread.join();
+        }
+        if (m_readiness_fd >= 0) {
+            close(m_readiness_fd);
+            m_readiness_fd = -1;
+        }
+        for (int& fd : m_cancel_pipe) {
+            if (fd >= 0) {
+                close(fd);
+                fd = -1;
+            }
+        }
+        if (m_readiness_attached) {
+            m_read_ready.async_detach_suspending();
+            m_readiness_attached = false;
+        }
+    }
+#endif
 
     void rcv_thread()
     {
@@ -168,8 +313,17 @@ public:
             if (count < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
                 SCP_ERR(()) << "Error reading the input file " << p_read_file.get_value() << ".\n";
             }
-            sc_core::wait(poll_ms, sc_core::SC_MS);
+            acknowledge_readiness();
+            sc_core::wait(sc_core::sc_time(poll_ms, sc_core::SC_MS),
+                          m_read_ready);
         }
+#endif
+    }
+
+    void end_of_simulation()
+    {
+#ifndef _WIN32
+        stop_readiness_thread();
 #endif
     }
 
@@ -187,6 +341,9 @@ public:
 
     ~char_backend_file()
     {
+#ifndef _WIN32
+        stop_readiness_thread();
+#endif
         if (w_file != NULL) {
             fclose(w_file);
         }

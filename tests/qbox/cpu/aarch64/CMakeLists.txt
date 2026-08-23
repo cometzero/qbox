@@ -87,4 +87,89 @@ if(TARGET aarch64-start-in-reset-release-test)
     )
     set_tests_properties(aarch64-start-in-reset-release-test PROPERTIES TIMEOUT 30)
 endif()
+qbox_add_cpu_test_executable(aarch64-managed-timer-wfi-test managed-timer-wfi-test.cc)
+if(TARGET aarch64-managed-timer-wfi-test)
+    target_link_libraries(aarch64-managed-timer-wfi-test PRIVATE
+        arm_gicv3 qemu_arm_arch_timer_mmio)
+    foreach(test_case IN ITEMS baseline timer-wake)
+        if(test_case STREQUAL "baseline")
+            set(timer_ticks 0)
+            set(expect_timer_wake false)
+        else()
+            set(timer_ticks 10000)
+            set(expect_timer_wake true)
+        endif()
+        add_test(
+            NAME aarch64-managed-timer-wfi-${test_case}
+            COMMAND $<TARGET_FILE:aarch64-managed-timer-wfi-test>
+                -p test-bench.inst.managed_start_in_reset_release=true
+                -p test-bench.inst.accel=tcg
+                -p test-bench.inst.tcg_mode=MULTI
+                -p test-bench.inst.sync_policy=multithread-freerunning
+                -p test-bench.inst.time_sync_strategy=quantum_keeper
+                -p test-bench.gic.num_spi=64
+                -p test-bench.gic.redist_region=[1]
+                -p test-bench.timer.nr_frames=1
+                -p test-bench.timer_ticks=${timer_ticks}
+                -p test-bench.expect_timer_wake=${expect_timer_wake}
+                -p log_level=0)
+        set_tests_properties(aarch64-managed-timer-wfi-${test_case}
+                             PROPERTIES TIMEOUT 30)
+    endforeach()
+endif()
+if(UNIX)
+    qbox_add_cpu_test_executable(aarch64-managed-uart-fifo-wfi-test
+                                 managed-uart-fifo-wfi-test.cc)
+    if(TARGET aarch64-managed-uart-fifo-wfi-test)
+        target_link_libraries(aarch64-managed-uart-fifo-wfi-test PRIVATE
+            arm_gicv3 uart-pl011 char_backend_file)
+        add_test(
+            NAME aarch64-managed-uart-fifo-active
+            COMMAND $<TARGET_FILE:aarch64-managed-uart-fifo-wfi-test>
+                -p test-bench.inst.managed_start_in_reset_release=true
+                -p test-bench.inst.accel=tcg
+                -p test-bench.inst.tcg_mode=MULTI
+                -p test-bench.inst.sync_policy=multithread-freerunning
+                -p test-bench.inst.time_sync_strategy=quantum_keeper
+                -p test-bench.gic.num_spi=64
+                -p test-bench.gic.redist_region=[1]
+                -p log_level=0)
+        set_tests_properties(aarch64-managed-uart-fifo-active
+                             PROPERTIES TIMEOUT 30)
+        add_test(
+            NAME aarch64-managed-uart-fifo-quiescent
+            COMMAND $<TARGET_FILE:aarch64-managed-uart-fifo-wfi-test>
+                -p test-bench.inst.managed_start_in_reset_release=true
+                -p test-bench.inst.accel=tcg
+                -p test-bench.inst.tcg_mode=MULTI
+                -p test-bench.inst.sync_policy=multithread-freerunning
+                -p test-bench.inst.time_sync_strategy=quantum_keeper
+                -p test-bench.gic.num_spi=64
+                -p test-bench.gic.redist_region=[1]
+                --async-host-input-after-wfi
+                -p log_level=0)
+        set_tests_properties(aarch64-managed-uart-fifo-quiescent
+                             PROPERTIES TIMEOUT 30)
+        add_test(
+            NAME aarch64-managed-uart-fifo-closed-writer
+            COMMAND $<TARGET_FILE:aarch64-managed-uart-fifo-wfi-test>
+                -p test-bench.inst.managed_start_in_reset_release=true
+                -p test-bench.inst.accel=tcg
+                -p test-bench.inst.tcg_mode=MULTI
+                -p test-bench.inst.sync_policy=multithread-freerunning
+                -p test-bench.inst.time_sync_strategy=quantum_keeper
+                -p test-bench.gic.num_spi=64
+                -p test-bench.gic.redist_region=[1]
+                --closed-writer-after-wfi
+                -p log_level=0)
+        set_tests_properties(aarch64-managed-uart-fifo-closed-writer
+                             PROPERTIES TIMEOUT 30)
+        add_test(
+            NAME aarch64-managed-uart-fifo-cancel-eintr
+            COMMAND $<TARGET_FILE:aarch64-managed-uart-fifo-wfi-test>
+                --cancel-eintr-self-test)
+        set_tests_properties(aarch64-managed-uart-fifo-cancel-eintr
+                             PROPERTIES TIMEOUT 30)
+    endif()
+endif()
 qbox_add_cpu_test(aarch64-smmu-router-stress-test-v2 100 smmu_router_stress_test_v2.cc)
