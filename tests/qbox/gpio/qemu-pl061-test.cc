@@ -74,24 +74,40 @@ class QemuPl061Test : public TestBench
         TEST_ASSERT(read_reg(0xff0) == 0x0d);
         TEST_ASSERT(read_reg(data_all) == 0x5a);
 
-        m_gpio.gpio_in[0]->write(true);
-        TEST_ASSERT(read_reg(data_all) == 0x5b);
+        qemu_pl061::RuntimePinSnapshot snapshot;
+        TEST_ASSERT(m_gpio.runtime_pin_snapshot(0, snapshot));
+        TEST_ASSERT(!snapshot.direction_output);
+        TEST_ASSERT(!snapshot.data_level);
+        TEST_ASSERT(!snapshot.input_level);
+        TEST_ASSERT(!snapshot.initial_input_level);
+        TEST_ASSERT(!m_gpio.runtime_pin_snapshot(8, snapshot));
 
-        write_reg(data_all, 0x02);
-        write_reg(direction, 0x02);
+        TEST_ASSERT(m_gpio.runtime_drive_input(0, true));
+        TEST_ASSERT(read_reg(data_all) == 0x5b);
+        TEST_ASSERT(m_gpio.runtime_release_input(0));
+        TEST_ASSERT(read_reg(data_all) == 0x5a);
+
+        TEST_ASSERT(m_gpio.runtime_set_direction(1, true));
+        TEST_ASSERT((read_reg(direction) & 0x02) != 0);
+        TEST_ASSERT(m_gpio.runtime_write_output(1, true));
         wait(sc_core::SC_ZERO_TIME);
         TEST_ASSERT(m_gpio_out[1].read());
+        TEST_ASSERT(m_gpio.runtime_pin_snapshot(1, snapshot));
+        TEST_ASSERT(snapshot.direction_output);
+        TEST_ASSERT(snapshot.data_level);
+        TEST_ASSERT(!m_gpio.runtime_drive_input(1, false));
 
-        write_reg(data_all, 0x00);
+        TEST_ASSERT(m_gpio.runtime_write_output(1, false));
         wait(sc_core::SC_ZERO_TIME);
         TEST_ASSERT(!m_gpio_out[1].read());
+        TEST_ASSERT(!m_gpio.runtime_write_output(0, true));
 
-        m_gpio.gpio_in[0]->write(false);
+        TEST_ASSERT(m_gpio.runtime_drive_input(0, false));
         write_reg(interrupt_sense, 0x00);
         write_reg(interrupt_both_edges, 0x00);
         write_reg(interrupt_event, 0x01);
         write_reg(interrupt_mask, 0x01);
-        m_gpio.gpio_in[0]->write(true);
+        TEST_ASSERT(m_gpio.runtime_drive_input(0, true));
         wait(sc_core::SC_ZERO_TIME);
         TEST_ASSERT(m_irq.read());
 
@@ -107,6 +123,8 @@ class QemuPl061Test : public TestBench
         m_gpio.reset->write(false);
         wait(sc_core::SC_ZERO_TIME);
         TEST_ASSERT((read_reg(data_all) & 0x01) != 0);
+        TEST_ASSERT(m_gpio.runtime_release_input(0));
+        TEST_ASSERT((read_reg(data_all) & 0x01) == 0);
 
         sc_core::sc_stop();
     }

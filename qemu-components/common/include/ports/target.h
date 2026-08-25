@@ -247,6 +247,8 @@ public:
         m_bridge.set_mirror_4k_aperture(enabled, mirror_writes);
     }
 
+    unsigned int transport_dbg(TlmPayload& payload) { return m_bridge.transport_dbg(payload); }
+
 private:
     void apply_mirror_config()
     {
