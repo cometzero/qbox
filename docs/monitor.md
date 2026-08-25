@@ -29,6 +29,9 @@ available over WebSocket.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `server_port` | `uint32_t` | `18080` | HTTP port the monitor listens on |
+| `bind_address` | `string` | `"127.0.0.1"` | HTTP listener address |
+| `runtime_mutation` | `bool` | `false` | Enable runtime action endpoints |
+| `injection_service` | `string` | `""` | Exact SystemC object path implementing `gs::RuntimeActionService` |
 | `html_doc_template_dir_path` | `string` | (executable-relative `static/`) | Directory containing HTML templates |
 | `html_doc_name` | `string` | `"monitor.html"` | Name of the main HTML document |
 | `use_html_presentation` | `bool` | `true` | Serve the HTML dashboard; when false, the root URL returns a plain-text API listing |
@@ -38,12 +41,60 @@ available over WebSocket.
 ```lua
 platform["monitor_0"] = {
     moduletype = "monitor",
+    bind_address = "127.0.0.1",
     server_port = 18080,
     use_html_presentation = true,
     html_doc_template_dir_path = "/path/to/html/templates",
     html_doc_name = "monitor.html",
 }
 ```
+
+Runtime mutation is disabled unless `runtime_mutation` is explicitly set.
+When enabled, `bind_address` must be `127.0.0.1` or `::1`; any other address
+causes construction to fail before the listener starts. Read-only monitor
+routes remain available when mutation is disabled.
+
+The runtime action service is a platform-owned SystemC object that publicly
+implements the typed, platform-independent contract in
+`runtime-action-service.h`. The monitor resolves `injection_service` by its
+exact SystemC object path and invokes it only through `gs::runonsysc`.
+
+## Runtime Action API
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| `GET` | `/api/v1/injection/capabilities` | List allow-listed targets and actions |
+| `GET` | `/api/v1/injection/targets/<target>` | Read a target snapshot |
+| `POST` | `/api/v1/injections` | Submit a typed runtime action |
+| `GET` | `/api/v1/injections` | List retained requests |
+| `GET` | `/api/v1/injections/<id>` | Read request status |
+| `DELETE` | `/api/v1/injections/<id>` | Cancel a request |
+
+Requests use schema version 1. `trigger` defaults to `immediate`; the other
+supported form is `relative-simulation-time` with an unsigned `delay_ns`.
+Parameter values are limited to booleans, unsigned integers, and strings.
+
+```json
+{
+  "schema_version": 1,
+  "target": "platform.runtime_target",
+  "action": "trigger",
+  "trigger": {
+    "type": "relative-simulation-time",
+    "delay_ns": 10000
+  },
+  "parameters": {
+    "duration_ns": 5000
+  },
+  "clear_on_reset": true
+}
+```
+
+An accepted request returns HTTP `202` with its typed status. Invalid JSON or
+unsupported value types return `400 invalid-request`; a disabled mutation API
+returns `403 mutation-disabled`; a missing service or stopped SystemC bridge
+returns `503 simulation-unavailable`. Error responses use
+`{"error":{"code":"...","message":"..."}}`.
 
 After the simulation starts, open `http://localhost:18080/` in
 a browser to access the dashboard.

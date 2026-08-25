@@ -27,6 +27,8 @@
 #include <atomic>
 #include <ports/biflow-socket.h>
 
+#include "runtime-action-service.h"
+
 #define MAX_ASIO_BUF_LEN (1024ULL * 16ULL)
 #define MAX_BUFFER       1000
 
@@ -98,6 +100,10 @@ public:
 private:
     void init_monitor();
 
+    RuntimeActionService* runtime_action_service() const;
+
+    crow::response invoke_runtime_action(const std::function<crow::response(RuntimeActionService&)>& action);
+
     void before_end_of_elaboration() override;
 
     void end_of_elaboration() override;
@@ -105,7 +111,14 @@ private:
     void end_of_simulation() override;
 
 public:
+    static bool is_loopback_address(const std::string& address);
+    static bool is_runtime_configuration_safe(bool runtime_mutation, const std::string& address);
+    uint16_t server_port() const;
+
     cci::cci_param<uint32_t> p_server_port;
+    cci::cci_param<std::string> p_bind_address;
+    cci::cci_param<bool> p_runtime_mutation;
+    cci::cci_param<std::string> p_injection_service;
     cci::cci_param<std::string> p_html_doc_template_dir_path;
     cci::cci_param<std::string> p_html_doc_name;
     cci::cci_param<bool> p_use_html_presentation;

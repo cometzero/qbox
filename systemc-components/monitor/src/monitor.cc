@@ -29,11 +29,13 @@ platform["monitor_0"] = {
 #undef WIN32_LEAN_AND_MEAN
 #endif
 #include "monitor.h"
+#include "runtime-action-api.h"
 #include <module_factory_registery.h>
 #include <router_if.h>
 #include <vector>
 #include <functional>
 #include <exception>
+#include <stdexcept>
 #include <cciutils.h>
 #include <algorithm>
 #ifndef _WIN32
@@ -76,10 +78,21 @@ std::string get_html_base_dir()
 
 namespace gs {
 
+using runtime_action_api::capability_json;
+using runtime_action_api::error_response;
+using runtime_action_api::json_response;
+using runtime_action_api::parse_action_request;
+using runtime_action_api::snapshot_json;
+using runtime_action_api::status_json;
+using runtime_action_api::status_reply_response;
+
 template <unsigned int BUSWIDTH>
 monitor<BUSWIDTH>::monitor(const sc_core::sc_module_name& nm)
     : sc_core::sc_module(nm)
     , p_server_port("server_port", 18080, "monitor server port number")
+    , p_bind_address("bind_address", "127.0.0.1", "monitor server bind address")
+    , p_runtime_mutation("runtime_mutation", false, "enable runtime mutation endpoints")
+    , p_injection_service("injection_service", "", "runtime action service object path")
     , p_html_doc_template_dir_path("html_doc_template_dir_path", get_html_base_dir(),
                                    "path to a template directory where HTML document to call the REST API exist")
     , p_html_doc_name("html_doc_name", "monitor.html", "name of a HTML document to call the REST API")
@@ -87,6 +100,9 @@ monitor<BUSWIDTH>::monitor(const sc_core::sc_module_name& nm)
     , p_refresh_interval_ms("refresh_interval_ms", 100, "refresh interval in milliseconds for the web interface")
 {
     SCP_DEBUG(()) << "monitor constructor";
+    if (!is_runtime_configuration_safe(p_runtime_mutation.get_value(), p_bind_address.get_value())) {
+        throw std::invalid_argument("runtime mutation requires a loopback bind address");
+    }
     m_app.signal_clear();
     init_monitor();
 }
@@ -95,6 +111,53 @@ template <unsigned int BUSWIDTH>
 monitor<BUSWIDTH>::~monitor()
 {
     m_app.stop();
+}
+
+template <unsigned int BUSWIDTH>
+bool monitor<BUSWIDTH>::is_loopback_address(const std::string& address)
+{
+    return address == "127.0.0.1" || address == "::1";
+}
+
+template <unsigned int BUSWIDTH>
+bool monitor<BUSWIDTH>::is_runtime_configuration_safe(bool runtime_mutation, const std::string& address)
+{
+    return !runtime_mutation || is_loopback_address(address);
+}
+
+template <unsigned int BUSWIDTH>
+uint16_t monitor<BUSWIDTH>::server_port() const
+{
+    return m_app.port();
+}
+
+template <unsigned int BUSWIDTH>
+RuntimeActionService* monitor<BUSWIDTH>::runtime_action_service() const
+{
+    if (p_injection_service.get_value().empty()) {
+        return nullptr;
+    }
+    sc_core::sc_object* object = find_sc_obj(nullptr, p_injection_service.get_value(), true);
+    return dynamic_cast<RuntimeActionService*>(object);
+}
+
+template <unsigned int BUSWIDTH>
+crow::response monitor<BUSWIDTH>::invoke_runtime_action(
+    const std::function<crow::response(RuntimeActionService&)>& action)
+{
+    crow::response response;
+    bool executed = m_sc.run_on_sysc([&] {
+        RuntimeActionService* service = runtime_action_service();
+        if (!service) {
+            response = error_response(503, "simulation-unavailable", "runtime action service is unavailable");
+            return;
+        }
+        response = action(*service);
+    });
+    if (!executed) {
+        return error_response(503, "simulation-unavailable", "SystemC execution is unavailable");
+    }
+    return response;
 }
 
 std::vector<crow::json::wvalue> json_cci_params(sc_core::sc_object* obj)
@@ -252,7 +315,8 @@ void monitor<BUSWIDTH>::init_monitor()
             std::string ret =
                 "API:\n/sc_time\n/pause\n/continue\n/reset\n/object/\n//object/<str>\n/mcips_plugin_status\n/"
                 "qk_status\n/sc_suspended\n/refresh_interval\n/"
-                "transport_dbg/<int>/<str>";
+                "transport_dbg/<int>/<str>\n/api/v1/injection/capabilities\n/"
+                "api/v1/injection/targets/<str>\n/api/v1/injections";
             return ret;
         }
     });
@@ -355,6 +419,82 @@ void monitor<BUSWIDTH>::init_monitor()
         r["refresh_interval_ms"] = p_refresh_interval_ms.get_value();
         return r;
     });
+    CROW_ROUTE(m_app, "/api/v1/injection/capabilities")
+    ([&]() -> crow::response {
+        if (!p_runtime_mutation.get_value()) {
+            return error_response(403, "mutation-disabled", "runtime mutation is disabled");
+        }
+        return invoke_runtime_action([](RuntimeActionService& service) {
+            std::vector<crow::json::wvalue> targets;
+            for (const auto& capability : service.capabilities()) {
+                targets.push_back(capability_json(capability));
+            }
+            crow::json::wvalue body;
+            body["targets"] = std::move(targets);
+            return json_response(200, std::move(body));
+        });
+    });
+    CROW_ROUTE(m_app, "/api/v1/injection/targets/<str>")
+    ([&](const std::string& target) -> crow::response {
+        if (!p_runtime_mutation.get_value()) {
+            return error_response(403, "mutation-disabled", "runtime mutation is disabled");
+        }
+        return invoke_runtime_action([&](RuntimeActionService& service) {
+            RuntimeTargetSnapshotReply reply = service.target_snapshot(target);
+            if (!reply.ok()) {
+                return error_response(reply.http_status, reply.error_code, reply.error_message);
+            }
+            return json_response(reply.http_status, snapshot_json(reply.value));
+        });
+    });
+    CROW_ROUTE(m_app, "/api/v1/injections")
+    ([&]() -> crow::response {
+        if (!p_runtime_mutation.get_value()) {
+            return error_response(403, "mutation-disabled", "runtime mutation is disabled");
+        }
+        return invoke_runtime_action([](RuntimeActionService& service) {
+            std::vector<crow::json::wvalue> injections;
+            for (const auto& status : service.list()) {
+                injections.push_back(status_json(status));
+            }
+            crow::json::wvalue body;
+            body["injections"] = std::move(injections);
+            return json_response(200, std::move(body));
+        });
+    });
+    CROW_ROUTE(m_app, "/api/v1/injections")
+        .methods(crow::HTTPMethod::Post)([&](const crow::request& request) -> crow::response {
+            if (!p_runtime_mutation.get_value()) {
+                return error_response(403, "mutation-disabled", "runtime mutation is disabled");
+            }
+            RuntimeActionRequest action_request;
+            std::string error;
+            try {
+                if (!parse_action_request(request.body, action_request, error)) {
+                    return error_response(400, "invalid-request", error);
+                }
+            } catch (const std::exception&) {
+                return error_response(400, "invalid-request", "request body contains an invalid value");
+            }
+            return invoke_runtime_action(
+                [&](RuntimeActionService& service) { return status_reply_response(service.submit(action_request)); });
+        });
+    CROW_ROUTE(m_app, "/api/v1/injections/<uint>")
+    ([&](uint64_t id) -> crow::response {
+        if (!p_runtime_mutation.get_value()) {
+            return error_response(403, "mutation-disabled", "runtime mutation is disabled");
+        }
+        return invoke_runtime_action(
+            [&](RuntimeActionService& service) { return status_reply_response(service.status(id)); });
+    });
+    CROW_ROUTE(m_app, "/api/v1/injections/<uint>")
+        .methods(crow::HTTPMethod::Delete)([&](uint64_t id) -> crow::response {
+            if (!p_runtime_mutation.get_value()) {
+                return error_response(403, "mutation-disabled", "runtime mutation is disabled");
+            }
+            return invoke_runtime_action(
+                [&](RuntimeActionService& service) { return status_reply_response(service.cancel(id)); });
+        });
     CROW_ROUTE(m_app, "/transport_dbg/<int>/<str>")
     ([&](uint64 addr, std::string name) {
         crow::json::wvalue r;
@@ -424,7 +564,14 @@ void monitor<BUSWIDTH>::init_monitor()
             auto b = (static_cast<std::unique_ptr<biflow_ws>*>(conn.userdata()));
             (*b)->clear_conn(&conn);
         });
-    m_app_future = m_app.loglevel(crow::LogLevel::Error).port(p_server_port.get_value()).concurrency(1).run_async();
+    m_app_future = m_app.loglevel(crow::LogLevel::Error)
+                       .bindaddr(p_bind_address.get_value())
+                       .port(p_server_port.get_value())
+                       .concurrency(1)
+                       .run_async();
+    if (m_app.wait_for_server_start() == std::cv_status::timeout) {
+        throw std::runtime_error("monitor server did not start");
+    }
 }
 
 template <unsigned int BUSWIDTH>
