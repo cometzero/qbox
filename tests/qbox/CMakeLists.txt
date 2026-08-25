@@ -218,3 +218,4 @@ function(qbox_extra_add_test target)
 endfunction(qbox_extra_add_test)
 
 add_subdirectory(display)
+add_subdirectory(gpio)
