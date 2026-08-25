@@ -63,6 +63,15 @@ public:
     sc_core::sc_vector<QemuInitiatorSignalSocket> virq_out;
     sc_core::sc_vector<QemuInitiatorSignalSocket> vfiq_out;
 
+    bool runtime_set_spi(unsigned int index, bool value)
+    {
+        if (index >= spi_in.size()) {
+            return false;
+        }
+        spi_in[index]->write(value);
+        return true;
+    }
+
 protected:
     unsigned count_owned_cpus(sc_core::sc_object* object) const
     {
