@@ -15,6 +15,8 @@ endif()
 add_subdirectory(gs_register)
 add_subdirectory(generic_lua_model)
 add_subdirectory(container_builder)
+add_subdirectory(i2c)
+add_subdirectory(spi)
 add_subdirectory(monitor)
 
 if(NOT WIN32)
