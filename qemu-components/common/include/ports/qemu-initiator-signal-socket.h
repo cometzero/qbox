@@ -71,7 +71,10 @@ protected:
             m_proxy.get_inst().unlock_iothread();
         }
 
-        m_on_sysc.run_on_sysc([this, val] { (*this)->write(val); });
+        // GPIO notifications have no return value.  Waiting here can deadlock
+        // when SystemC is already waiting for this QEMU iothread (for example,
+        // while reset changes an output level).
+        m_on_sysc.run_on_sysc([this, val] { (*this)->write(val); }, false);
 
         if (iothread_locked) {
             m_proxy.get_inst().lock_iothread();

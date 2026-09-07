@@ -121,8 +121,9 @@ class QemuPl061Test : public TestBench
         wait(sc_core::sc_time(1, sc_core::SC_US));
         m_inst.reset->write(false);
         m_gpio.reset->write(false);
-        wait(sc_core::SC_ZERO_TIME);
+        wait(sc_core::sc_time(1, sc_core::SC_US));
         TEST_ASSERT((read_reg(data_all) & 0x01) != 0);
+        TEST_ASSERT(m_gpio_out[1].read());
         TEST_ASSERT(m_gpio.runtime_release_input(0));
         TEST_ASSERT((read_reg(data_all) & 0x01) == 0);
 
