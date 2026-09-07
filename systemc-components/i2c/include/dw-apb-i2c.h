@@ -24,14 +24,7 @@
 #include <ports/target-signal-socket.h>
 #include <scp/report.h>
 #include <tlm_sockets_buswidth.h>
-
-struct dw_i2c_extension : tlm::tlm_extension<dw_i2c_extension> {
-    bool restart = false;
-    bool stop = false;
-
-    tlm_extension_base* clone() const override { return new dw_i2c_extension(*this); }
-    void copy_from(const tlm_extension_base& ext) override { *this = static_cast<const dw_i2c_extension&>(ext); }
-};
+#include <i2c-transaction.h>
 
 class dw_apb_i2c : public sc_core::sc_module
 {
