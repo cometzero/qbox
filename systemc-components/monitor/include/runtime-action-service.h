@@ -55,9 +55,10 @@ struct RuntimeTargetCapability {
 };
 
 struct RuntimeActionTrigger {
-    enum class Type { IMMEDIATE, RELATIVE_SIMULATION_TIME };
+    enum class Type { IMMEDIATE, ABSOLUTE_SIMULATION_TIME, RELATIVE_SIMULATION_TIME };
 
     Type type = Type::IMMEDIATE;
+    uint64_t time_ns = 0;
     uint64_t delay_ns = 0;
 };
 
@@ -65,9 +66,12 @@ struct RuntimeActionRequest {
     uint32_t schema_version = 1;
     std::string target;
     std::string action;
+    std::string reset_domain;
     RuntimeActionTrigger trigger;
     std::map<std::string, RuntimeActionValue> parameters;
     bool clear_on_reset = true;
+    bool has_expected_generation = false;
+    uint64_t expected_generation = 0;
 };
 
 struct RuntimeTargetSnapshot {

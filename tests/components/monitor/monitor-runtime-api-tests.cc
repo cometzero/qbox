@@ -23,6 +23,7 @@ class DummyRuntimeActionService : public sc_core::sc_module, public gs::RuntimeA
 
 public:
     bool submit_on_systemc = false;
+    unsigned submissions = 0;
 
     explicit DummyRuntimeActionService(const sc_core::sc_module_name& name): sc_core::sc_module(name)
     {
@@ -62,9 +63,14 @@ public:
     gs::RuntimeActionStatusReply submit(const gs::RuntimeActionRequest& request) override
     {
         gs::RuntimeActionStatusReply reply;
-        if (request.target != "dummy.event" || request.action != "trigger" ||
-            request.trigger.type != gs::RuntimeActionTrigger::Type::RELATIVE_SIMULATION_TIME ||
-            request.trigger.delay_ns != 10 || !request.clear_on_reset ||
+        const bool relative = request.trigger.type == gs::RuntimeActionTrigger::Type::RELATIVE_SIMULATION_TIME &&
+                              request.trigger.delay_ns == 10 && request.reset_domain.empty() &&
+                              !request.has_expected_generation;
+        const bool absolute = request.trigger.type == gs::RuntimeActionTrigger::Type::ABSOLUTE_SIMULATION_TIME &&
+                              request.trigger.time_ns == 20 && request.reset_domain == "ap" &&
+                              request.has_expected_generation && request.expected_generation == 3;
+        if (request.target != "dummy.event" || request.action != "trigger" || (!relative && !absolute) ||
+            !request.clear_on_reset ||
             request.parameters.at("count").unsigned_integer() != 2 || !request.parameters.at("enabled").boolean() ||
             request.parameters.at("label").string() != "test") {
             reply.http_status = 400;
@@ -73,6 +79,7 @@ public:
             return reply;
         }
         submit_on_systemc = std::this_thread::get_id() == m_systemc_thread;
+        ++submissions;
         reply.http_status = 202;
         reply.value = m_status;
         return reply;
@@ -188,17 +195,23 @@ class MonitorRuntimeApiTest : public TestBench
 
             const std::string mode = p_test_mode.get_value();
             HttpResponse capabilities = request(port, "GET", "/api/v1/injection/capabilities");
+            HttpResponse capabilities_alias = request(port, "GET", "/api/v1/injection-capabilities");
             if (mode == "disabled") {
                 require(capabilities.status == 403, "disabled mutation was not rejected");
+                require(capabilities_alias.status == 403, "disabled capability alias was not rejected");
                 require(capabilities.body.find("\"error\":{") != std::string::npos, "error payload is not nested");
                 require(capabilities.body.find("mutation-disabled") != std::string::npos,
                         "disabled error code is missing");
+                require(request(port, "POST", "/api/v1/injections", "{}").status == 403,
+                        "disabled submission was not rejected");
             } else if (mode == "missing") {
                 require(capabilities.status == 503, "missing service was not rejected");
+                require(capabilities_alias.status == 503, "missing service alias was not rejected");
                 require(capabilities.body.find("simulation-unavailable") != std::string::npos,
                         "missing service error code is missing");
             } else {
                 require(capabilities.status == 200, "capability request failed");
+                require(capabilities_alias.status == 200, "capability alias request failed");
                 require(capabilities.body.find("dummy.event") != std::string::npos,
                         "capability target is missing");
                 HttpResponse snapshot = request(port, "GET", "/api/v1/injection/targets/dummy.event");
@@ -217,6 +230,27 @@ class MonitorRuntimeApiTest : public TestBench
                 HttpResponse submitted = request(port, "POST", "/api/v1/injections", action);
                 require(submitted.status == 202, "valid request was not accepted");
                 require(submitted.body.find("\"id\":42") != std::string::npos, "request id is missing");
+
+                const std::string absolute_action =
+                    "{\"schema_version\":1,\"target\":\"dummy.event\",\"action\":\"trigger\","
+                    "\"reset_domain\":\"ap\",\"expected_generation\":3,"
+                    "\"trigger\":{\"type\":\"absolute-simulation-time\",\"time_ns\":20},"
+                    "\"parameters\":{\"count\":2,\"enabled\":true,\"label\":\"test\"}}";
+                require(request(port, "POST", "/api/v1/injections", absolute_action).status == 202,
+                        "absolute simulation-time request was not accepted");
+
+                const std::string unsupported_prefix =
+                    "{\"schema_version\":1,\"target\":\"dummy.event\",\"action\":\"trigger\",";
+                HttpResponse persistent = request(port, "POST", "/api/v1/injections",
+                                                  unsupported_prefix + "\"persistent\":true}");
+                require(persistent.status == 400 &&
+                            persistent.body.find("persistent requests are not supported") != std::string::npos,
+                        "persistent policy was not rejected");
+                HttpResponse duration = request(port, "POST", "/api/v1/injections",
+                                                unsupported_prefix + "\"duration_ns\":10}");
+                require(duration.status == 400 &&
+                            duration.body.find("duration policies are not supported") != std::string::npos,
+                        "duration policy was not rejected");
                 require(request(port, "GET", "/api/v1/injections").status == 200, "request list failed");
                 require(request(port, "GET", "/api/v1/injections/42").status == 200, "request status failed");
                 HttpResponse cancelled = request(port, "DELETE", "/api/v1/injections/42");
@@ -243,6 +277,7 @@ class MonitorRuntimeApiTest : public TestBench
         }
         if (p_test_mode.get_value() == "full") {
             TEST_ASSERT(m_service.submit_on_systemc);
+            TEST_ASSERT(m_service.submissions == 2);
         }
         sc_core::sc_stop();
     }

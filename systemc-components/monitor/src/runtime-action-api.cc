@@ -189,6 +189,14 @@ bool parse_action_request(const std::string& body, RuntimeActionRequest& request
         error = "schema_version, target, and action are required";
         return false;
     }
+    if (json.has("persistent")) {
+        error = "persistent requests are not supported";
+        return false;
+    }
+    if (json.has("duration") || json.has("duration_ns")) {
+        error = "duration policies are not supported";
+        return false;
+    }
 
     uint64_t schema_version = 0;
     if (!parse_unsigned(json["schema_version"], schema_version) || schema_version != 1 ||
@@ -209,6 +217,22 @@ bool parse_action_request(const std::string& body, RuntimeActionRequest& request
         return false;
     }
 
+    if (json.has("reset_domain")) {
+        if (json["reset_domain"].t() != crow::json::type::String) {
+            error = "reset_domain must be a string";
+            return false;
+        }
+        request.reset_domain = static_cast<std::string>(json["reset_domain"]);
+    }
+
+    if (json.has("expected_generation")) {
+        if (!parse_unsigned(json["expected_generation"], request.expected_generation)) {
+            error = "expected_generation must be an unsigned integer";
+            return false;
+        }
+        request.has_expected_generation = true;
+    }
+
     if (json.has("trigger")) {
         const auto& trigger = json["trigger"];
         if (trigger.t() != crow::json::type::Object || !trigger.has("type") ||
@@ -219,6 +243,12 @@ bool parse_action_request(const std::string& body, RuntimeActionRequest& request
         std::string type = static_cast<std::string>(trigger["type"]);
         if (type == "immediate") {
             request.trigger.type = RuntimeActionTrigger::Type::IMMEDIATE;
+        } else if (type == "absolute-simulation-time") {
+            request.trigger.type = RuntimeActionTrigger::Type::ABSOLUTE_SIMULATION_TIME;
+            if (!trigger.has("time_ns") || !parse_unsigned(trigger["time_ns"], request.trigger.time_ns)) {
+                error = "absolute-simulation-time trigger requires unsigned time_ns";
+                return false;
+            }
         } else if (type == "relative-simulation-time") {
             request.trigger.type = RuntimeActionTrigger::Type::RELATIVE_SIMULATION_TIME;
             if (!trigger.has("delay_ns") || !parse_unsigned(trigger["delay_ns"], request.trigger.delay_ns)) {

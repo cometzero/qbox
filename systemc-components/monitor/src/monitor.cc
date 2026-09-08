@@ -419,8 +419,7 @@ void monitor<BUSWIDTH>::init_monitor()
         r["refresh_interval_ms"] = p_refresh_interval_ms.get_value();
         return r;
     });
-    CROW_ROUTE(m_app, "/api/v1/injection/capabilities")
-    ([&]() -> crow::response {
+    auto injection_capabilities = [&]() -> crow::response {
         if (!p_runtime_mutation.get_value()) {
             return error_response(403, "mutation-disabled", "runtime mutation is disabled");
         }
@@ -433,7 +432,9 @@ void monitor<BUSWIDTH>::init_monitor()
             body["targets"] = std::move(targets);
             return json_response(200, std::move(body));
         });
-    });
+    };
+    CROW_ROUTE(m_app, "/api/v1/injection/capabilities")(injection_capabilities);
+    CROW_ROUTE(m_app, "/api/v1/injection-capabilities")(injection_capabilities);
     CROW_ROUTE(m_app, "/api/v1/injection/targets/<str>")
     ([&](const std::string& target) -> crow::response {
         if (!p_runtime_mutation.get_value()) {
