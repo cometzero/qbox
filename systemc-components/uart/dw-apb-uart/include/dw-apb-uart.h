@@ -37,6 +37,7 @@ public:
     InitiatorSignalSocket<bool> irq;
     gs::biflow_socket<dw_apb_uart> backend_socket;
     TargetSignalSocket<bool> reset;
+    TargetSignalSocket<bool> pinmux_enable;
 
     explicit dw_apb_uart(sc_core::sc_module_name name);
 
@@ -116,6 +117,7 @@ private:
     bool m_rx_timeout_pending = false;
     bool m_busy_pending = false;
     bool m_reset_asserted = false;
+    bool m_pinmux_enabled = true;
     uint64_t m_state_epoch = 0;
     uint64_t m_rx_epoch = 0;
 
@@ -123,6 +125,7 @@ private:
     sc_core::sc_event m_rx_event;
     sc_core::sc_event m_state_event;
     sc_core::sc_event m_irq_event;
+    sc_core::sc_event m_credit_event;
     sc_core::sc_signal<bool> m_irq_stub;
 
     void receive(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay);
@@ -133,6 +136,7 @@ private:
     void reset_changed(bool asserted);
     void schedule_irq();
     void refresh_rx_credit();
+    void refresh_rx_credit_event();
     void receive_byte(uint8_t data);
     void write_register(uint32_t offset, uint32_t value);
     uint32_t read_register(uint32_t offset);

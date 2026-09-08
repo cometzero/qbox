@@ -99,6 +99,7 @@ public:
     InitiatorSignalSocket<bool> irq;
     tlm_utils::simple_initiator_socket<dw_apb_i2c, DEFAULT_TLM_BUSWIDTH> i2c_socket;
     TargetSignalSocket<bool> reset;
+    TargetSignalSocket<bool> pinmux_enable;
 
     cci::cci_param<sc_core::sc_time> p_access_latency;
     cci::cci_param<sc_core::sc_time> p_transfer_latency;
@@ -128,6 +129,7 @@ private:
     uint32_t m_abort_source = 0;
     bool m_active = false;
     bool m_irq_level = false;
+    bool m_pinmux_enabled = true;
     uint64_t m_reset_generation = 0;
     gs::async_event m_command_event;
     gs::async_event m_reset_event;

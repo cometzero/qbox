@@ -22,6 +22,7 @@ dw_apb_i2c::dw_apb_i2c(sc_core::sc_module_name name)
     , irq("irq")
     , i2c_socket("i2c_socket")
     , reset("reset")
+    , pinmux_enable("pinmux_enable")
     , p_access_latency("access_latency", sc_core::sc_time(10, sc_core::SC_NS), "MMIO access latency")
     , p_transfer_latency("transfer_latency", sc_core::sc_time(10, sc_core::SC_US), "I2C byte transfer latency")
     , m_command_event(false)
@@ -36,6 +37,7 @@ dw_apb_i2c::dw_apb_i2c(sc_core::sc_module_name name)
             update_irq();
         }
     });
+    pinmux_enable.register_value_changed_cb([this](bool enabled) { m_pinmux_enabled = enabled; });
 
     reset_controller();
     SC_THREAD(transfer_thread);
@@ -318,6 +320,11 @@ void dw_apb_i2c::execute_command(uint16_t command)
     const uint64_t generation = m_reset_generation;
     if (!(m_registers[IC_ENABLE / 4] & ENABLE)) {
         abort_transfer(ABRT_MASTER_DIS);
+        update_irq();
+        return;
+    }
+    if (!m_pinmux_enabled) {
+        abort_transfer(ABRT_7B_ADDR_NOACK);
         update_irq();
         return;
     }

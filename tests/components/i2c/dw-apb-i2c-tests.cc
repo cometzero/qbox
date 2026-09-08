@@ -131,6 +131,32 @@ TEST_BENCH(DwApbI2cBench, InterruptAbortAndReset)
     EXPECT_EQ(read(dw_apb_i2c::IC_RAW_INTR_STAT), 0U);
 }
 
+TEST_BENCH(DwApbI2cBench, PinmuxDisableAndRecover)
+{
+    init_linux_style();
+    controller.pinmux_enable->write(false);
+    write(dw_apb_i2c::IC_DATA_CMD, dw_apb_i2c::DATA_CMD_READ | dw_apb_i2c::DATA_CMD_STOP);
+    sc_core::wait(sc_core::sc_time(15, sc_core::SC_US));
+
+    EXPECT_NE(read(dw_apb_i2c::IC_RAW_INTR_STAT) & dw_apb_i2c::INTR_TX_ABRT, 0U);
+    EXPECT_EQ(read(dw_apb_i2c::IC_TX_ABRT_SOURCE), 1U);
+    EXPECT_EQ(read(dw_apb_i2c::IC_TXFLR), 0U);
+    read(dw_apb_i2c::IC_CLR_TX_ABRT);
+
+    controller.pinmux_enable->write(true);
+    write(dw_apb_i2c::IC_DATA_CMD, 0x20);
+    write(dw_apb_i2c::IC_DATA_CMD, 0x5a | dw_apb_i2c::DATA_CMD_STOP);
+    sc_core::wait(sc_core::sc_time(25, sc_core::SC_US));
+    read(dw_apb_i2c::IC_CLR_STOP_DET);
+
+    write(dw_apb_i2c::IC_DATA_CMD, 0x20);
+    write(dw_apb_i2c::IC_DATA_CMD,
+          dw_apb_i2c::DATA_CMD_READ | dw_apb_i2c::DATA_CMD_RESTART | dw_apb_i2c::DATA_CMD_STOP);
+    sc_core::wait(sc_core::sc_time(25, sc_core::SC_US));
+    EXPECT_EQ(read(dw_apb_i2c::IC_RXFLR), 1U);
+    EXPECT_EQ(read(dw_apb_i2c::IC_DATA_CMD), 0x5aU);
+}
+
 TEST_BENCH(DwApbI2cBench, RejectsMalformedTransactions)
 {
     uint32_t value = 0;

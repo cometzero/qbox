@@ -84,6 +84,27 @@ TEST_BENCH(DwApbSsiTestBench, InterruptClearAndReset)
     EXPECT_EQ(read32(dw_apb_ssi::SR), dw_apb_ssi::SR_TF_NOT_FULL | dw_apb_ssi::SR_TF_EMPTY);
 }
 
+TEST_BENCH(DwApbSsiTestBench, PinmuxDisableAndRecover)
+{
+    write32(dw_apb_ssi::SSIENR, 0);
+    write32(dw_apb_ssi::CTRLR0, 7 | (1u << 11));
+    write32(dw_apb_ssi::BAUDR, 2);
+    write32(dw_apb_ssi::SER, 1);
+    write32(dw_apb_ssi::SSIENR, 1);
+
+    dut.pinmux_enable->write(false);
+    write32(dw_apb_ssi::DR, 0x5a);
+    wait(sc_core::sc_time(1, sc_core::SC_US));
+    EXPECT_EQ(read32(dw_apb_ssi::TXFLR), 0u);
+    EXPECT_EQ(read32(dw_apb_ssi::RXFLR), 0u);
+
+    dut.pinmux_enable->write(true);
+    write32(dw_apb_ssi::DR, 0xa5);
+    wait(sc_core::sc_time(1, sc_core::SC_US));
+    EXPECT_EQ(read32(dw_apb_ssi::RXFLR), 1u);
+    EXPECT_EQ(read32(dw_apb_ssi::DR), 0xa5u);
+}
+
 TEST_BENCH(DwApbSsiTestBench, LinuxStyleLongLoopback)
 {
     constexpr uint32_t transfer_size = 4096;

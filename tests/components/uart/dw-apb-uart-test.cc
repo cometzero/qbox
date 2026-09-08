@@ -30,6 +30,7 @@ protected:
     static constexpr uint32_t IER_DLH = 0x04;
     static constexpr uint32_t IIR_FCR = 0x08;
     static constexpr uint32_t LCR = 0x0c;
+    static constexpr uint32_t MCR = 0x10;
     static constexpr uint32_t LSR = 0x14;
     static constexpr uint32_t USR = 0x7c;
     static constexpr uint32_t RFL = 0x84;
@@ -43,6 +44,7 @@ protected:
     static constexpr uint32_t FCR_TRIGGER_4 = 0x47;
     static constexpr uint32_t LCR_DLAB = 0x80;
     static constexpr uint32_t LCR_8N1 = 0x03;
+    static constexpr uint32_t MCR_LOOP = 0x10;
 
     void write(InitiatorTester& bus, uint32_t address, uint32_t value)
     {
@@ -120,10 +122,34 @@ TEST_BENCH(DwApbUartTest, LinuxDriverAndPairedTransfer)
     settle_irq();
     EXPECT_FALSE(irq0.read());
 
+    uart0.pinmux_enable->write(false);
+    write(bus0, RBR_THR_DLL, uint32_t('D'));
+    sc_core::wait(3, sc_core::SC_US);
+    EXPECT_EQ(read(bus1, RFL), 0u);
+
+    write(bus0, MCR, MCR_LOOP);
+    write(bus0, RBR_THR_DLL, uint32_t('L'));
+    sc_core::wait(3, sc_core::SC_US);
+    EXPECT_EQ(read(bus0, RBR_THR_DLL), uint32_t('L'));
+    write(bus0, MCR, 0);
+    uart0.pinmux_enable->write(true);
+
     write(bus0, RBR_THR_DLL, uint32_t('A'));
     sc_core::wait(3, sc_core::SC_US);
     EXPECT_EQ(read(bus1, LSR) & 0x01, 0x01u);
     EXPECT_EQ(read(bus1, RBR_THR_DLL), uint32_t('A'));
+
+    uart1.pinmux_enable->write(false);
+    for (unsigned int i = 0; i < dw_apb_uart::FIFO_DEPTH + 2; ++i) {
+        write(bus0, RBR_THR_DLL, uint32_t('I'));
+        sc_core::wait(3, sc_core::SC_US);
+    }
+    EXPECT_EQ(read(bus1, RFL), 0u);
+    uart1.pinmux_enable->write(true);
+    settle_irq();
+    write(bus0, RBR_THR_DLL, uint32_t('N'));
+    sc_core::wait(3, sc_core::SC_US);
+    EXPECT_EQ(read(bus1, RBR_THR_DLL), uint32_t('N'));
 
     write(bus1, RBR_THR_DLL, uint32_t('B'));
     sc_core::wait(3, sc_core::SC_US);

@@ -78,6 +78,7 @@ public:
     tlm_utils::simple_target_socket<dw_apb_ssi, DEFAULT_TLM_BUSWIDTH> target_socket;
     InitiatorSignalSocket<bool> irq;
     TargetSignalSocket<bool> reset;
+    TargetSignalSocket<bool> pinmux_enable;
 
     cci::cci_param<uint64_t> p_clock_frequency_hz;
     cci::cci_param<uint32_t> p_fifo_depth;
@@ -105,6 +106,7 @@ private:
     uint32_t m_rx_sample_dly;
     bool m_busy;
     bool m_irq_state;
+    bool m_pinmux_enabled = true;
 
     std::deque<uint32_t> m_tx_fifo;
     std::deque<uint32_t> m_rx_fifo;

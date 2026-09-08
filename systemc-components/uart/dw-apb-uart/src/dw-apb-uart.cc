@@ -17,16 +17,24 @@ dw_apb_uart::dw_apb_uart(sc_core::sc_module_name name)
     , irq("irq")
     , backend_socket("backend_socket")
     , reset("reset")
+    , pinmux_enable("pinmux_enable")
     , m_irq_stub("irq_stub")
 {
     target_socket.register_b_transport(this, &dw_apb_uart::b_transport);
     backend_socket.register_b_transport(this, &dw_apb_uart::receive);
     reset.register_value_changed_cb([this](bool asserted) { reset_changed(asserted); });
+    pinmux_enable.register_value_changed_cb([this](bool enabled) {
+        m_pinmux_enabled = enabled;
+        m_credit_event.notify(sc_core::SC_ZERO_TIME);
+    });
 
     SC_THREAD(tx_thread);
     SC_THREAD(rx_timeout_thread);
     SC_METHOD(update_irq);
     sensitive << m_irq_event;
+    SC_METHOD(refresh_rx_credit_event);
+    sensitive << m_credit_event;
+    dont_initialize();
 
     reset_registers();
 }
@@ -102,9 +110,13 @@ void dw_apb_uart::update_irq() { irq->write((interrupt_id(false) & 0x0f) != IIR_
 void dw_apb_uart::refresh_rx_credit()
 {
     const unsigned int capacity = fifo_capacity();
-    const unsigned int available = !m_reset_asserted && capacity > m_rx_fifo.size() ? capacity - m_rx_fifo.size() : 0;
+    const unsigned int available = !m_reset_asserted && (!m_pinmux_enabled || capacity > m_rx_fifo.size())
+                                       ? (m_pinmux_enabled ? capacity - m_rx_fifo.size() : capacity)
+                                       : 0;
     backend_socket.can_receive_set(available);
 }
+
+void dw_apb_uart::refresh_rx_credit_event() { refresh_rx_credit(); }
 
 void dw_apb_uart::reset_registers()
 {
@@ -172,6 +184,12 @@ void dw_apb_uart::receive(tlm::tlm_generic_payload& trans, sc_core::sc_time& del
         return;
     }
 
+    if (!m_pinmux_enabled) {
+        m_credit_event.notify(sc_core::SC_ZERO_TIME);
+        trans.set_response_status(tlm::TLM_OK_RESPONSE);
+        return;
+    }
+
     for (unsigned int i = 0; i < length; ++i) {
         receive_byte(data[i]);
     }
@@ -195,7 +213,7 @@ void dw_apb_uart::tx_thread()
         m_tx_fifo.pop_front();
         if (m_mcr & MCR_LOOP) {
             receive_byte(data);
-        } else {
+        } else if (m_pinmux_enabled) {
             backend_socket.enqueue(data);
         }
         if (m_tx_fifo.empty()) {

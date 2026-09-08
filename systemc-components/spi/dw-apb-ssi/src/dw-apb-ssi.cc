@@ -12,6 +12,7 @@ dw_apb_ssi::dw_apb_ssi(sc_core::sc_module_name name)
     , target_socket("target_socket")
     , irq("irq")
     , reset("reset")
+    , pinmux_enable("pinmux_enable")
     , p_clock_frequency_hz("clock_frequency_hz", 100000000, "SSI input clock frequency in Hz")
     , p_fifo_depth("fifo_depth", DEFAULT_FIFO_DEPTH, "TX and RX FIFO depth in words")
     , p_num_chip_selects("num_chip_selects", 1, "Number of native chip selects")
@@ -26,6 +27,7 @@ dw_apb_ssi::dw_apb_ssi(sc_core::sc_module_name name)
             m_cancel_event.notify(sc_core::SC_ZERO_TIME);
         }
     });
+    pinmux_enable.register_value_changed_cb([this](bool enabled) { m_pinmux_enabled = enabled; });
 
     SC_METHOD(drive_irq);
     sensitive << m_irq_event;
@@ -348,7 +350,7 @@ void dw_apb_ssi::transfer_thread()
 
             const uint32_t value = m_tx_fifo.front();
             m_tx_fifo.pop_front();
-            if (m_ctrlr0 & (1u << 11)) {
+            if (m_pinmux_enabled && (m_ctrlr0 & (1u << 11))) {
                 if (m_rx_fifo.size() == fifo_depth()) {
                     m_sticky_interrupts |= INT_RXOI;
                 } else {
