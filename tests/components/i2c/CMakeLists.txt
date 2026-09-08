@@ -7,3 +7,8 @@ add_executable(pca9539-tests pca9539-tests.cc)
 target_link_libraries(pca9539-tests PRIVATE gtest gmock dw-apb-i2c i2c-bus pca9539 ${TARGET_LIBS})
 add_test(NAME pca9539-tests COMMAND pca9539-tests)
 set_tests_properties(pca9539-tests PROPERTIES TIMEOUT 30)
+
+add_executable(tps6594-tests tps6594-tests.cc)
+target_link_libraries(tps6594-tests PRIVATE gtest gmock dw-apb-i2c i2c-bus tps6594 ${TARGET_LIBS})
+add_test(NAME tps6594-tests COMMAND tps6594-tests)
+set_tests_properties(tps6594-tests PROPERTIES TIMEOUT 30)
