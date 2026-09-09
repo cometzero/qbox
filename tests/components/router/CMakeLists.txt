@@ -1,9 +1,11 @@
 macro(gs_add_test test)
+    get_filename_component(qbox_source_dir
+        "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
     add_executable(${test} ${test}.cc)
     target_include_directories(${test} PRIVATE
-        ${PROJECT_SOURCE_DIR}/tests/qbox/include
-        ${PROJECT_SOURCE_DIR}/systemc-components/common/include
-        ${PROJECT_SOURCE_DIR}/systemc-components/common/include/tests
+        ${qbox_source_dir}/tests/qbox/include
+        ${qbox_source_dir}/systemc-components/common/include
+        ${qbox_source_dir}/systemc-components/common/include/tests
     )
     target_link_libraries(${test} PRIVATE gtest gmock router pass ${TARGET_LIBS})
     add_test(NAME ${test} COMMAND ${test})

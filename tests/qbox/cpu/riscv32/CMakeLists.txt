@@ -127,7 +127,7 @@ if(LLVM_MC AND LLD AND LLVM_OBJCOPY AND APPLE)
     target_compile_definitions(riscv32-irq-test PRIVATE
         FIRMWARE_BIN_PATH="${CMAKE_CURRENT_BINARY_DIR}/riscv32-irq-test.bin")
     target_include_directories(riscv32-irq-test PRIVATE
-        $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/qemu-components/timer/riscv_aclint_mtimer/include>)
+        $<BUILD_INTERFACE:${QBOX_TEST_SOURCE_DIR}/qemu-components/timer/riscv_aclint_mtimer/include>)
 
     # Build assembly firmware for RISC-V QTimer test
     # Assemble the RISC-V 32-bit QTimer test assembly file
@@ -170,7 +170,7 @@ if(LLVM_MC AND LLD AND LLVM_OBJCOPY AND APPLE)
     target_compile_definitions(riscv32-qtimer-test PRIVATE
         FIRMWARE_BIN_PATH="${CMAKE_CURRENT_BINARY_DIR}/riscv32-qtimer-test.bin")
     target_include_directories(riscv32-qtimer-test PRIVATE
-        $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/qemu-components/timer/riscv_aclint_mtimer/include>)
+        $<BUILD_INTERFACE:${QBOX_TEST_SOURCE_DIR}/qemu-components/timer/riscv_aclint_mtimer/include>)
 else()
     message(WARNING "LLVM tools not found - skipping riscv32-reset-test, riscv32-dmi-test, riscv32-irq-test, and riscv32-qtimer-test")
 endif()

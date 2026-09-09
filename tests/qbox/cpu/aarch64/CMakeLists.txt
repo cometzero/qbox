@@ -65,7 +65,8 @@ if(LLVM_MC AND LLD AND LLVM_OBJCOPY AND APPLE)
     target_compile_definitions(aarch64-dmi-test-reset PRIVATE
         FIRMWARE_BIN_PATH="${CMAKE_CURRENT_BINARY_DIR}/dmi-test-reset.bin")
 else()
-    message(WARNING "LLVM tools not found - skipping aarch64-dmi-test-reset")
+    message(STATUS
+        "Skipping aarch64-dmi-test-reset; it requires macOS and LLVM tools")
 endif()
 qbox_add_cpu_test(aarch64-ld-st-excl-fail-test 100 ld-st-excl-fail.cc)
 qbox_add_cpu_test(aarch64-write_read 100 write_read.cc)

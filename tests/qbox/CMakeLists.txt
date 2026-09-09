@@ -1,22 +1,4 @@
-list(APPEND QBOX_CPU_TEST_SYNC_POLICY_COMBINATION
-    tlm2
-    tlm2-icount
-    multithread
-    multithread-quantum
-    multithread-unconstrained
-    multithread-single
-    )
-
-list(APPEND QBOX_CPU_TEST_NUM_CPU_COMBINATION
-    1
-    2
-    4
-    # 8
-    # 16
-    32
-    # 64
-    # 128
-    )
+get_filename_component(QBOX_TEST_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
 
     list(APPEND SKIP_TESTS
         "riscv.*num-cpu=[^2]"                                                     # reduce redundency
@@ -43,7 +25,9 @@ list(APPEND QBOX_CPU_TEST_NUM_CPU_COMBINATION
     )
 
 
-    FILE(GLOB KEYSTONE_PATCH_FILES "${PROJECT_SOURCE_DIR}/patch/keystone/*.patch")
+if(QBOX_CPU_TEST_ARCHS)
+    find_package(Git REQUIRED)
+    FILE(GLOB KEYSTONE_PATCH_FILES "${QBOX_TEST_SOURCE_DIR}/patch/keystone/*.patch")
 
     message(STATUS "Applying patches to keystone: ${KEYSTONE_PATCH_FILES}")
 
@@ -55,17 +39,20 @@ list(APPEND QBOX_CPU_TEST_NUM_CPU_COMBINATION
         GIT_REPOSITORY https://github.com/keystone-engine/keystone.git
         GIT_TAG 0.9.2
         GIT_SHALLOW TRUE
-        PATCH_COMMAND ${PATCH_EXEC_CMD} ${PATCH_ARGS} "${KEYSTONE_PATCH_FILES}"
+        PATCH_COMMAND
+            ${GIT_EXECUTABLE}
+            -c "user.name=qqvp_ci"
+            -c "user.email=qqvp_ci@qualcomm.com"
+            am "${KEYSTONE_PATCH_FILES}"
         UPDATE_DISCONNECTED 1
         OPTIONS "BUILD_LIBS_ONLY"
     )
-
-#To disable MCIPS tests: pass -DQBOX_ENABLE_MCIPS_TESTS=OFF at configure time
-option(QBOX_ENABLE_MCIPS_TESTS "Enable mcips=true test variants" ON)
+endif()
 
 function(qbox_add_cpu_test_executable target)
-    if(NOT ${keystone_FOUND})
-        return()
+    if(NOT TARGET keystone)
+        message(FATAL_ERROR
+            "CPU test ${target} requires the keystone target")
     endif()
 
     add_executable(${target} ${ARGN})
@@ -82,9 +69,9 @@ function(qbox_add_cpu_test_executable target)
         )
     endif()
 
-    target_include_directories(${target} PRIVATE ${PROJECT_SOURCE_DIR}/tests/qbox/include ${keystone_SOURCE_DIR}/include)
+    target_include_directories(${target} PRIVATE ${QBOX_TEST_SOURCE_DIR}/tests/qbox/include ${keystone_SOURCE_DIR}/include)
 
-    target_link_libraries(${target} PRIVATE cpu_arm_cortexA53 qemu_cpu_hexagon cpu_riscv32 global_peripheral_initiator router reset_gpio gs_memory smmu500 pass exclusive_monitor display plic_sifive ${TARGET_LIBS} keystone hexagon_globalreg)
+    target_link_libraries(${target} PRIVATE ${QBOX_CPU_TEST_ARCH_LIBS} global_peripheral_initiator router reset_gpio gs_memory smmu500 pass exclusive_monitor display ${TARGET_LIBS} keystone)
 endfunction()
 
 function(qbox_add_cpu_test target timeout_s)
@@ -148,6 +135,12 @@ function(qbox_add_cpu_test target timeout_s)
           endif()
           foreach(num_cpu ${QBOX_CPU_TEST_NUM_CPU_COMBINATION})
             set(test_name ${target}:sync-pol=${sync_pol}:num-cpu=${num_cpu}:icount=${icount}:threading=${threading}:accel=${accel}:time_sync_strategy=${time_sync_strategy})
+            set(icount_args "")
+            if(icount)
+                list(APPEND icount_args
+                    -p test-bench.inst_a.icount_mips_shift=3
+                    -p test-bench.inst_b.icount_mips_shift=3)
+            endif()
 
             set (skip FALSE)
             foreach(tgt_name IN LISTS SKIP_TESTS)
@@ -175,8 +168,7 @@ function(qbox_add_cpu_test target timeout_s)
                                                  -p test-bench.num_cpu=${num_cpu}
                                                  -p test-bench.inst_a.icount=${icount}
                                                  -p test-bench.inst_b.icount=${icount}
-                                                 $<$<STREQUAL:${icount},true>:-p test-bench.inst_a.icount_mips_shift=3>
-                                                 $<$<STREQUAL:${icount},true>:-p test-bench.inst_b.icount_mips_shift=3>
+                                                 ${icount_args}
                                                  -p test-bench.inst_a.tcg_mode=${threading}
                                                  -p test-bench.inst_b.tcg_mode=${threading}
 

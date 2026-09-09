@@ -17,6 +17,16 @@ option(GS_ENABLE_SCUDO "Enable Scudo allocator" OFF)
 option(GS_ENABLE_TSAN "Enable Thread Sanitizer" OFF)
 option(QEMU_ENABLE_USB_REDIRECT "enable qemu usb redirect" OFF)
 option(QBOX_USE_SYSTEM_LIBQEMU "Use an installed libqemu CMake package" OFF)
+set(QBOX_CORE_TEST_DIRS "components;sync;utils;qbox" CACHE STRING
+    "QBox test directories to build, relative to tests")
+set(QBOX_CPU_TEST_ARCHS "aarch64;hexagon;riscv32" CACHE STRING
+    "CPU architectures whose QBox tests are built")
+set(QBOX_CPU_TEST_SYNC_POLICY_COMBINATION
+    "tlm2;tlm2-icount;multithread;multithread-quantum;multithread-unconstrained;multithread-single"
+    CACHE STRING "Synchronization policies used by CPU test variants")
+set(QBOX_CPU_TEST_NUM_CPU_COMBINATION "1;2;4;32" CACHE STRING
+    "CPU counts used by CPU test variants")
+option(QBOX_ENABLE_MCIPS_TESTS "Enable mcips=true test variants" ON)
 
 option(ENABLE_PYTHON_BINDER "Enable python binder model" ON)
 option(WITHOUT_PYTHON_BINDER "[DEPRECATED] Use ENABLE_PYTHON_BINDER=OFF instead" OFF)

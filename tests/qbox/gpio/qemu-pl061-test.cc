@@ -118,10 +118,17 @@ class QemuPl061Test : public TestBench
         m_gpio.gpio_in[0]->write(true);
         m_inst.reset->write(true);
         m_gpio.reset->write(true);
-        wait(sc_core::sc_time(1, sc_core::SC_US));
+
+        // QemuInstance reset is an asynchronous request.  Pin 1 is driven
+        // low before reset and has a pull-up, so its rising edge observes the
+        // PL061 reset completion without relying on host scheduling time.
+        while (!m_gpio_out[1].read()) {
+            wait(m_gpio_out[1]->value_changed_event());
+        }
+
         m_inst.reset->write(false);
         m_gpio.reset->write(false);
-        wait(sc_core::sc_time(1, sc_core::SC_US));
+        wait(sc_core::SC_ZERO_TIME);
         TEST_ASSERT((read_reg(data_all) & 0x01) != 0);
         TEST_ASSERT(m_gpio_out[1].read());
         TEST_ASSERT(m_gpio.runtime_release_input(0));

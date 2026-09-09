@@ -16,9 +16,14 @@ if(WIN32)
     endmacro()
 endif()
 
-add_subdirectory(components)
-add_subdirectory(sync)
-add_subdirectory(utils)
-if(NOT WITHOUT_QEMU)
-    add_subdirectory(qbox)
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/QBoxSelectedTests.cmake")
+if(WITHOUT_QEMU)
+    list(REMOVE_ITEM QBOX_CORE_TEST_DIRS qbox)
 endif()
+qbox_add_selected_test_directories(
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_BINARY_DIR}"
+    qbox_core_test_targets
+    ${QBOX_CORE_TEST_DIRS}
+)
+add_custom_target(qbox_core_unit_tests DEPENDS ${qbox_core_test_targets})

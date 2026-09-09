@@ -90,6 +90,33 @@ cmake --install build
 | `GS_ENABLE_LTO` | Enable Link-Time Optimization |
 | `UBUNTU_ARCH` | Architecture for Ubuntu platform builds (`aarch64` or `riscv64`) |
 
+### Selecting Tests
+
+`QBOX_CORE_TEST_DIRS` is a semicolon-separated list relative to `tests/`.
+It defaults to `components;sync;utils;qbox`; only selected suites are
+configured and built by `qbox_core_unit_tests`. CPU tests are further
+selected by `QBOX_CPU_TEST_ARCHS` (default `aarch64;hexagon;riscv32`).
+
+For broad component coverage and AArch64 CPU tests only:
+
+```bash
+cmake --preset gcc -DBUILD_TESTING=ON \
+  -DQBOX_CORE_TEST_DIRS="components;sync;utils;qbox" \
+  -DQBOX_CPU_TEST_ARCHS=aarch64 \
+  -DQBOX_CPU_TEST_SYNC_POLICY_COMBINATION=multithread-freerunning \
+  -DQBOX_CPU_TEST_NUM_CPU_COMBINATION="1;2;4" \
+  -DQBOX_ENABLE_MCIPS_TESTS=OFF
+cmake --build --preset gcc --target qbox_core_unit_tests
+ctest --preset gcc --output-on-failure
+```
+
+The CPU matrix axes are cache lists. Without overrides, their original
+multi-policy, 1/2/4/32-CPU and MCIPS settings remain in effect. Individually
+registered regression tests retain their own parameters. To run fewer
+configured tests, use CTest `-R <regex>`; it does not change compilation.
+Existing host/feature guards still apply. Apollo's Yocto recipe uses the
+bounded AArch64 profile above and runs its platform tests separately.
+
 ### Dependency Management
 
 QBox uses [CPM](https://github.com/cpm-cmake/CPM.cmake) to find
