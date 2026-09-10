@@ -23,11 +23,20 @@ dw_apb_i2c::dw_apb_i2c(sc_core::sc_module_name name)
     , i2c_socket("i2c_socket")
     , reset("reset")
     , pinmux_enable("pinmux_enable")
+    , dma_tx_req("dma_tx_req")
+    , dma_rx_req("dma_rx_req")
+    , dma_tx_ack("dma_tx_ack")
+    , dma_rx_ack("dma_rx_ack")
     , p_access_latency("access_latency", sc_core::sc_time(10, sc_core::SC_NS), "MMIO access latency")
     , p_transfer_latency("transfer_latency", sc_core::sc_time(10, sc_core::SC_US), "I2C byte transfer latency")
     , m_command_event(false)
     , m_reset_event(false)
     , m_irq_event(false)
+    , m_dma_event(false)
+    , m_dma_tx_stub("dma_tx_stub")
+    , m_dma_rx_stub("dma_rx_stub")
+    , m_dma_tx(dma_tx_req)
+    , m_dma_rx(dma_rx_req)
 {
     target_socket.register_b_transport(this, &dw_apb_i2c::b_transport);
     reset.register_value_changed_cb([this](bool asserted) {
@@ -38,11 +47,21 @@ dw_apb_i2c::dw_apb_i2c(sc_core::sc_module_name name)
         }
     });
     pinmux_enable.register_value_changed_cb([this](bool enabled) { m_pinmux_enabled = enabled; });
+    dma_tx_ack.register_value_changed_cb([this](uint32_t value) {
+        m_dma_tx.acknowledge(value);
+        m_dma_event.notify(sc_core::SC_ZERO_TIME);
+    });
+    dma_rx_ack.register_value_changed_cb([this](uint32_t value) {
+        m_dma_rx.acknowledge(value);
+        m_dma_event.notify(sc_core::SC_ZERO_TIME);
+    });
 
     reset_controller();
     SC_THREAD(transfer_thread);
     SC_METHOD(drive_irq);
     sensitive << m_irq_event;
+    SC_METHOD(drive_dma);
+    sensitive << m_dma_event;
 }
 
 void dw_apb_i2c::before_end_of_elaboration()
@@ -51,6 +70,8 @@ void dw_apb_i2c::before_end_of_elaboration()
         auto* stub = new sc_core::sc_signal<bool>(sc_core::sc_gen_unique_name("irq_stub"));
         irq.bind(*stub);
     }
+    if (!dma_tx_req.get_interface()) dma_tx_req.bind(m_dma_tx_stub);
+    if (!dma_rx_req.get_interface()) dma_rx_req.bind(m_dma_rx_stub);
 }
 
 void dw_apb_i2c::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)
@@ -65,7 +86,11 @@ void dw_apb_i2c::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& 
         trans.set_response_status(tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE);
         return;
     }
-    if (trans.get_data_length() != sizeof(uint32_t)) {
+    const bool data_read = trans.get_command() == tlm::TLM_READ_COMMAND && trans.get_address() == IC_DATA_CMD &&
+                           (trans.get_data_length() == 1 || trans.get_data_length() == sizeof(uint32_t));
+    const bool command_write = trans.get_command() == tlm::TLM_WRITE_COMMAND && trans.get_address() == IC_DATA_CMD &&
+                               (trans.get_data_length() == 2 || trans.get_data_length() == sizeof(uint32_t));
+    if (trans.get_data_length() != sizeof(uint32_t) && !data_read && !command_write) {
         trans.set_response_status(tlm::TLM_BURST_ERROR_RESPONSE);
         return;
     }
@@ -82,10 +107,10 @@ void dw_apb_i2c::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& 
     switch (trans.get_command()) {
     case tlm::TLM_READ_COMMAND:
         value = read_register(static_cast<uint32_t>(trans.get_address()));
-        std::memcpy(trans.get_data_ptr(), &value, sizeof(value));
+        std::memcpy(trans.get_data_ptr(), &value, trans.get_data_length());
         break;
     case tlm::TLM_WRITE_COMMAND:
-        std::memcpy(&value, trans.get_data_ptr(), sizeof(value));
+        std::memcpy(&value, trans.get_data_ptr(), trans.get_data_length());
         write_register(static_cast<uint32_t>(trans.get_address()), value);
         break;
     default:
@@ -195,6 +220,11 @@ uint32_t dw_apb_i2c::read_register(uint32_t offset)
     case IC_TX_ABRT_SOURCE:
         value = m_abort_source;
         break;
+    case IC_DMA_CR:
+    case IC_DMA_TDLR:
+    case IC_DMA_RDLR:
+        value = m_registers[offset / 4];
+        break;
     case IC_COMP_PARAM_1:
         value = COMP_PARAM_1;
         break;
@@ -235,6 +265,13 @@ void dw_apb_i2c::write_register(uint32_t offset, uint32_t value)
     case IC_TX_TL:
         m_registers[offset / 4] = std::min<uint32_t>(value, FIFO_DEPTH - 1);
         break;
+    case IC_DMA_CR:
+        m_registers[offset / 4] = value & (DMA_RDMAE | DMA_TDMAE);
+        break;
+    case IC_DMA_TDLR:
+    case IC_DMA_RDLR:
+        m_registers[offset / 4] = std::min<uint32_t>(value, FIFO_DEPTH - 1);
+        break;
     case IC_ENABLE:
         if (value & ENABLE_ABORT) {
             abort_transfer(ABRT_MASTER_DIS);
@@ -265,6 +302,7 @@ void dw_apb_i2c::write_register(uint32_t offset, uint32_t value)
 
 void dw_apb_i2c::update_irq()
 {
+    m_dma_event.notify(sc_core::SC_ZERO_TIME);
     const bool level = (raw_interrupts() & m_registers[IC_INTR_MASK / 4]) != 0;
     if (level != m_irq_level) {
         m_irq_level = level;
@@ -274,8 +312,24 @@ void dw_apb_i2c::update_irq()
 
 void dw_apb_i2c::drive_irq() { irq->write(m_irq_level); }
 
+void dw_apb_i2c::drive_dma()
+{
+    if (m_dma_force_idle) {
+        m_dma_tx.force_idle();
+        m_dma_rx.force_idle();
+        m_dma_force_idle = false;
+    }
+    const bool enabled = (m_registers[IC_ENABLE / 4] & ENABLE) != 0;
+    m_dma_tx.update(enabled && (m_registers[IC_DMA_CR / 4] & DMA_TDMAE) &&
+                    m_tx_fifo.size() <= m_registers[IC_DMA_TDLR / 4]);
+    m_dma_rx.update(enabled && (m_registers[IC_DMA_CR / 4] & DMA_RDMAE) &&
+                    m_rx_fifo.size() > m_registers[IC_DMA_RDLR / 4]);
+}
+
 void dw_apb_i2c::reset_controller()
 {
+    m_dma_force_idle = true;
+    m_dma_event.notify(sc_core::SC_ZERO_TIME);
     ++m_reset_generation;
     m_registers.fill(0);
     m_registers[IC_CON / 4] = 0x7f;

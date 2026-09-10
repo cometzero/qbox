@@ -23,13 +23,23 @@ protected:
     dw_apb_i2c controller;
     dw_i2c_eeprom eeprom;
     sc_core::sc_signal<bool> irq;
+    sc_core::sc_signal<uint32_t> dma_tx_req;
+    sc_core::sc_signal<uint32_t> dma_rx_req;
 
     explicit DwApbI2cBench(const sc_core::sc_module_name& name)
-        : TestBench(name), cpu_socket("cpu_socket"), controller("controller"), eeprom("eeprom"), irq("irq")
+        : TestBench(name)
+        , cpu_socket("cpu_socket")
+        , controller("controller")
+        , eeprom("eeprom")
+        , irq("irq")
+        , dma_tx_req("dma_tx_req")
+        , dma_rx_req("dma_rx_req")
     {
         cpu_socket.bind(controller.target_socket);
         controller.i2c_socket.bind(eeprom.i2c_socket);
         controller.irq.bind(irq);
+        controller.dma_tx_req.bind(dma_tx_req);
+        controller.dma_rx_req.bind(dma_rx_req);
     }
 
     tlm::tlm_response_status access(tlm::tlm_command command, uint64_t address, uint32_t& value,
@@ -80,6 +90,68 @@ protected:
                                             dw_apb_i2c::INTR_STOP_DET | dw_apb_i2c::INTR_TX_EMPTY);
     }
 };
+
+TEST_BENCH(DwApbI2cBench, DmaRequestsAndDataWidths)
+{
+    constexpr uint32_t ACTIVE = gs::dma_trigger_request::ACTIVE;
+    init_linux_style();
+    write(dw_apb_i2c::IC_DMA_TDLR, 0);
+    write(dw_apb_i2c::IC_DMA_CR, dw_apb_i2c::DMA_TDMAE);
+    sc_core::wait(sc_core::SC_ZERO_TIME);
+    EXPECT_EQ(dma_tx_req.read(), ACTIVE);
+
+    controller.dma_tx_ack->write(ACTIVE);
+    sc_core::wait(sc_core::SC_ZERO_TIME);
+    sc_core::wait(sc_core::SC_ZERO_TIME);
+    EXPECT_EQ(dma_tx_req.read(), 0U);
+
+    uint32_t command = 0x20;
+    EXPECT_EQ(access(tlm::TLM_WRITE_COMMAND, dw_apb_i2c::IC_DATA_CMD, command, 2, 2), tlm::TLM_OK_RESPONSE);
+    command = 0x5a | dw_apb_i2c::DATA_CMD_STOP;
+    EXPECT_EQ(access(tlm::TLM_WRITE_COMMAND, dw_apb_i2c::IC_DATA_CMD, command, 2, 2), tlm::TLM_OK_RESPONSE);
+    controller.dma_tx_ack->write(0);
+    sc_core::wait(sc_core::SC_ZERO_TIME);
+    sc_core::wait(sc_core::SC_ZERO_TIME);
+    EXPECT_EQ(dma_tx_req.read(), 0U);
+
+    sc_core::wait(sc_core::sc_time(25, sc_core::SC_US));
+    EXPECT_EQ(dma_tx_req.read(), ACTIVE);
+    controller.dma_tx_ack->write(ACTIVE);
+    sc_core::wait(sc_core::SC_ZERO_TIME);
+    sc_core::wait(sc_core::SC_ZERO_TIME);
+    write(dw_apb_i2c::IC_DMA_CR, 0);
+    controller.dma_tx_ack->write(0);
+    sc_core::wait(sc_core::SC_ZERO_TIME);
+    sc_core::wait(sc_core::SC_ZERO_TIME);
+    EXPECT_EQ(dma_tx_req.read(), 0U);
+
+    write(dw_apb_i2c::IC_DMA_RDLR, 0);
+    write(dw_apb_i2c::IC_DMA_CR, dw_apb_i2c::DMA_RDMAE);
+    command = 0x20;
+    EXPECT_EQ(access(tlm::TLM_WRITE_COMMAND, dw_apb_i2c::IC_DATA_CMD, command, 2, 2), tlm::TLM_OK_RESPONSE);
+    command = dw_apb_i2c::DATA_CMD_READ | dw_apb_i2c::DATA_CMD_RESTART | dw_apb_i2c::DATA_CMD_STOP;
+    EXPECT_EQ(access(tlm::TLM_WRITE_COMMAND, dw_apb_i2c::IC_DATA_CMD, command, 2, 2), tlm::TLM_OK_RESPONSE);
+    sc_core::wait(sc_core::sc_time(25, sc_core::SC_US));
+    EXPECT_EQ(dma_rx_req.read(), ACTIVE);
+
+    controller.dma_rx_ack->write(ACTIVE);
+    sc_core::wait(sc_core::SC_ZERO_TIME);
+    sc_core::wait(sc_core::SC_ZERO_TIME);
+    EXPECT_EQ(dma_rx_req.read(), 0U);
+    uint32_t data = 0;
+    EXPECT_EQ(access(tlm::TLM_READ_COMMAND, dw_apb_i2c::IC_DATA_CMD, data, 1, 1), tlm::TLM_OK_RESPONSE);
+    EXPECT_EQ(data, 0x5aU);
+    controller.dma_rx_ack->write(0);
+    sc_core::wait(sc_core::SC_ZERO_TIME);
+    sc_core::wait(sc_core::SC_ZERO_TIME);
+    EXPECT_EQ(dma_rx_req.read(), 0U);
+
+    controller.reset->write(true);
+    sc_core::wait(sc_core::SC_ZERO_TIME);
+    sc_core::wait(sc_core::SC_ZERO_TIME);
+    EXPECT_EQ(dma_tx_req.read(), 0U);
+    EXPECT_EQ(dma_rx_req.read(), 0U);
+}
 
 TEST_BENCH(DwApbI2cBench, LinuxInitAndEepromRepeatedStart)
 {

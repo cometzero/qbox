@@ -19,6 +19,7 @@
 #include <tlm_utils/simple_target_socket.h>
 
 #include <async_event.h>
+#include <dma-trigger.h>
 #include <module_factory_registery.h>
 #include <ports/initiator-signal-socket.h>
 #include <ports/target-signal-socket.h>
@@ -64,6 +65,9 @@ public:
         IC_RXFLR = 0x78,
         IC_SDA_HOLD = 0x7c,
         IC_TX_ABRT_SOURCE = 0x80,
+        IC_DMA_CR = 0x88,
+        IC_DMA_TDLR = 0x8c,
+        IC_DMA_RDLR = 0x90,
         IC_ENABLE_STATUS = 0x9c,
         IC_CLR_RESTART_DET = 0xa8,
         IC_SMBUS_INTR_MASK = 0xcc,
@@ -94,12 +98,18 @@ public:
     static constexpr uint32_t DATA_CMD_RESTART = 1U << 10;
     static constexpr uint32_t COMP_TYPE = 0x44570140;
     static constexpr unsigned FIFO_DEPTH = 16;
+    static constexpr uint32_t DMA_RDMAE = 1U << 0;
+    static constexpr uint32_t DMA_TDMAE = 1U << 1;
 
     tlm_utils::simple_target_socket<dw_apb_i2c, DEFAULT_TLM_BUSWIDTH> target_socket;
     InitiatorSignalSocket<bool> irq;
     tlm_utils::simple_initiator_socket<dw_apb_i2c, DEFAULT_TLM_BUSWIDTH> i2c_socket;
     TargetSignalSocket<bool> reset;
     TargetSignalSocket<bool> pinmux_enable;
+    InitiatorSignalSocket<uint32_t> dma_tx_req;
+    InitiatorSignalSocket<uint32_t> dma_rx_req;
+    TargetSignalSocket<uint32_t> dma_tx_ack;
+    TargetSignalSocket<uint32_t> dma_rx_ack;
 
     cci::cci_param<sc_core::sc_time> p_access_latency;
     cci::cci_param<sc_core::sc_time> p_transfer_latency;
@@ -134,6 +144,12 @@ private:
     gs::async_event m_command_event;
     gs::async_event m_reset_event;
     gs::async_event m_irq_event;
+    gs::async_event m_dma_event;
+    sc_core::sc_signal<uint32_t> m_dma_tx_stub;
+    sc_core::sc_signal<uint32_t> m_dma_rx_stub;
+    gs::dma_trigger_request m_dma_tx;
+    gs::dma_trigger_request m_dma_rx;
+    bool m_dma_force_idle = true;
 
     void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay);
     uint32_t read_register(uint32_t offset);
@@ -142,6 +158,7 @@ private:
     uint32_t status() const;
     void update_irq();
     void drive_irq();
+    void drive_dma();
     void reset_controller();
     void transfer_thread();
     void execute_command(uint16_t command);
