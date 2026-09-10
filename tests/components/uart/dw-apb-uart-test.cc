@@ -25,6 +25,8 @@ protected:
     InitiatorSignalSocket<bool> reset1;
     sc_core::sc_signal<bool> irq0;
     sc_core::sc_signal<bool> irq1;
+    sc_core::sc_signal<uint32_t> dma_tx_req0;
+    sc_core::sc_signal<uint32_t> dma_rx_req0;
 
     static constexpr uint32_t RBR_THR_DLL = 0x00;
     static constexpr uint32_t IER_DLH = 0x04;
@@ -79,6 +81,8 @@ protected:
         sc_core::wait(sc_core::SC_ZERO_TIME);
     }
 
+    void verify_dma_requests();
+
 public:
     explicit DwApbUartTest(sc_core::sc_module_name name)
         : TestBench(name)
@@ -90,19 +94,84 @@ public:
         , reset1("reset1")
         , irq0("irq0")
         , irq1("irq1")
+        , dma_tx_req0("dma_tx_req0")
+        , dma_rx_req0("dma_rx_req0")
     {
         bus0.socket.bind(uart0.target_socket);
         bus1.socket.bind(uart1.target_socket);
         uart0.backend_socket.bind(uart1.backend_socket);
         uart0.irq.bind(irq0);
         uart1.irq.bind(irq1);
+        uart0.dma_tx_req.bind(dma_tx_req0);
+        uart0.dma_rx_req.bind(dma_rx_req0);
         reset0.bind(uart0.reset);
         reset1.bind(uart1.reset);
     }
 };
 
+void DwApbUartTest::verify_dma_requests()
+{
+    constexpr uint32_t ACTIVE = gs::dma_trigger_request::ACTIVE;
+    linux_init(bus0, 0);
+    settle_irq();
+    EXPECT_EQ(dma_tx_req0.read(), ACTIVE);
+    EXPECT_EQ(dma_rx_req0.read(), 0U);
+
+    uart0.dma_tx_ack->write(ACTIVE);
+    settle_irq();
+    EXPECT_EQ(dma_tx_req0.read(), 0U);
+    for (unsigned int i = 0; i < dw_apb_uart::FIFO_DEPTH; ++i) write(bus0, RBR_THR_DLL, 0x40 + i);
+    uart0.dma_tx_ack->write(0);
+    settle_irq();
+    EXPECT_EQ(dma_tx_req0.read(), 0U);
+
+    write(bus0, IIR_FCR, FCR_ENABLE_CLEAR);
+    settle_irq();
+    EXPECT_EQ(dma_tx_req0.read(), ACTIVE);
+    uart0.dma_tx_ack->write(ACTIVE);
+    settle_irq();
+    write(bus0, IIR_FCR, 0);
+    uart0.dma_tx_ack->write(0);
+    settle_irq();
+    EXPECT_EQ(dma_tx_req0.read(), 0U);
+
+    write(bus0, IIR_FCR, FCR_TRIGGER_4);
+    uint8_t received[] = { 0x30, 0x31, 0x32, 0x33 };
+    tlm::tlm_generic_payload rx;
+    rx.set_command(tlm::TLM_WRITE_COMMAND);
+    rx.set_data_ptr(received);
+    rx.set_data_length(sizeof(received));
+    rx.set_streaming_width(sizeof(received));
+    uart1.backend_socket.force_send(rx);
+    EXPECT_EQ(rx.get_response_status(), tlm::TLM_OK_RESPONSE);
+    settle_irq();
+    EXPECT_EQ(dma_rx_req0.read(), ACTIVE);
+
+    uart0.dma_rx_ack->write(ACTIVE);
+    settle_irq();
+    EXPECT_EQ(dma_rx_req0.read(), 0U);
+    uint8_t data = 0;
+    EXPECT_EQ(bus0.do_read(RBR_THR_DLL, data), tlm::TLM_OK_RESPONSE);
+    EXPECT_EQ(data, 0x30);
+    uart0.dma_rx_ack->write(0);
+    settle_irq();
+    EXPECT_EQ(dma_rx_req0.read(), 0U);
+    write(bus0, IER_DLH, IER_RDI);
+    sc_core::wait(sc_core::sc_time(7, sc_core::SC_US));
+    EXPECT_EQ(read(bus0, IIR_FCR), 0xccU);
+
+    reset0->write(true);
+    settle_irq();
+    EXPECT_EQ(dma_tx_req0.read(), 0U);
+    EXPECT_EQ(dma_rx_req0.read(), 0U);
+    reset0->write(false);
+    settle_irq();
+}
+
 TEST_BENCH(DwApbUartTest, LinuxDriverAndPairedTransfer)
 {
+    verify_dma_requests();
+
     uint32_t invalid_word = 0;
     uint16_t invalid_halfword = 0;
     EXPECT_EQ(bus0.do_read(2, invalid_word), tlm::TLM_ADDRESS_ERROR_RESPONSE);

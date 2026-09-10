@@ -15,6 +15,7 @@
 #include <tlm_utils/simple_target_socket.h>
 
 #include <module_factory_registery.h>
+#include <dma-trigger.h>
 #include <ports/biflow-socket.h>
 #include <ports/initiator-signal-socket.h>
 #include <ports/target-signal-socket.h>
@@ -38,6 +39,10 @@ public:
     gs::biflow_socket<dw_apb_uart> backend_socket;
     TargetSignalSocket<bool> reset;
     TargetSignalSocket<bool> pinmux_enable;
+    InitiatorSignalSocket<uint32_t> dma_tx_req;
+    InitiatorSignalSocket<uint32_t> dma_rx_req;
+    TargetSignalSocket<uint32_t> dma_tx_ack;
+    TargetSignalSocket<uint32_t> dma_rx_ack;
 
     explicit dw_apb_uart(sc_core::sc_module_name name);
 
@@ -81,7 +86,6 @@ private:
         FCR_ENABLE_FIFO = 0x01,
         FCR_CLEAR_RCVR = 0x02,
         FCR_CLEAR_XMIT = 0x04,
-
         LCR_DLAB = 0x80,
 
         MCR_LOOP = 0x10,
@@ -126,12 +130,19 @@ private:
     sc_core::sc_event m_state_event;
     sc_core::sc_event m_irq_event;
     sc_core::sc_event m_credit_event;
+    sc_core::sc_event m_dma_event;
     sc_core::sc_signal<bool> m_irq_stub;
+    sc_core::sc_signal<uint32_t> m_dma_tx_stub;
+    sc_core::sc_signal<uint32_t> m_dma_rx_stub;
+    gs::dma_trigger_request m_dma_tx;
+    gs::dma_trigger_request m_dma_rx;
+    bool m_dma_force_idle = true;
 
     void receive(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay);
     void tx_thread();
     void rx_timeout_thread();
     void update_irq();
+    void drive_dma();
     void reset_registers();
     void reset_changed(bool asserted);
     void schedule_irq();

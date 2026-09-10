@@ -18,7 +18,15 @@ dw_apb_uart::dw_apb_uart(sc_core::sc_module_name name)
     , backend_socket("backend_socket")
     , reset("reset")
     , pinmux_enable("pinmux_enable")
+    , dma_tx_req("dma_tx_req")
+    , dma_rx_req("dma_rx_req")
+    , dma_tx_ack("dma_tx_ack")
+    , dma_rx_ack("dma_rx_ack")
     , m_irq_stub("irq_stub")
+    , m_dma_tx_stub("dma_tx_stub")
+    , m_dma_rx_stub("dma_rx_stub")
+    , m_dma_tx(dma_tx_req)
+    , m_dma_rx(dma_rx_req)
 {
     target_socket.register_b_transport(this, &dw_apb_uart::b_transport);
     backend_socket.register_b_transport(this, &dw_apb_uart::receive);
@@ -26,6 +34,14 @@ dw_apb_uart::dw_apb_uart(sc_core::sc_module_name name)
     pinmux_enable.register_value_changed_cb([this](bool enabled) {
         m_pinmux_enabled = enabled;
         m_credit_event.notify(sc_core::SC_ZERO_TIME);
+    });
+    dma_tx_ack.register_value_changed_cb([this](uint32_t value) {
+        m_dma_tx.acknowledge(value);
+        m_dma_event.notify(sc_core::SC_ZERO_TIME);
+    });
+    dma_rx_ack.register_value_changed_cb([this](uint32_t value) {
+        m_dma_rx.acknowledge(value);
+        m_dma_event.notify(sc_core::SC_ZERO_TIME);
     });
 
     SC_THREAD(tx_thread);
@@ -35,6 +51,8 @@ dw_apb_uart::dw_apb_uart(sc_core::sc_module_name name)
     SC_METHOD(refresh_rx_credit_event);
     sensitive << m_credit_event;
     dont_initialize();
+    SC_METHOD(drive_dma);
+    sensitive << m_dma_event;
 
     reset_registers();
 }
@@ -44,6 +62,8 @@ void dw_apb_uart::before_end_of_elaboration()
     if (!irq.get_interface()) {
         irq.bind(m_irq_stub);
     }
+    if (!dma_tx_req.get_interface()) dma_tx_req.bind(m_dma_tx_stub);
+    if (!dma_rx_req.get_interface()) dma_rx_req.bind(m_dma_rx_stub);
 }
 
 void dw_apb_uart::end_of_elaboration() { refresh_rx_credit(); }
@@ -74,7 +94,11 @@ sc_core::sc_time dw_apb_uart::character_time() const
     return sc_core::sc_time(seconds, sc_core::SC_SEC);
 }
 
-void dw_apb_uart::schedule_irq() { m_irq_event.notify(sc_core::SC_ZERO_TIME); }
+void dw_apb_uart::schedule_irq()
+{
+    m_irq_event.notify(sc_core::SC_ZERO_TIME);
+    m_dma_event.notify(sc_core::SC_ZERO_TIME);
+}
 
 uint8_t dw_apb_uart::interrupt_id(bool acknowledge_thre)
 {
@@ -107,6 +131,18 @@ uint8_t dw_apb_uart::interrupt_id(bool acknowledge_thre)
 
 void dw_apb_uart::update_irq() { irq->write((interrupt_id(false) & 0x0f) != IIR_NO_INT); }
 
+void dw_apb_uart::drive_dma()
+{
+    if (m_dma_force_idle) {
+        m_dma_tx.force_idle();
+        m_dma_rx.force_idle();
+        m_dma_force_idle = false;
+    }
+    const bool enabled = !m_reset_asserted && (m_fcr & FCR_ENABLE_FIFO);
+    m_dma_tx.update(enabled && m_tx_fifo.size() < fifo_capacity());
+    m_dma_rx.update(enabled && m_rx_fifo.size() >= rx_trigger());
+}
+
 void dw_apb_uart::refresh_rx_credit()
 {
     const unsigned int capacity = fifo_capacity();
@@ -120,6 +156,7 @@ void dw_apb_uart::refresh_rx_credit_event() { refresh_rx_credit(); }
 
 void dw_apb_uart::reset_registers()
 {
+    m_dma_force_idle = true;
     m_rx_fifo.clear();
     m_tx_fifo.clear();
     m_dll = 0;
