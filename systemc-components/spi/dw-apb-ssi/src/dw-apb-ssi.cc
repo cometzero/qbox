@@ -13,11 +13,19 @@ dw_apb_ssi::dw_apb_ssi(sc_core::sc_module_name name)
     , irq("irq")
     , reset("reset")
     , pinmux_enable("pinmux_enable")
+    , dma_tx_req("dma_tx_req")
+    , dma_rx_req("dma_rx_req")
+    , dma_tx_ack("dma_tx_ack")
+    , dma_rx_ack("dma_rx_ack")
     , p_clock_frequency_hz("clock_frequency_hz", 100000000, "SSI input clock frequency in Hz")
     , p_fifo_depth("fifo_depth", DEFAULT_FIFO_DEPTH, "TX and RX FIFO depth in words")
     , p_num_chip_selects("num_chip_selects", 1, "Number of native chip selects")
     , p_access_latency_ns("access_latency_ns", 10, "MMIO access latency in nanoseconds")
     , m_irq_state(false)
+    , m_dma_tx_stub("dma_tx_stub")
+    , m_dma_rx_stub("dma_rx_stub")
+    , m_dma_tx(dma_tx_req)
+    , m_dma_rx(dma_rx_req)
 {
     reset_state();
     target_socket.register_b_transport(this, &dw_apb_ssi::b_transport);
@@ -28,10 +36,26 @@ dw_apb_ssi::dw_apb_ssi(sc_core::sc_module_name name)
         }
     });
     pinmux_enable.register_value_changed_cb([this](bool enabled) { m_pinmux_enabled = enabled; });
+    dma_tx_ack.register_value_changed_cb([this](uint32_t value) {
+        m_dma_tx.acknowledge(value);
+        m_dma_event.notify(sc_core::SC_ZERO_TIME);
+    });
+    dma_rx_ack.register_value_changed_cb([this](uint32_t value) {
+        m_dma_rx.acknowledge(value);
+        m_dma_event.notify(sc_core::SC_ZERO_TIME);
+    });
 
     SC_METHOD(drive_irq);
     sensitive << m_irq_event;
+    SC_METHOD(drive_dma);
+    sensitive << m_dma_event;
     SC_THREAD(transfer_thread);
+}
+
+void dw_apb_ssi::before_end_of_elaboration()
+{
+    if (!dma_tx_req.get_interface()) dma_tx_req.bind(m_dma_tx_stub);
+    if (!dma_rx_req.get_interface()) dma_rx_req.bind(m_dma_rx_stub);
 }
 
 void dw_apb_ssi::reset_state()
@@ -47,6 +71,7 @@ void dw_apb_ssi::reset_state()
     m_rxftlr = 0;
     m_imr = 0;
     m_sticky_interrupts = 0;
+    m_dmacr = 0;
     m_dmatdlr = 0;
     m_dmardlr = 0;
     m_rx_sample_dly = 0;
@@ -54,6 +79,8 @@ void dw_apb_ssi::reset_state()
     m_irq_state = false;
     m_tx_fifo.clear();
     m_rx_fifo.clear();
+    m_dma_force_idle = true;
+    m_dma_event.notify(sc_core::SC_ZERO_TIME);
     if (irq_was_asserted) m_irq_event.notify(sc_core::SC_ZERO_TIME);
 }
 
@@ -78,6 +105,7 @@ uint32_t dw_apb_ssi::raw_interrupt_status() const
 
 void dw_apb_ssi::update_irq()
 {
+    m_dma_event.notify(sc_core::SC_ZERO_TIME);
     const bool state = (raw_interrupt_status() & m_imr) != 0;
     if (state != m_irq_state) {
         m_irq_state = state;
@@ -86,6 +114,17 @@ void dw_apb_ssi::update_irq()
 }
 
 void dw_apb_ssi::drive_irq() { irq->write(m_irq_state); }
+
+void dw_apb_ssi::drive_dma()
+{
+    if (m_dma_force_idle) {
+        m_dma_tx.force_idle();
+        m_dma_rx.force_idle();
+        m_dma_force_idle = false;
+    }
+    m_dma_tx.update(m_ssienr && (m_dmacr & 2) && m_tx_fifo.size() <= m_dmatdlr);
+    m_dma_rx.update(m_ssienr && (m_dmacr & 1) && m_rx_fifo.size() > m_dmardlr);
+}
 
 uint32_t dw_apb_ssi::data_mask() const
 {
@@ -202,7 +241,7 @@ uint32_t dw_apb_ssi::read_register(uint32_t offset)
         return value;
     }
     case DMACR:
-        return 0; // DMA is intentionally not modelled.
+        return m_dmacr;
     case DMATDLR:
         return m_dmatdlr;
     case DMARDLR:
@@ -272,12 +311,13 @@ void dw_apb_ssi::write_register(uint32_t offset, uint32_t value)
         m_imr = value & INT_MASK;
         break;
     case DMACR:
-        break; // No DMA request interface is exposed by this model.
+        m_dmacr = value & 3;
+        break;
     case DMATDLR:
-        m_dmatdlr = value;
+        m_dmatdlr = std::min(value, fifo_depth() - 1);
         break;
     case DMARDLR:
-        m_dmardlr = value;
+        m_dmardlr = std::min(value, fifo_depth() - 1);
         break;
     case DR:
         if (m_tx_fifo.size() == fifo_depth()) {

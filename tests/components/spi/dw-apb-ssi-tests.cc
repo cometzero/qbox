@@ -13,6 +13,8 @@ protected:
     dw_apb_ssi dut;
     InitiatorTester initiator;
     sc_core::sc_signal<bool> irq_signal;
+    sc_core::sc_signal<uint32_t> dma_tx_req;
+    sc_core::sc_signal<uint32_t> dma_rx_req;
 
     void write32(uint32_t offset, uint32_t value)
     {
@@ -26,14 +28,92 @@ protected:
         return value;
     }
 
+    void settle_dma()
+    {
+        sc_core::wait(sc_core::SC_ZERO_TIME);
+        sc_core::wait(sc_core::SC_ZERO_TIME);
+    }
+
 public:
     explicit DwApbSsiTestBench(sc_core::sc_module_name name)
-        : TestBench(name), dut("dut"), initiator("initiator"), irq_signal("irq")
+        : TestBench(name)
+        , dut("dut")
+        , initiator("initiator")
+        , irq_signal("irq")
+        , dma_tx_req("dma_tx_req")
+        , dma_rx_req("dma_rx_req")
     {
         initiator.socket.bind(dut.target_socket);
         dut.irq.bind(irq_signal);
+        dut.dma_tx_req.bind(dma_tx_req);
+        dut.dma_rx_req.bind(dma_rx_req);
     }
 };
+
+TEST_BENCH(DwApbSsiTestBench, DmaRequestsThresholdsAndWidths)
+{
+    constexpr uint32_t ACTIVE = gs::dma_trigger_request::ACTIVE;
+    write32(dw_apb_ssi::SSIENR, 0);
+    write32(dw_apb_ssi::CTRLR0, 7 | (1u << 11));
+    write32(dw_apb_ssi::BAUDR, 100);
+    write32(dw_apb_ssi::DMATDLR, 0);
+    write32(dw_apb_ssi::DMARDLR, 0);
+    write32(dw_apb_ssi::SSIENR, 1);
+    write32(dw_apb_ssi::DMACR, 3);
+    settle_dma();
+    EXPECT_EQ(dma_tx_req.read(), ACTIVE);
+    EXPECT_EQ(dma_rx_req.read(), 0U);
+
+    dut.dma_tx_ack->write(ACTIVE);
+    settle_dma();
+    EXPECT_EQ(dma_tx_req.read(), 0U);
+
+    uint8_t tx0 = 0xa5;
+    uint16_t tx1 = 0x005a;
+    EXPECT_EQ(initiator.do_write(dw_apb_ssi::DR, tx0), tlm::TLM_OK_RESPONSE);
+    EXPECT_EQ(initiator.do_write(dw_apb_ssi::DR, tx1), tlm::TLM_OK_RESPONSE);
+    dut.dma_tx_ack->write(0);
+    settle_dma();
+    EXPECT_EQ(dma_tx_req.read(), 0U);
+
+    sc_core::wait(sc_core::sc_time(17, sc_core::SC_US));
+    EXPECT_EQ(dma_tx_req.read(), ACTIVE);
+    EXPECT_EQ(dma_rx_req.read(), ACTIVE);
+
+    dut.dma_rx_ack->write(ACTIVE);
+    settle_dma();
+    EXPECT_EQ(dma_rx_req.read(), 0U);
+    uint8_t rx0 = 0;
+    EXPECT_EQ(initiator.do_read(dw_apb_ssi::DR, rx0), tlm::TLM_OK_RESPONSE);
+    EXPECT_EQ(rx0, tx0);
+    dut.dma_rx_ack->write(0);
+    settle_dma();
+    EXPECT_EQ(dma_rx_req.read(), ACTIVE);
+
+    dut.dma_rx_ack->write(ACTIVE);
+    settle_dma();
+    uint16_t rx1 = 0;
+    EXPECT_EQ(initiator.do_read(dw_apb_ssi::DR, rx1), tlm::TLM_OK_RESPONSE);
+    EXPECT_EQ(rx1, tx1);
+    dut.dma_rx_ack->write(0);
+    settle_dma();
+    EXPECT_EQ(dma_rx_req.read(), 0U);
+
+    dut.dma_tx_ack->write(ACTIVE);
+    settle_dma();
+    write32(dw_apb_ssi::DMACR, 0);
+    dut.dma_tx_ack->write(0);
+    settle_dma();
+    EXPECT_EQ(dma_tx_req.read(), 0U);
+
+    write32(dw_apb_ssi::DMACR, 3);
+    settle_dma();
+    EXPECT_EQ(dma_tx_req.read(), ACTIVE);
+    dut.reset->write(true);
+    settle_dma();
+    EXPECT_EQ(dma_tx_req.read(), 0U);
+    EXPECT_EQ(dma_rx_req.read(), 0U);
+}
 
 TEST_BENCH(DwApbSsiTestBench, ProbeAndLoopback)
 {

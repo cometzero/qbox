@@ -14,6 +14,7 @@
 #include <tlm_utils/simple_target_socket.h>
 
 #include <module_factory_registery.h>
+#include <dma-trigger.h>
 #include <ports/initiator-signal-socket.h>
 #include <ports/target-signal-socket.h>
 #include <scp/report.h>
@@ -79,6 +80,10 @@ public:
     InitiatorSignalSocket<bool> irq;
     TargetSignalSocket<bool> reset;
     TargetSignalSocket<bool> pinmux_enable;
+    InitiatorSignalSocket<uint32_t> dma_tx_req;
+    InitiatorSignalSocket<uint32_t> dma_rx_req;
+    TargetSignalSocket<uint32_t> dma_tx_ack;
+    TargetSignalSocket<uint32_t> dma_rx_ack;
 
     cci::cci_param<uint64_t> p_clock_frequency_hz;
     cci::cci_param<uint32_t> p_fifo_depth;
@@ -87,6 +92,8 @@ public:
 
     SC_HAS_PROCESS(dw_apb_ssi);
     explicit dw_apb_ssi(sc_core::sc_module_name name);
+
+    void before_end_of_elaboration() override;
 
 private:
     static constexpr uint32_t CTRLR0_MASK = 0x00001fff;
@@ -101,6 +108,7 @@ private:
     uint32_t m_rxftlr;
     uint32_t m_imr;
     uint32_t m_sticky_interrupts;
+    uint32_t m_dmacr;
     uint32_t m_dmatdlr;
     uint32_t m_dmardlr;
     uint32_t m_rx_sample_dly;
@@ -113,6 +121,12 @@ private:
     sc_core::sc_event m_transfer_event;
     sc_core::sc_event m_cancel_event;
     sc_core::sc_event m_irq_event;
+    sc_core::sc_event m_dma_event;
+    sc_core::sc_signal<uint32_t> m_dma_tx_stub;
+    sc_core::sc_signal<uint32_t> m_dma_rx_stub;
+    gs::dma_trigger_request m_dma_tx;
+    gs::dma_trigger_request m_dma_rx;
+    bool m_dma_force_idle = true;
 
     void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay);
     uint32_t read_register(uint32_t offset);
@@ -126,6 +140,7 @@ private:
     sc_core::sc_time frame_delay() const;
     void update_irq();
     void drive_irq();
+    void drive_dma();
     void reset_state();
     void transfer_thread();
 };
