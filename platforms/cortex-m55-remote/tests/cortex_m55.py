@@ -54,9 +54,11 @@ def vp_test():
         child = pexpect.spawn(vp_path.as_posix(), ["--gs_luafile", args.lua])
         child.logfile = stdout.buffer
 
+    child.expect("SysTick banks isolated")
     child.expect("Test program is running. Listening for interrupts.")
     child.expect("IRQ 17 happened")
     child.expect("NMI happened")
+    child.expect("SysTick COUNTFLAG set")
     child.expect("SysTick happened")
 
     # Terminate the child process

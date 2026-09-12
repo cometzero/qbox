@@ -66,7 +66,6 @@ platform = {
         target_socket = {address= 0xc0001000, size=0x1000, bind = "&router.initiator_socket"},
         irq = {bind="&plugin_0.target_signal_socket_1"},
         nmi = {bind="&plugin_0.target_signal_socket_2"},
-        S_SysTick = {bind = "&plugin_0.target_signal_socket_3"},
     },
         
     plugin_0 = {
@@ -75,7 +74,7 @@ platform = {
         remote_argv = {"--param", "log_level=1"},
         tlm_initiator_ports_num = 2,
         tlm_target_ports_num = 0,
-        target_signals_num = 4,
+        target_signals_num = 3,
         initiator_signals_num = 0,
         initiator_socket_0 = {bind = "&router.target_socket"},
         initiator_socket_1 = {bind = "&router.target_socket"},
@@ -85,13 +84,12 @@ platform = {
             tlm_initiator_ports_num = 0,
             tlm_target_ports_num = 2,
             target_signals_num = 0,
-            initiator_signals_num = 4,
+            initiator_signals_num = 3,
             target_socket_0 = {address = 0x0, size = 0xE000E000, bind = "&cpu_0.router.initiator_socket"},
-            target_socket_1 = {address = 0xE000E000 + 0x10000 , size = 0x100000, bind = "&cpu_0.router.initiator_socket"},
+            target_socket_1 = {address = 0xE000E000 + 0x21000 , size = 0x100000, bind = "&cpu_0.router.initiator_socket"},
             initiator_signal_socket_0 = {bind = "&cpu_0.cpu.nvic.irq_in_0"},
             initiator_signal_socket_1 = {bind = "&cpu_0.cpu.nvic.irq_in_17"},
             initiator_signal_socket_2 = {bind = "&cpu_0.cpu.nvic.nmi"},
-            initiator_signal_socket_3 = {bind = "&cpu_0.cpu.nvic.S_SysTick"},
         },
 
         qemu_inst_mgr = {
@@ -108,7 +106,7 @@ platform = {
             moduletype = "RemoteCPU",
             args = {"&qemu_inst"},
             cpu = {
-                nvic = { mem = { address = 0xE000E000, size = 0x10000}, num_irq = 64 },
+                nvic = { mem = { address = 0xE000E000, size = 0x21000}, num_irq = 64 },
             },
         },
     },

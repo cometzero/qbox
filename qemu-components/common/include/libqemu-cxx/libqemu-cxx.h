@@ -78,6 +78,7 @@ class IOMMUMemoryRegion;
 class AddressSpace;
 class MemoryListener;
 class Gpio;
+class Clock;
 class Timer;
 class Bus;
 class Chardev;
@@ -178,6 +179,7 @@ public:
     std::shared_ptr<MemoryRegion> get_system_memory();
     std::shared_ptr<MemoryListener> memory_listener_new();
     Gpio gpio_new();
+    Clock clock_new(const Object& parent, const char* name);
 
     std::shared_ptr<Timer> timer_new();
 
@@ -341,6 +343,16 @@ public:
             m_proxy->set_callback(cb);
         }
     }
+};
+
+class Clock : public Object
+{
+public:
+    Clock() = default;
+    Clock(const Clock&) = default;
+    Clock(const Object& o): Object(o) {}
+
+    bool update_hz(uint64_t hz);
 };
 
 class MemoryRegionOps
@@ -653,6 +665,8 @@ public:
 
     Gpio get_gpio_in(int idx);
     Gpio get_gpio_in_named(const char* name, int idx);
+    void connect_clock_in(const char* name, Clock clock);
+    void cold_reset();
 
     Bus get_child_bus(const char* name);
     void set_parent_bus(Bus bus);

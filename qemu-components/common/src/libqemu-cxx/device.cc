@@ -51,6 +51,19 @@ Gpio Device::get_gpio_in_named(const char* name, int idx)
     return Gpio(obj);
 }
 
+void Device::connect_clock_in(const char* name, Clock clock)
+{
+    m_int->exports().qdev_connect_clock_in(
+        reinterpret_cast<QemuDevice*>(m_obj), name,
+        reinterpret_cast<QemuClock*>(clock.get_qemu_obj()));
+}
+
+void Device::cold_reset()
+{
+    m_int->exports().device_cold_reset(
+        reinterpret_cast<QemuDevice*>(m_obj));
+}
+
 Bus Device::get_child_bus(const char* name)
 {
     QemuDevice* qemu_dev = reinterpret_cast<QemuDevice*>(m_obj);

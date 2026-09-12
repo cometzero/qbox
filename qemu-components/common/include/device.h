@@ -109,6 +109,9 @@ public:
 
     virtual void end_of_elaboration() override { realize(); }
 
+    /* The caller must hold this QEMU instance's iothread lock. */
+    virtual void cold_reset() { qemu::Device(m_dev).cold_reset(); }
+
     void set_qom_type(std::string const& qom_type) { m_qom_type = qom_type; }
 
     const char* get_qom_type() const { return m_qom_type.c_str(); }

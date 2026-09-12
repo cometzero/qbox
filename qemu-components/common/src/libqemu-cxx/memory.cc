@@ -231,6 +231,8 @@ MemoryRegion::MemTxResult MemoryRegion::dispatch_read(uint64_t addr, uint64_t* d
     QemuMemoryRegion* mr = reinterpret_cast<QemuMemoryRegion*>(m_obj);
 
     qemu_attrs.secure = attrs.secure;
+    qemu_attrs.user = attrs.user;
+    qemu_attrs.debug = attrs.debug;
     qemu_attrs.requester_id = attrs.requester_id;
 
     qemu_res = m_int->exports().memory_region_dispatch_read(mr, addr, data, size, qemu_attrs);
@@ -245,6 +247,8 @@ MemoryRegion::MemTxResult MemoryRegion::dispatch_write(uint64_t addr, uint64_t d
     QemuMemoryRegion* mr = reinterpret_cast<QemuMemoryRegion*>(m_obj);
 
     qemu_attrs.secure = attrs.secure;
+    qemu_attrs.user = attrs.user;
+    qemu_attrs.debug = attrs.debug;
     qemu_attrs.requester_id = attrs.requester_id;
 
     qemu_res = m_int->exports().memory_region_dispatch_write(mr, addr, data, size, qemu_attrs);

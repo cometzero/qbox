@@ -32,7 +32,7 @@ public:
     }
     cpu_arm_cortexM55(sc_core::sc_module_name name, QemuInstance& inst)
         : QemuCpuArm(name, inst, "cortex-m55-arm")
-        , m_nvic("nvic", inst)
+        , m_nvic("nvic", inst, true)
         , p_start_powered_off("start_powered_off", false,
                               "Start and reset the CPU "
                               "in powered-off state")

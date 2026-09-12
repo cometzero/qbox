@@ -142,6 +142,19 @@ Object LibQemu::object_new(const char* type_name, const char* id)
     return o;
 }
 
+Clock LibQemu::clock_new(const Object& parent, const char* name)
+{
+    QemuClock* clock = m_int->exports().clock_new(parent.get_qemu_obj(), name);
+    Object object(reinterpret_cast<QemuObject*>(clock), m_int);
+    return Clock(object);
+}
+
+bool Clock::update_hz(uint64_t hz)
+{
+    return m_int->exports().clock_update_hz(
+        reinterpret_cast<QemuClock*>(m_obj), hz);
+}
+
 std::shared_ptr<MemoryRegionOps> LibQemu::memory_region_ops_new()
 {
     QemuMemoryRegionOps* ops = m_int->exports().mr_ops_new();

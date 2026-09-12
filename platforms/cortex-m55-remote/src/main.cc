@@ -99,7 +99,6 @@ public:
     tlm_utils::simple_target_socket<IrqGenerator> target_socket;
     InitiatorSignalSocket<bool> m_irq;
     InitiatorSignalSocket<bool> m_nmi;
-    InitiatorSignalSocket<bool> m_S_SysTick;
     sc_core::sc_event ev;
 
     virtual void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)
@@ -120,13 +119,6 @@ public:
                 if (*(data) == 0x1UL) {
                     SCP_INFO(()) << "Clear NMI";
                     m_nmi->write(false);
-                    ev.notify(sc_core::SC_ZERO_TIME);
-                }
-                break;
-            case 0x8:
-                if (*(data) == 0x1UL) {
-                    SCP_INFO(()) << "Clear S_SysTick";
-                    m_S_SysTick->write(false);
                     ev.notify(sc_core::SC_ZERO_TIME);
                 }
                 break;
@@ -151,7 +143,6 @@ public:
         , target_socket("target_socket")
         , m_irq("irq")
         , m_nmi("nmi")
-        , m_S_SysTick("S_SysTick")
     {
         SCP_INFO(()) << "IrqGenerator: Constructor called";
         SC_THREAD(test_thread);
@@ -168,8 +159,6 @@ private:
         m_irq->write(true);
         sc_core::wait(ev);
         m_nmi->write(true);
-        sc_core::wait(ev);
-        m_S_SysTick->write(true);
     }
 };
 
