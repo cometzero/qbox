@@ -6,6 +6,14 @@
 
 #include "smmuv3-bench.h"
 
+TEST(Smmuv3CommandDecode, TLBIRangeUsesFiveBitScale)
+{
+    uint64_t word0 = (2ULL << 12) | (16ULL << 20);
+    ASSERT_EQ(gs::detail_smmuv3::decode_tlbi_range_size(
+                  word0, gs::TLBI_TG_4K, gs::PAGE_SHIFT_4K),
+              3ULL << 28);
+}
+
 TEST_BENCH(smmuv3_bench, ID_Registers)
 {
     uint32_t idr0 = mmio_read32(smmuv3_regs::IDR0);
@@ -73,11 +81,15 @@ TEST_BENCH(smmuv3_bench, LinearStreamTable_S1_4KPage)
 
     enable_smmu();
 
-    ASSERT_EQ(tbu_txn(0x0, true, 0xDEADBEEFu), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(tbu_txn(0x80, true, 0xDEADBEEFu), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(tbu_txn(0x0, true, 0xCAFEBABEu), tlm::TLM_OK_RESPONSE);
 
-    uint32_t readback = 0;
-    read_dram(page_pa, &readback, 4);
-    ASSERT_EQ(readback, 0xDEADBEEFu);
+    uint32_t at_base = 0;
+    uint32_t at_offset = 0;
+    read_dram(page_pa, &at_base, 4);
+    read_dram(page_pa + 0x80, &at_offset, 4);
+    ASSERT_EQ(at_base, 0xCAFEBABEu);
+    ASSERT_EQ(at_offset, 0xDEADBEEFu);
 
     const uint32_t expected_read = 0x12345678u;
     write_dram(page_pa + 4, &expected_read, 4);
@@ -95,6 +107,42 @@ TEST_BENCH(smmuv3_bench, LinearStreamTable_S1_4KPage)
     tbu_initiator->b_transport(txn, delay);
     ASSERT_EQ(txn.get_response_status(), tlm::TLM_OK_RESPONSE);
     ASSERT_EQ(translated_read, expected_read);
+}
+
+TEST_BENCH(smmuv3_bench, RequestContextSelectsStreamId)
+{
+    const uint64_t strtab = DRAM_BASE;
+    const uint64_t page0 = DRAM_BASE + 0x08000000;
+    const uint64_t page100 = DRAM_BASE + 0x08100000;
+    const uint64_t page200 = DRAM_BASE + 0x08200000;
+
+    auto setup_stream = [this, strtab](uint32_t sid, uint64_t tables,
+                                       uint64_t page, uint16_t asid) {
+        write_ste_s1(strtab + sid * smmuv3_bench_consts::STE_BYTES, tables);
+        write_cd_identity(tables, tables + 0x1000, 16, 0, 5, asid);
+        write_table_desc(tables + 0x1000, 0, tables + 0x2000);
+        write_table_desc(tables + 0x2000, 0, tables + 0x3000);
+        write_table_desc(tables + 0x3000, 0, tables + 0x4000);
+        write_page_4k(tables + 0x4000, 0, page);
+    };
+
+    setup_linear_stream_table(strtab, 10);
+    setup_stream(0x000, DRAM_BASE + 0x10000, page0, 0);
+    setup_stream(0x100, DRAM_BASE + 0x20000, page100, 1);
+    setup_stream(0x200, DRAM_BASE + 0x30000, page200, 2);
+    enable_smmu();
+
+    ASSERT_EQ(tbu_txn(0, true, 0x000000a0), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(tbu_txn(0, true, 0x000001a0, 0x100), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(tbu_txn(0, true, 0x000002a0, 0x200), tlm::TLM_OK_RESPONSE);
+
+    uint32_t value = 0;
+    read_dram(page0, &value, sizeof(value));
+    ASSERT_EQ(value, 0x000000a0u);
+    read_dram(page100, &value, sizeof(value));
+    ASSERT_EQ(value, 0x000001a0u);
+    read_dram(page200, &value, sizeof(value));
+    ASSERT_EQ(value, 0x000002a0u);
 }
 
 TEST_BENCH(smmuv3_bench, LinearStreamTable_S1_2MBlock)
@@ -115,11 +163,16 @@ TEST_BENCH(smmuv3_bench, LinearStreamTable_S1_2MBlock)
 
     enable_smmu();
 
-    ASSERT_EQ(tbu_txn(0x0, true, 0xCAFEBABE), tlm::TLM_OK_RESPONSE);
+    const uint64_t offset = 0x123000;
+    ASSERT_EQ(tbu_txn(offset, true, 0xCAFEBABE), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(tbu_txn(0x0, true, 0x12345678), tlm::TLM_OK_RESPONSE);
 
-    uint32_t readback = 0;
-    read_dram(dest_pa, &readback, 4);
-    ASSERT_EQ(readback, 0xCAFEBABEu);
+    uint32_t at_base = 0;
+    uint32_t at_offset = 0;
+    read_dram(dest_pa, &at_base, 4);
+    read_dram(dest_pa + offset, &at_offset, 4);
+    ASSERT_EQ(at_base, 0x12345678u);
+    ASSERT_EQ(at_offset, 0xCAFEBABEu);
 }
 
 TEST_BENCH(smmuv3_bench, CMDQ_Sync_UpdatesCons)
@@ -1470,8 +1523,8 @@ TEST_BENCH(smmuv3_bench, CMDQ_TLBI_NH_VA_TG64K_FlushesIotlb)
 
     std::array<uint8_t, gs::SMMUV3_CMD_SIZE> cmd{};
     cmd[0] = 0x12;
-    cmd[1] = (3u << 2);
     *reinterpret_cast<uint64_t*>(cmd.data() + 8) = 0;
+    cmd[9] = (3u << 2);
     issue_cmd(cmdq_base, 0, cmd.data());
 
     ASSERT_EQ(smmu.test_iotlb_size(), 0u);
@@ -1500,8 +1553,8 @@ TEST_BENCH(smmuv3_bench, CMDQ_TLBI_NH_VAA_TG16K_FlushesIotlb)
 
     std::array<uint8_t, gs::SMMUV3_CMD_SIZE> cmd{};
     cmd[0] = 0x13;
-    cmd[1] = (2u << 2);
     *reinterpret_cast<uint64_t*>(cmd.data() + 8) = 0;
+    cmd[9] = (2u << 2);
     issue_cmd(cmdq_base, 0, cmd.data());
 
     ASSERT_EQ(smmu.test_iotlb_size(), 0u);
@@ -2085,8 +2138,8 @@ TEST_BENCH(smmuv3_bench, CMDQ_TLBI_NH_VA_TG4K_TlbiEncoding)
 
     std::array<uint8_t, gs::SMMUV3_CMD_SIZE> cmd{};
     cmd[0] = gs::CMD_OP_TLBI_NH_VA;
-    cmd[1] = (gs::TLBI_TG_4K << 2);
     *reinterpret_cast<uint64_t*>(cmd.data() + 8) = 0;
+    cmd[9] = (gs::TLBI_TG_4K << 2);
     issue_cmd(cmdq_base, 0, cmd.data());
 
     ASSERT_EQ(smmu.test_iotlb_size(), 0u);
@@ -2105,6 +2158,48 @@ TEST_BENCH(smmuv3_bench, CMD_TLBI_EL2_ALL_FlushesIotlb)
     ASSERT_EQ(smmu.test_iotlb_size(), 0u);
 }
 
+TEST_BENCH(smmuv3_bench, CMDQ_TLBI_NH_VA_RangeFlushesThreePages)
+{
+    const uint64_t strtab = DRAM_BASE;
+    const uint64_t cd_base = DRAM_BASE + 0x1000;
+    const uint64_t l0 = DRAM_BASE + 0x2000;
+    const uint64_t l1 = DRAM_BASE + 0x3000;
+    const uint64_t l2 = DRAM_BASE + 0x4000;
+    const uint64_t l3 = DRAM_BASE + 0x5000;
+    const uint64_t page_pa = DRAM_BASE + 0x06B00000;
+    const uint64_t cmdq_base = DRAM_BASE + 0x00080000;
+
+    setup_linear_stream_table(strtab, 4);
+    write_ste_s1(strtab, cd_base);
+    write_cd_identity(cd_base, l0, 16, 0, 5);
+    write_table_desc(l0, 0, l1);
+    write_table_desc(l1, 0, l2);
+    write_table_desc(l2, 0, l3);
+    for (uint32_t page = 0; page < 3; ++page)
+        write_page_4k_ro(l3, page, page_pa + page * 0x1000);
+    setup_cmdq(cmdq_base, 4);
+    enable_cmdq();
+    enable_smmu();
+
+    for (uint32_t page = 0; page < 3; ++page)
+        ASSERT_EQ(tbu_txn(page * 0x1000, false, 0), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(smmu.test_iotlb_size(), 3u);
+
+    for (uint32_t page = 0; page < 3; ++page)
+        write_page_4k(l3, page, page_pa + page * 0x1000);
+
+    std::array<uint8_t, gs::SMMUV3_CMD_SIZE> cmd{};
+    uint64_t word0 = gs::CMD_OP_TLBI_NH_VA | (2ULL << 12);
+    uint64_t word1 = static_cast<uint64_t>(gs::TLBI_TG_4K) << 10;
+    std::memcpy(cmd.data(), &word0, sizeof(word0));
+    std::memcpy(cmd.data() + 8, &word1, sizeof(word1));
+    issue_cmd(cmdq_base, 0, cmd.data());
+
+    ASSERT_EQ(smmu.test_iotlb_size(), 0u);
+    for (uint32_t page = 0; page < 3; ++page)
+        ASSERT_EQ(tbu_txn(page * 0x1000, true, 0xCAFE0000u + page), tlm::TLM_OK_RESPONSE);
+}
+
 TEST_BENCH(smmuv3_bench, CMD_TLBI_EL2_VA_FlushesIotlb)
 {
     const uint64_t cmdq_base = DRAM_BASE + 0x00020000;
@@ -2113,8 +2208,8 @@ TEST_BENCH(smmuv3_bench, CMD_TLBI_EL2_VA_FlushesIotlb)
 
     std::array<uint8_t, gs::SMMUV3_CMD_SIZE> cmd{};
     cmd[0] = gs::CMD_OP_TLBI_EL2_VA;
-    cmd[1] = (gs::TLBI_TG_4K << 2);
     *reinterpret_cast<uint64_t*>(cmd.data() + 8) = 0;
+    cmd[9] = (gs::TLBI_TG_4K << 2);
     issue_cmd(cmdq_base, 0, cmd.data());
 
     ASSERT_EQ(smmu.test_iotlb_size(), 0u);
@@ -2128,8 +2223,8 @@ TEST_BENCH(smmuv3_bench, CMD_TLBI_EL2_VAA_FlushesIotlb)
 
     std::array<uint8_t, gs::SMMUV3_CMD_SIZE> cmd{};
     cmd[0] = gs::CMD_OP_TLBI_EL2_VAA;
-    cmd[1] = (gs::TLBI_TG_4K << 2);
     *reinterpret_cast<uint64_t*>(cmd.data() + 8) = 0;
+    cmd[9] = (gs::TLBI_TG_4K << 2);
     issue_cmd(cmdq_base, 0, cmd.data());
 
     ASSERT_EQ(smmu.test_iotlb_size(), 0u);
@@ -2210,8 +2305,8 @@ TEST_BENCH(smmuv3_bench, IOTLB_Reinsert_KeepsSizeStable)
 
     std::array<uint8_t, gs::SMMUV3_CMD_SIZE> cmd{};
     cmd[0] = gs::CMD_OP_TLBI_NH_VA;
-    cmd[1] = (gs::TLBI_TG_4K << 2);
     *reinterpret_cast<uint64_t*>(cmd.data() + 8) = 0;
+    cmd[9] = (gs::TLBI_TG_4K << 2);
     issue_cmd(cmdq, 0, cmd.data());
     ASSERT_EQ(smmu.test_iotlb_size(), 0u);
 

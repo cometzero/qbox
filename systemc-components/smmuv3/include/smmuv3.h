@@ -709,8 +709,8 @@ private:
     void iotlb_inv_all();               // INV = INValidate
     void iotlb_inv_asid(uint16_t asid); // drop entries matching one ASID
     void iotlb_inv_vmid(uint16_t vmid); // drop entries matching one VMID
-    void iotlb_inv_iova(uint16_t vmid, uint16_t asid, uint64_t iova, uint8_t tg,
-                        uint64_t addr_mask); // drop one IOVA range
+    void iotlb_inv_range(int32_t vmid, int32_t asid, uint64_t iova, uint64_t size,
+                         uint8_t tg); // drop cached entries overlapping one IOVA range
 
     void consume_cmdq();        // drain pending entries from the (non-secure) command queue
     void consume_secure_cmdq(); // same for the Secure-world command queue
@@ -926,6 +926,17 @@ class smmuv3_tbu : public sc_core::sc_module
                    : 0;
     }
 
+    uint32_t extract_stream_id(tlm::tlm_generic_payload& txn) const
+    {
+        if (p_requester_id_from_context.get_value()) {
+            auto* context = txn.get_extension<RequestContextTlmExtension>();
+            if (context && context->get_context().requester_valid) {
+                return context->get_context().requester_id;
+            }
+        }
+        return p_topology_id.get_value();
+    }
+
     static bool extract_secure(tlm::tlm_generic_payload& txn)
     {
         auto* sx = txn.get_extension<smmuv3_secure_extension>();
@@ -950,6 +961,7 @@ protected:
         tlm::tlm_command cmd = txn.get_command();
 
         auto* ats = txn.get_extension<smmuv3_ats_extension>();
+        uint32_t stream_id = extract_stream_id(txn);
         uint32_t substream_id = extract_substream_id(txn);
         bool is_secure = extract_secure(txn);
 
@@ -959,16 +971,16 @@ protected:
         }
 
         typename smmuv3<BUSWIDTH>::IOMMUTLBEntry te = m_smmu->smmuv3_translate(
-            txn, p_topology_id, substream_id, is_secure, ats && ats->is_translation_request);
+            txn, stream_id, substream_id, is_secure, ats && ats->is_translation_request);
 
         while (te.stallable_fault) {
-            bool aborted = m_smmu->stall_and_wait(p_topology_id, substream_id, addr, te.fault_type, te.fault_level, 0,
+            bool aborted = m_smmu->stall_and_wait(stream_id, substream_id, addr, te.fault_type, te.fault_level, 0,
                                                   txn);
             if (aborted) {
                 txn.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
                 return;
             }
-            te = m_smmu->smmuv3_translate(txn, p_topology_id, substream_id, is_secure,
+            te = m_smmu->smmuv3_translate(txn, stream_id, substream_id, is_secure,
                                           ats && ats->is_translation_request);
         }
 
@@ -982,7 +994,7 @@ protected:
                 if (static_cast<uint32_t>(m_smmu->CR0[m_smmu->CR0_PRIQEN]) &&
                     static_cast<uint32_t>(m_smmu->IDR0[m_smmu->IDR0_PRI])) {
                     uint32_t flags = (cmd == tlm::TLM_WRITE_COMMAND ? 0x2u : 0x0u) | (ats->prg_index << 16);
-                    m_smmu->record_pri(p_topology_id, addr, flags);
+                    m_smmu->record_pri(stream_id, addr, flags);
                 }
             } else {
                 ats->faulted = false;
@@ -1004,14 +1016,14 @@ protected:
             (cmd == tlm::TLM_READ_COMMAND && te.perm == IOMMUAccessFlags::WO)) {
             txn.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
         } else {
-            txn.set_address(te.translated_addr | (addr & SMMUV3_PAGEMASK));
+            txn.set_address(te.translated_addr | (addr & te.addr_mask));
 
             auto ext = std::make_unique<smmuv3_memory_attrs_extension>();
             ext->set_from_descriptor(te.descriptor, te.table_attrs);
             txn.set_extension(ext.get());
 
             SCP_INFO(()) << std::hex << "smmuv3 TBU b_transport: translate 0x" << addr << " to 0x"
-                         << (te.translated_addr | (addr & SMMUV3_PAGEMASK)) << " attrs=" << ext->to_string();
+                         << (te.translated_addr | (addr & te.addr_mask)) << " attrs=" << ext->to_string();
 
             downstream_socket->b_transport(txn, delay);
             txn.set_address(addr);
@@ -1022,11 +1034,12 @@ protected:
     virtual unsigned int transport_dbg(tlm::tlm_generic_payload& txn)
     {
         sc_dt::uint64 addr = txn.get_address();
+        uint32_t stream_id = extract_stream_id(txn);
         uint32_t substream_id = extract_substream_id(txn);
         bool is_secure = extract_secure(txn);
-        typename smmuv3<BUSWIDTH>::IOMMUTLBEntry te = m_smmu->smmuv3_translate(txn, p_topology_id, substream_id,
+        typename smmuv3<BUSWIDTH>::IOMMUTLBEntry te = m_smmu->smmuv3_translate(txn, stream_id, substream_id,
                                                                                is_secure, false);
-        txn.set_address(te.translated_addr | (addr & SMMUV3_PAGEMASK));
+        txn.set_address(te.translated_addr | (addr & te.addr_mask));
         int ret = downstream_socket->transport_dbg(txn);
         txn.set_address(addr);
         return ret;
@@ -1035,9 +1048,10 @@ protected:
     virtual bool get_direct_mem_ptr(tlm::tlm_generic_payload& txn, tlm::tlm_dmi& dmi_data)
     {
         sc_dt::uint64 iova = txn.get_address();
+        uint32_t stream_id = extract_stream_id(txn);
         uint32_t substream_id = extract_substream_id(txn);
         bool is_secure = extract_secure(txn);
-        typename smmuv3<BUSWIDTH>::IOMMUTLBEntry te = m_smmu->smmuv3_translate(txn, p_topology_id, substream_id,
+        typename smmuv3<BUSWIDTH>::IOMMUTLBEntry te = m_smmu->smmuv3_translate(txn, stream_id, substream_id,
                                                                                is_secure, false);
 
         if (te.perm == IOMMUAccessFlags::NONE) {
@@ -1107,8 +1121,9 @@ protected:
     }
 
 public:
-    // p_topology_id is the StreamID this TBU stamps onto every incoming transaction (i.e. "I am device N").
+    // p_topology_id is the fixed StreamID and the fallback when no valid requester context is present.
     cci::cci_param<uint32_t> p_topology_id;
+    cci::cci_param<bool> p_requester_id_from_context;
     tlm_utils::simple_target_socket<smmuv3_tbu> upstream_socket; // accepts transactions from the master
     tlm_utils::simple_initiator_socket<smmuv3_tbu>
         downstream_socket; // forwards translated transactions to the interconnect
@@ -1122,6 +1137,7 @@ public:
         : sc_core::sc_module(name)
         , m_smmu(smmu)
         , p_topology_id("topology_id", 0)
+        , p_requester_id_from_context("requester_id_from_context", false)
         , upstream_socket("upstream_socket")
         , downstream_socket("downstream_socket")
     {
@@ -2261,9 +2277,9 @@ typename smmuv3<BUSWIDTH>::IOMMUTLBEntry smmuv3<BUSWIDTH>::smmuv3_translate(tlm:
         return ret;
     }
 
-    ret.translated_addr = req.pa;
     ret.perm = req.prot;
     ret.addr_mask = (1ULL << req.page_size) - 1;
+    ret.translated_addr = req.pa & ~ret.addr_mask;
     ret.descriptor = req.descriptor;
     ret.table_attrs = req.tableattrs;
 
@@ -2345,12 +2361,16 @@ void smmuv3<BUSWIDTH>::iotlb_inv_vmid(uint16_t vmid)
 }
 
 template <unsigned int BUSWIDTH>
-void smmuv3<BUSWIDTH>::iotlb_inv_iova(uint16_t vmid, uint16_t asid, uint64_t iova, uint8_t tg, uint64_t addr_mask)
+void smmuv3<BUSWIDTH>::iotlb_inv_range(int32_t vmid, int32_t asid, uint64_t iova, uint64_t size, uint8_t tg)
 {
-    uint64_t iova_masked = iova & ~addr_mask;
+    uint64_t end = size - 1 > UINT64_MAX - iova ? UINT64_MAX : iova + size - 1;
     for (auto it = m_iotlb.begin(); it != m_iotlb.end();) {
-        uint64_t entry_masked = it->first.iova & ~addr_mask;
-        if (it->first.vmid == vmid && it->first.asid == asid && entry_masked == iova_masked && it->first.tg == tg) {
+        uint64_t entry_end = it->second.addr_mask > UINT64_MAX - it->first.iova
+                                 ? UINT64_MAX
+                                 : it->first.iova + it->second.addr_mask;
+        bool matches = (vmid < 0 || it->first.vmid == vmid) && (asid < 0 || it->first.asid == asid) &&
+                       it->first.tg == tg && it->first.iova <= end && iova <= entry_end;
+        if (matches) {
             m_iotlb_lru.remove(it->first);
             it = m_iotlb.erase(it);
         } else {
@@ -2789,16 +2809,18 @@ constexpr size_t CMD_ASID_OFFSET = 6;
 constexpr size_t CMD_WORD1_OFFSET = 8;
 constexpr size_t CMD_STAG_OFFSET = 4;
 constexpr size_t CMD_RESUME_RESP_OFFSET = 11;
-constexpr uint32_t CMD_WORD0_TG_SHIFT = 10;
-constexpr uint32_t CMD_WORD0_TG_MASK = 0x3;
+constexpr uint32_t CMD_WORD0_NUM_SHIFT = 12;
+constexpr uint32_t CMD_WORD0_NUM_MASK = 0x1F;
 constexpr uint32_t CMD_WORD0_SCALE_SHIFT = 20;
-constexpr uint32_t CMD_WORD0_SCALE_MASK = 0xF;
+constexpr uint32_t CMD_WORD0_SCALE_MASK = 0x1F;
 constexpr uint32_t CMD_WORD0_VMID_SHIFT = 32;
 constexpr uint32_t CMD_WORD0_VMID_MASK = 0xFFFF;
 constexpr uint32_t CMD_WORD0_ASID_SHIFT = 48;
 constexpr uint32_t CMD_WORD0_ASID_MASK = 0xFFFF;
 constexpr uint32_t CMD_SYNC_CS_SHIFT = 12;
 constexpr uint32_t CMD_SYNC_CS_MASK = 0x3;
+constexpr uint32_t CMD_WORD1_TG_SHIFT = 10;
+constexpr uint32_t CMD_WORD1_TG_MASK = 0x3;
 constexpr uint64_t CMD_VA_LOW_MASK = 0xFFFULL;
 
 struct TlbiTgDecode {
@@ -2818,6 +2840,16 @@ inline TlbiTgDecode decode_tlbi_tg(uint8_t tlbi_tg)
     default:
         return { PAGE_SHIFT_4K, CD_TG_4K };
     }
+}
+
+inline uint64_t decode_tlbi_range_size(uint64_t word0, uint8_t tlbi_tg, uint32_t page_shift)
+{
+    if (tlbi_tg == TLBI_TG_DC)
+        return 1ULL << page_shift;
+
+    uint64_t num = (word0 >> CMD_WORD0_NUM_SHIFT) & CMD_WORD0_NUM_MASK;
+    uint8_t scale = (word0 >> CMD_WORD0_SCALE_SHIFT) & CMD_WORD0_SCALE_MASK;
+    return (num + 1) << (page_shift + scale);
 }
 } // namespace detail_smmuv3
 
@@ -2877,14 +2909,14 @@ void smmuv3<BUSWIDTH>::handle_cmd_tlbi_nh_va(const uint8_t* cmd)
 {
     uint64_t word0 = load_le<uint64_t>(cmd);
     uint64_t word1 = load_le<uint64_t>(cmd + detail_smmuv3::CMD_WORD1_OFFSET);
+    uint16_t vmid = (word0 >> detail_smmuv3::CMD_WORD0_VMID_SHIFT) & detail_smmuv3::CMD_WORD0_VMID_MASK;
     uint16_t asid = (word0 >> detail_smmuv3::CMD_WORD0_ASID_SHIFT) & detail_smmuv3::CMD_WORD0_ASID_MASK;
-    uint8_t tlbi_tg = (word0 >> detail_smmuv3::CMD_WORD0_TG_SHIFT) & detail_smmuv3::CMD_WORD0_TG_MASK;
-    uint8_t scale = (word0 >> detail_smmuv3::CMD_WORD0_SCALE_SHIFT) & detail_smmuv3::CMD_WORD0_SCALE_MASK;
+    uint8_t tlbi_tg = (word1 >> detail_smmuv3::CMD_WORD1_TG_SHIFT) & detail_smmuv3::CMD_WORD1_TG_MASK;
     uint64_t va = word1 & ~detail_smmuv3::CMD_VA_LOW_MASK;
 
     detail_smmuv3::TlbiTgDecode tg = detail_smmuv3::decode_tlbi_tg(tlbi_tg);
-    uint64_t mask = safe_shl1_u64(tg.page_shift + scale) - 1;
-    iotlb_inv_iova(0, asid, va, tg.key_tg, mask);
+    uint64_t size = detail_smmuv3::decode_tlbi_range_size(word0, tlbi_tg, tg.page_shift);
+    iotlb_inv_range(vmid, asid, va, size, tg.key_tg);
 }
 
 template <unsigned int BUSWIDTH>
@@ -2892,24 +2924,13 @@ void smmuv3<BUSWIDTH>::handle_cmd_tlbi_nh_vaa(const uint8_t* cmd)
 {
     uint64_t word0 = load_le<uint64_t>(cmd);
     uint64_t word1 = load_le<uint64_t>(cmd + detail_smmuv3::CMD_WORD1_OFFSET);
-    uint8_t tlbi_tg = (word0 >> detail_smmuv3::CMD_WORD0_TG_SHIFT) & detail_smmuv3::CMD_WORD0_TG_MASK;
-    uint8_t scale = (word0 >> detail_smmuv3::CMD_WORD0_SCALE_SHIFT) & detail_smmuv3::CMD_WORD0_SCALE_MASK;
+    uint16_t vmid = (word0 >> detail_smmuv3::CMD_WORD0_VMID_SHIFT) & detail_smmuv3::CMD_WORD0_VMID_MASK;
+    uint8_t tlbi_tg = (word1 >> detail_smmuv3::CMD_WORD1_TG_SHIFT) & detail_smmuv3::CMD_WORD1_TG_MASK;
     uint64_t va = word1 & ~detail_smmuv3::CMD_VA_LOW_MASK;
 
     detail_smmuv3::TlbiTgDecode tg = detail_smmuv3::decode_tlbi_tg(tlbi_tg);
-    uint64_t mask = safe_shl1_u64(tg.page_shift + scale) - 1;
-    uint64_t va_masked = va & ~mask;
-    uint8_t key_tg = tg.key_tg;
-
-    for (auto it = m_iotlb.begin(); it != m_iotlb.end();) {
-        uint64_t entry_masked = it->first.iova & ~mask;
-        if (entry_masked == va_masked && it->first.tg == key_tg) {
-            m_iotlb_lru.remove(it->first);
-            it = m_iotlb.erase(it);
-        } else {
-            ++it;
-        }
-    }
+    uint64_t size = detail_smmuv3::decode_tlbi_range_size(word0, tlbi_tg, tg.page_shift);
+    iotlb_inv_range(vmid, -1, va, size, tg.key_tg);
 }
 
 template <unsigned int BUSWIDTH>
@@ -2950,24 +2971,12 @@ void smmuv3<BUSWIDTH>::handle_cmd_tlbi_s2_ipa(const uint8_t* cmd)
     uint64_t word0 = load_le<uint64_t>(cmd);
     uint64_t word1 = load_le<uint64_t>(cmd + detail_smmuv3::CMD_WORD1_OFFSET);
     uint16_t vmid = (word0 >> detail_smmuv3::CMD_WORD0_VMID_SHIFT) & detail_smmuv3::CMD_WORD0_VMID_MASK;
-    uint8_t tlbi_tg = (word0 >> detail_smmuv3::CMD_WORD0_TG_SHIFT) & detail_smmuv3::CMD_WORD0_TG_MASK;
-    uint8_t scale = (word0 >> detail_smmuv3::CMD_WORD0_SCALE_SHIFT) & detail_smmuv3::CMD_WORD0_SCALE_MASK;
+    uint8_t tlbi_tg = (word1 >> detail_smmuv3::CMD_WORD1_TG_SHIFT) & detail_smmuv3::CMD_WORD1_TG_MASK;
     uint64_t ipa = word1 & IPA_ADDR_MASK;
 
     detail_smmuv3::TlbiTgDecode tg = detail_smmuv3::decode_tlbi_tg(tlbi_tg);
-    uint64_t mask = safe_shl1_u64(tg.page_shift + scale) - 1;
-    uint64_t ipa_masked = ipa & ~mask;
-    uint8_t key_tg = tg.key_tg;
-
-    for (auto it = m_iotlb.begin(); it != m_iotlb.end();) {
-        uint64_t entry_masked = it->first.iova & ~mask;
-        if (it->first.vmid == vmid && entry_masked == ipa_masked && it->first.tg == key_tg) {
-            m_iotlb_lru.remove(it->first);
-            it = m_iotlb.erase(it);
-        } else {
-            ++it;
-        }
-    }
+    uint64_t size = detail_smmuv3::decode_tlbi_range_size(word0, tlbi_tg, tg.page_shift);
+    iotlb_inv_range(vmid, -1, ipa, size, tg.key_tg);
 }
 
 template <unsigned int BUSWIDTH>

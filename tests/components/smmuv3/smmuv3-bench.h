@@ -11,6 +11,7 @@
 #include <tlm>
 #include <tlm_utils/simple_initiator_socket.h>
 #include <cci_configuration>
+#include <limits>
 #include <gs_memory.h>
 #include <router.h>
 #include <ports/target-signal-socket.h>
@@ -270,6 +271,7 @@ public:
         broker.set_preset_cci_value(bench_name + ".main_mem.target_socket.address", cci::cci_value(DRAM_BASE));
         broker.set_preset_cci_value(bench_name + ".main_mem.target_socket.size", cci::cci_value(DRAM_SIZE));
         broker.set_preset_cci_value(bench_name + ".main_mem.target_socket.relative_addresses", cci::cci_value(false));
+        broker.set_preset_cci_value(bench_name + ".tbu.requester_id_from_context", cci::cci_value(true));
         broker.set_preset_cci_value(bench_name + ".tbu1.topology_id", cci::cci_value(1u));
     }
 
@@ -375,7 +377,9 @@ public:
         return value;
     }
 
-    tlm::tlm_response_status tbu_txn(uint64_t iova, bool write, uint32_t data)
+    tlm::tlm_response_status tbu_txn(
+        uint64_t iova, bool write, uint32_t data,
+        uint32_t requester_id = std::numeric_limits<uint32_t>::max())
     {
         tlm::tlm_generic_payload txn;
         txn.set_command(write ? tlm::TLM_WRITE_COMMAND : tlm::TLM_READ_COMMAND);
@@ -387,8 +391,19 @@ public:
         txn.set_byte_enable_length(0);
         txn.set_dmi_allowed(false);
         txn.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
+        RequestContext context;
+        RequestContextTlmExtension context_ext(context);
+        if (requester_id != std::numeric_limits<uint32_t>::max()) {
+            context.requester_id = requester_id;
+            context.requester_valid = true;
+            context_ext.set_context(context);
+            txn.set_extension(&context_ext);
+        }
         sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
         tbu_initiator->b_transport(txn, delay);
+        if (requester_id != std::numeric_limits<uint32_t>::max()) {
+            txn.clear_extension(&context_ext);
+        }
         return txn.get_response_status();
     }
 
