@@ -1,4 +1,7 @@
 add_subdirectory(qemu_gpex)
+add_subdirectory(qemu_pcie_root_port)
+add_subdirectory(qemu_pcie_epc)
+add_subdirectory(qemu_pcie_test_ep)
 add_subdirectory(qemu_xhci)
 add_subdirectory(rtl8139_pci)
 add_subdirectory(e1000e_pci)

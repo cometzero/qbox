@@ -112,6 +112,16 @@ TEST(RequestContext, QemuMemTxAttrsCarryPciRequesterId)
     EXPECT_EQ(attrs.requester_id, 0x8u);
 }
 
+TEST(RequestContext, QemuRequesterIdOverridesFixedIdentity)
+{
+    RequestContext base = make_request_context(0x1100, 1, 0x40, 7);
+    RequestContext context = normalize_qemu_request_context(
+        base, false, false, RequestAccessPath::REGULAR, 0x208);
+
+    EXPECT_TRUE(context.requester_valid);
+    EXPECT_EQ(context.requester_id, 0x208u);
+}
+
 int sc_main(int argc, char** argv)
 {
     ::testing::InitGoogleTest(&argc, argv);

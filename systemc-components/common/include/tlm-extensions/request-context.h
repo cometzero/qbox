@@ -65,9 +65,15 @@ inline RequestContext make_request_context(uint64_t origin_id, uint32_t domain_i
 inline RequestContext normalize_qemu_request_context(const RequestContext& base,
                                                      bool secure,
                                                      bool user,
-                                                     RequestAccessPath access_path)
+                                                     RequestAccessPath access_path,
+                                                     uint32_t requester_id =
+                                                         std::numeric_limits<uint32_t>::max())
 {
     RequestContext context = base;
+    if (requester_id != std::numeric_limits<uint32_t>::max()) {
+        context.requester_id = requester_id;
+        context.requester_valid = true;
+    }
     if (!context.secure_valid) {
         context.secure = secure;
         context.secure_valid = true;

@@ -86,6 +86,7 @@ protected:
     QemuInstance& m_inst;
     QemuInitiatorIface& m_initiator;
     RequestContext m_request_context;
+    bool m_requester_id_from_qemu = false;
     qemu::Device m_dev;
     gs::runonsysc m_on_sysc;
     int reentrancy = 0;
@@ -671,18 +672,20 @@ protected:
          * b_transport).
          */
         trans.set_address(addr);
-        check_qemu_mr_hint(trans);
-        if (trans.is_dmi_allowed()) {
-            RequestContextTlmExtension* context_ext = nullptr;
-            trans.get_extension(context_ext);
-            RequestAccessPath previous_path = RequestAccessPath::UNKNOWN;
-            if (context_ext != nullptr) {
-                previous_path = context_ext->get_context().access_path;
-                context_ext->set_access_path(RequestAccessPath::DMI);
-            }
-            check_dmi_hint_locked(trans);
-            if (context_ext != nullptr) {
-                context_ext->set_access_path(previous_path);
+        if (!m_requester_id_from_qemu) {
+            check_qemu_mr_hint(trans);
+            if (trans.is_dmi_allowed()) {
+                RequestContextTlmExtension* context_ext = nullptr;
+                trans.get_extension(context_ext);
+                RequestAccessPath previous_path = RequestAccessPath::UNKNOWN;
+                if (context_ext != nullptr) {
+                    previous_path = context_ext->get_context().access_path;
+                    context_ext->set_access_path(RequestAccessPath::DMI);
+                }
+                check_dmi_hint_locked(trans);
+                if (context_ext != nullptr) {
+                    context_ext->set_access_path(previous_path);
+                }
             }
         }
 
@@ -715,7 +718,10 @@ protected:
         RequestContextTlmExtension context_ext(
             normalize_qemu_request_context(m_request_context, attrs.secure,
                                            attrs.user,
-                                           RequestAccessPath::REGULAR));
+                                           RequestAccessPath::REGULAR,
+                                           m_requester_id_from_qemu
+                                               ? attrs.requester_id
+                                               : std::numeric_limits<uint32_t>::max()));
         trans.set_extension(&attrs_ext);
         trans.set_extension(&context_ext);
 
@@ -782,6 +788,7 @@ protected:
 public:
     void set_request_context(const RequestContext& context) { m_request_context = context; }
     const RequestContext& get_request_context() const { return m_request_context; }
+    void set_requester_id_from_qemu(bool enable) { m_requester_id_from_qemu = enable; }
 
     MemTxResult qemu_io_read(uint64_t addr, uint64_t* val, unsigned int size, MemTxAttrs attrs)
     {

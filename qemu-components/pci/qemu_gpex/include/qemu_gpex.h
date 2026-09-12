@@ -29,12 +29,15 @@
  * This class wraps the qemu's GPEX: Generic Pci EXpress
  * It is a bridge to add a PCIE bus system onto a normal memory bus.
  */
+class qemu_pcie_root_port;
+
 class qemu_gpex : public QemuDevice, public QemuInitiatorIface
 {
 public:
     class Device : public QemuDevice
     {
         friend qemu_gpex;
+        friend qemu_pcie_root_port;
 
     public:
         Device(const sc_core::sc_module_name& name, QemuInstance& inst, const char* qom_type)
@@ -100,6 +103,7 @@ protected:
     cci::cci_param<uint32_t> p_requester_id;
     cci::cci_param<uint32_t> p_request_substream_id;
     cci::cci_param<uint32_t> p_request_capabilities;
+    cci::cci_param<bool> p_pci_requester_id;
 
     qemu::MemoryRegion m_mmio_alias;
     qemu::MemoryRegion m_mmio_high_alias;
@@ -130,6 +134,7 @@ public:
         , p_requester_id("requester_id", std::numeric_limits<uint32_t>::max(), "Request SID or requester ID")
         , p_request_substream_id("request_substream_id", std::numeric_limits<uint32_t>::max(), "Request SSID")
         , p_request_capabilities("request_capabilities", REQUEST_CONTEXT_CAP_NONE, "Request capability flags")
+        , p_pci_requester_id("pci_requester_id", false, "Use PCI requester IDs for bus-master accesses")
         , devices()
     {
         sc_assert(p_mmio_addr != 0);
@@ -147,9 +152,13 @@ public:
     {
         QemuDevice::before_end_of_elaboration();
 
+        if (p_pci_requester_id) {
+            m_dev.set_prop_bool("x-pci-requester-id", true);
+        }
         bus_master.set_request_context(make_request_context(
             p_request_origin_id, p_request_domain_id, p_requester_id,
             p_request_substream_id, p_request_capabilities));
+        bus_master.set_requester_id_from_qemu(p_pci_requester_id);
         bus_master.init(m_dev, "bus-master");
     }
 
