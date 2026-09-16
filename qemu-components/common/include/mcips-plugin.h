@@ -23,7 +23,7 @@ class McipsPlugin : public LibQemuPlugin
     SC_HAS_PROCESS(McipsPlugin);
 
 private:
-    enum vCPUTimeStatus { IDLE, PAUSED, RUNNING };
+    enum vCPUTimeStatus { IDLE, PAUSED, RUNNING, TLM_WAIT, TLM_READY, WAKE_PENDING };
 
     struct vCPUTime {
         uint64_t index;
@@ -31,6 +31,11 @@ private:
         uint64_t delta_insn;
         sc_core::sc_time cpu_time;
         vCPUTimeStatus cpu_execution_status;
+        unsigned int tlm_wait_depth;
+        bool tlm_was_paused;
+        sc_core::sc_time wake_time;
+        bool initialized;
+        bool reset_held;
     };
 
     uint64_t m_global_quantum; // quantum in nanoseconds; used as the instruction count limit
@@ -54,8 +59,10 @@ private:
     /* Counts in-flight receive_window_cb() calls; shutdown waits for zero. */
     std::atomic<int> m_inflight_cb{ 0 };
 
-    /* Protects shared state across vCPU and SystemC threads. */
-    std::mutex m_mcips_mutex;
+    /* Native pause/resume synchronously kicks the CPU and re-enters
+     * vcpu_kick(). That hook only reserves time, never takes BQL or resumes
+     * QEMU, so the existing scheduler calls require a recursive lock. */
+    std::recursive_mutex m_mcips_mutex;
 
     /* Fires a SystemC event to keep time moving when all CPUs are idle (the "idle pump"),
      * and doubles as the iothread-livelock watchdog kick. Notified by vcpu_idle() and
@@ -98,13 +105,13 @@ public:
      */
     void idle_tick_method()
     {
-        std::unique_lock<std::mutex> lock(m_mcips_mutex);
+        std::unique_lock<std::recursive_mutex> lock(m_mcips_mutex);
 
         // Watchdog recovery: kicked by get_qemu_clock when m_qemu_time has been frozen >1s wall.
         // If qemu_time hasn't advanced since the last tick, bump it by one quantum so the iothread's
         // next gt_recalc_timer reads a fresh deadline and its ppoll goes back to sleep.
         auto* active = m_active_vcpu.load(std::memory_order_relaxed);
-        if (active) {
+        if (active && active->cpu_execution_status != WAKE_PENDING) {
             const sc_core::sc_time current_qemu_time = qemu_time_now(active);
             if (current_qemu_time == m_wd_last_tick_qemu_time && m_quantum > sc_core::SC_ZERO_TIME) {
                 m_qemu_time += m_quantum;
@@ -280,7 +287,8 @@ public:
     sc_core::sc_time cpu_time_now(const vCPUTime* vcpu)
     {
         sc_assert(vcpu && "cpu_time_now called with null vCPU");
-        if (vcpu->cpu_execution_status == IDLE) {
+        if (vcpu->cpu_execution_status == IDLE || vcpu->cpu_execution_status == TLM_WAIT ||
+            vcpu->cpu_execution_status == TLM_READY || vcpu->cpu_execution_status == WAKE_PENDING) {
             return vcpu->cpu_time;
         }
         return vcpu->cpu_time + cpu_delta_time(vcpu);
@@ -309,7 +317,7 @@ public:
 
         for (int i = 0; i < m_num_vcpus; i++) {
             auto* vcpu = get_vcpu(i);
-            if (vcpu->cpu_execution_status == IDLE) continue;
+            if (vcpu->cpu_execution_status == IDLE || vcpu->cpu_execution_status == TLM_WAIT) continue;
 
             const sc_core::sc_time current_cpu_time = cpu_time_now(vcpu);
             if (!slowest_cpu || current_cpu_time < min_time) {
@@ -329,7 +337,7 @@ public:
     {
         for (int i = 0; i < m_num_vcpus; i++) {
             vCPUTime* vcpu = get_vcpu(i);
-            if (vcpu->cpu_execution_status != IDLE) {
+            if (vcpu->cpu_execution_status != IDLE && vcpu->cpu_execution_status != TLM_WAIT) {
                 m_active_vcpu.store(vcpu, std::memory_order_release);
                 SCP_DEBUG(()) << "cpu_" << vcpu->index << " is the new active cpu";
                 return vcpu;
@@ -434,7 +442,14 @@ public:
                 SCP_DEBUG(()) << "set_systemc_window::qemu_cpu_time_now = " << current_qemu_time
                               << ", sc_current_window.from= " << sc_current_window.from
                               << ", sc_current_window.to= " << sc_current_window.to;
-                m_sync_sc.async_set_window({ current_qemu_time, (current_qemu_time + m_quantum) });
+                auto limit = current_qemu_time + m_quantum;
+                for (int i = 0; i < m_num_vcpus; ++i) {
+                    const auto* vcpu = get_vcpu(i);
+                    if (vcpu->cpu_execution_status == WAKE_PENDING) {
+                        limit = std::min(limit, vcpu->wake_time + m_quantum);
+                    }
+                }
+                m_sync_sc.async_set_window({ std::min(current_qemu_time, limit), limit });
             }
         } else {
             SCP_INFO(()) << "set_systemc_window: window not attached, skipping async_set_window()";
@@ -458,7 +473,7 @@ public:
             return;
         }
 
-        std::lock_guard<std::mutex> lock(m_mcips_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mcips_mutex);
         sc_current_window = sc_w;
 
         auto* active = m_active_vcpu.load(std::memory_order_relaxed);
@@ -485,10 +500,11 @@ public:
         m_inflight_cb.fetch_sub(1, std::memory_order_seq_cst);
     }
 
-    /** @brief Called under BQL before simulation starts; does not hold m_mcips_mutex. */
+    /** @brief Called under BQL; serialize slot initialization against early kicks. */
     void vcpu_init(unsigned int cpu_index)
     {
         if (m_shutdown.load(std::memory_order_acquire)) return;
+        std::lock_guard<std::recursive_mutex> lock(m_mcips_mutex);
 
         const int current = m_inst.plugin_api().qemu_plugin_num_vcpus();
         if (current > m_num_vcpus) m_num_vcpus = current;
@@ -500,9 +516,12 @@ public:
         }
         vcpu->delta_insn = 0;
         vcpu->cpu_time = sc_core::SC_ZERO_TIME;
-        vcpu->cpu_execution_status = RUNNING;
+        vcpu->cpu_execution_status = vcpu->reset_held ? IDLE : RUNNING;
+        vcpu->tlm_wait_depth = 0;
+        vcpu->tlm_was_paused = false;
+        vcpu->initialized = true;
 
-        if (m_active_vcpu.load(std::memory_order_relaxed) == nullptr) {
+        if (!vcpu->reset_held && m_active_vcpu.load(std::memory_order_relaxed) == nullptr) {
             m_active_vcpu.store(vcpu, std::memory_order_release);
         }
 
@@ -516,8 +535,15 @@ public:
      */
     void cpu_end_delta_quota(vCPUTime* vcpu)
     {
-        std::lock_guard<std::mutex> lock(m_mcips_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mcips_mutex);
 
+        if (vcpu->cpu_execution_status == WAKE_PENDING) {
+            // QEMU reports resume only if its event loop actually slept.
+            // A kick racing that loop can therefore leave a running CPU
+            // pending. Reaching a real instruction quota is authoritative
+            // wake acknowledgement; retire that count normally below.
+            vcpu->cpu_execution_status = RUNNING;
+        }
         if (vcpu->cpu_execution_status != RUNNING) {
             return;
         }
@@ -545,7 +571,7 @@ public:
         if (m_shutdown.load(std::memory_order_acquire)) return;
 
         vCPUTime* vcpu = get_vcpu(cpu_index);
-        if (vcpu->cpu_execution_status != RUNNING) {
+        if (vcpu->cpu_execution_status != RUNNING && vcpu->cpu_execution_status != WAKE_PENDING) {
             return;
         }
 
@@ -574,6 +600,134 @@ public:
             QEMU_PLUGIN_CB_NO_REGS, QEMU_PLUGIN_COND_GE, delta_insn, m_global_quantum, handle_as_userdata());
     }
 
+    /*
+     * A synchronous TLM call stops this CPU from executing instructions but
+     * may need SystemC time to complete. It must not remain the clock driver
+     * or the slowest-running-CPU barrier while waiting. These hooks run on
+     * the initiating QEMU thread with BQL held, not on the SystemC thread.
+     */
+    void vcpu_tlm_begin(unsigned int cpu_index)
+    {
+        if (m_shutdown.load(std::memory_order_acquire)) return;
+        std::lock_guard<std::recursive_mutex> lock(m_mcips_mutex);
+        auto* vcpu = get_vcpu(cpu_index);
+        if (vcpu->tlm_wait_depth++ != 0) return;
+
+        vcpu->tlm_was_paused = vcpu->cpu_execution_status == PAUSED;
+        const sc_core::sc_time delta = cpu_delta_time(vcpu);
+        const bool was_active = m_active_vcpu.load(std::memory_order_relaxed) == vcpu;
+        if (was_active) {
+            m_qemu_time += delta;
+            sync_qemu_time_ns();
+        }
+        vcpu->cpu_time += delta;
+        vcpu->delta_insn = 0;
+        vcpu->cpu_execution_status = TLM_WAIT;
+
+        if (was_active) {
+            auto* next = select_active_vcpu();
+            if (next) {
+                // Preserve the replacement CPU's in-flight instruction count.
+                // Rebase the shared clock instead of clearing another CPU's
+                // scoreboard while its thread can still be executing.
+                // Use one snapshot: the other CPU can increment its counter
+                // even while m_mcips_mutex is held by this CPU.
+                const auto next_delta = (next->cpu_execution_status == TLM_READY ||
+                                         next->cpu_execution_status == WAKE_PENDING)
+                                            ? sc_core::SC_ZERO_TIME
+                                            : cpu_delta_time(next);
+                const auto now = std::max(m_qemu_time, next->cpu_time + next_delta);
+                m_qemu_time = now - next_delta;
+                next->cpu_time = m_qemu_time;
+                sync_qemu_time_ns();
+                if (next->cpu_execution_status == PAUSED) {
+                    next->cpu_execution_status = RUNNING;
+                    m_inst.plugin_api().qemu_plugin_cpu_resume(static_cast<unsigned int>(next->index));
+                }
+            }
+        }
+        rebalance_and_sync();
+    }
+
+    sc_core::sc_time vcpu_local_time(unsigned int cpu_index, const sc_core::sc_time& now)
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_mcips_mutex);
+        const auto time = cpu_time_now(get_vcpu(cpu_index));
+        return time > now ? time - now : sc_core::SC_ZERO_TIME;
+    }
+
+    // Runs on SystemC before publishing completion to the QEMU thread. A
+    // completed CPU must constrain time even while its host thread is waking.
+    // Do not call QEMU resume here: the transport caller still owns that handoff.
+    void vcpu_tlm_complete(unsigned int cpu_index, const sc_core::sc_time& completion)
+    {
+        if (m_shutdown.load(std::memory_order_acquire)) return;
+        std::lock_guard<std::recursive_mutex> lock(m_mcips_mutex);
+        auto* vcpu = get_vcpu(cpu_index);
+        if (vcpu->tlm_wait_depth != 1) return;
+        vcpu->cpu_time = std::max(completion, vcpu->cpu_time);
+        vcpu->cpu_execution_status = TLM_READY;
+        if (!m_active_vcpu.load(std::memory_order_relaxed)) {
+            m_qemu_time = vcpu->cpu_time;
+            sync_qemu_time_ns();
+            m_active_vcpu.store(vcpu, std::memory_order_release);
+            attach_sync_window();
+        }
+        const auto now = sc_core::sc_time_stamp();
+        sc_current_window = { now, now + m_quantum };
+        set_systemc_window();
+    }
+
+    void vcpu_tlm_end(unsigned int cpu_index, const sc_core::sc_time& completion)
+    {
+        if (m_shutdown.load(std::memory_order_acquire)) return;
+        std::lock_guard<std::recursive_mutex> lock(m_mcips_mutex);
+        auto* vcpu = get_vcpu(cpu_index);
+        sc_assert(vcpu->tlm_wait_depth != 0);
+        if (--vcpu->tlm_wait_depth != 0) return;
+
+        vcpu->cpu_time = std::max(completion, vcpu->cpu_time);
+        vcpu->cpu_execution_status = RUNNING;
+        if (!m_active_vcpu.load(std::memory_order_relaxed)) {
+            m_qemu_time = vcpu->cpu_time;
+            sync_qemu_time_ns();
+            m_active_vcpu.store(vcpu, std::memory_order_release);
+            attach_sync_window();
+        }
+        if (vcpu->tlm_was_paused) {
+            // Cancel only a pause already requested by MCIPS before entry.
+            m_inst.plugin_api().qemu_plugin_cpu_resume(cpu_index);
+            vcpu->tlm_was_paused = false;
+        }
+        rebalance_and_sync(vcpu);
+    }
+
+    // Called synchronously before QEMU wakes its host thread. Do not acquire
+    // BQL or call native pause/resume here: kicks also originate without BQL
+    // and can re-enter from this plugin's own scheduler. A pending wake is a
+    // time barrier, not evidence that any guest instructions have executed.
+    void vcpu_kick(unsigned int cpu_index)
+    {
+        if (m_shutdown.load(std::memory_order_acquire)) return;
+        std::lock_guard<std::recursive_mutex> lock(m_mcips_mutex);
+        if (!m_first_vcpu_initialized.load(std::memory_order_acquire) ||
+            cpu_index >= static_cast<unsigned int>(m_num_vcpus)) return;
+        auto* vcpu = get_vcpu(cpu_index);
+        if (!vcpu->initialized || vcpu->reset_held || vcpu->cpu_execution_status != IDLE) return;
+
+        vcpu->wake_time = sc_core::sc_time_stamp();
+        vcpu->cpu_time = std::max(vcpu->cpu_time, vcpu->wake_time);
+        vcpu->cpu_execution_status = WAKE_PENDING;
+        if (!m_active_vcpu.load(std::memory_order_relaxed)) {
+            m_qemu_time = std::max(m_qemu_time, vcpu->cpu_time);
+            vcpu->cpu_time = m_qemu_time;
+            sync_qemu_time_ns();
+            m_active_vcpu.store(vcpu, std::memory_order_release);
+            attach_sync_window();
+        }
+        set_systemc_window();
+    }
+
     /**
      * @brief Called when a CPU goes idle (QEMU holds BQL; we additionally take m_mcips_mutex).
      *
@@ -584,11 +738,18 @@ public:
     {
         if (m_shutdown.load(std::memory_order_acquire)) return;
 
-        std::lock_guard<std::mutex> lock(m_mcips_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mcips_mutex);
         SCP_DEBUG(()) << "vcpu_idle callback for cpu_" << cpu_index;
         vCPUTime* vcpu = get_vcpu(cpu_index);
 
+        // Architectural reset overrides a scheduler pause. A reset-held CPU
+        // cannot service a grant and must not remain a selectable timekeeper.
+        if (vcpu->reset_held && vcpu->cpu_execution_status == PAUSED) {
+            vcpu->cpu_execution_status = RUNNING;
+        }
+
         switch (vcpu->cpu_execution_status) {
+        case WAKE_PENDING: // A kick without guest work was acknowledged by the sleep loop.
         case RUNNING: {
             SCP_DEBUG(()) << "cpu_" << cpu_index << " RUNNING → IDLE";
             vcpu->cpu_execution_status = IDLE;
@@ -611,8 +772,16 @@ public:
                     }
                     detach_sync_window();
                 } else {
+                    // Like the TLM handoff, preserve another running CPU's
+                    // in-flight counter and rebase using a single snapshot.
+                    const auto next_delta = (new_active->cpu_execution_status == TLM_READY ||
+                                             new_active->cpu_execution_status == WAKE_PENDING)
+                                                ? sc_core::SC_ZERO_TIME
+                                                : cpu_delta_time(new_active);
+                    const auto now = std::max(m_qemu_time, new_active->cpu_time + next_delta);
+                    m_qemu_time = now - next_delta;
                     new_active->cpu_time = m_qemu_time;
-                    new_active->delta_insn = 0;
+                    sync_qemu_time_ns();
 
                     if (new_active->cpu_execution_status == PAUSED) {
                         new_active->cpu_execution_status = RUNNING;
@@ -632,11 +801,28 @@ public:
             SCP_DEBUG(()) << "vcpu_idle: cpu_" << cpu_index << " already IDLE";
             break;
 
+        case TLM_WAIT:
+        case TLM_READY:
+            // A pending plugin pause may be observed during the transport.
+            break;
+
         default:
             SCP_FATAL(()) << "vcpu_idle: invalid execution status for cpu_" << cpu_index;
             sc_assert(false);
             break;
         }
+    }
+
+    // Assertion is called only after native reset has quiesced execution.
+    // Release permits a subsequent native wake/exec-entry acknowledgement;
+    // it does not itself invent progress or finish an outstanding transport.
+    void vcpu_reset(unsigned int cpu_index, bool held)
+    {
+        if (m_shutdown.load(std::memory_order_acquire)) return;
+        std::lock_guard<std::recursive_mutex> lock(m_mcips_mutex);
+        auto* vcpu = get_vcpu(cpu_index);
+        vcpu->reset_held = held;
+        if (held && vcpu->initialized) vcpu_idle(cpu_index);
     }
 
     /**
@@ -651,11 +837,18 @@ public:
     {
         if (m_shutdown.load(std::memory_order_acquire)) return;
 
-        std::lock_guard<std::mutex> lock(m_mcips_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mcips_mutex);
         SCP_DEBUG(()) << "vcpu_resume callback for cpu_" << cpu_index;
         vCPUTime* vcpu = get_vcpu(cpu_index);
+        if (vcpu->reset_held) return;
 
         switch (vcpu->cpu_execution_status) {
+        case WAKE_PENDING:
+            // Retain the IRQ-time reservation and zero retired instruction
+            // count. Host scheduling delay must not become guest CPU time.
+            vcpu->cpu_execution_status = RUNNING;
+            rebalance_and_sync(vcpu);
+            break;
         case IDLE: {
             SCP_DEBUG(()) << "cpu_" << cpu_index << " IDLE → RUNNING";
             vcpu->cpu_execution_status = RUNNING;
@@ -697,6 +890,11 @@ public:
         }
         case RUNNING:
             SCP_DEBUG(()) << "vcpu_resume: cpu_" << cpu_index << " already RUNNING";
+            break;
+
+        case TLM_WAIT:
+        case TLM_READY:
+            // An external kick does not finish the synchronous transport.
             break;
 
         default:

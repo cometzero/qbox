@@ -95,6 +95,11 @@ void Cpu::set_end_of_loop_callback(Cpu::EndOfLoopCallbackFn cb)
     m_int->get_cpu_end_of_loop_cb().register_cb(*this, cb);
 }
 
+void Cpu::set_exec_entry_callback(Cpu::EndOfLoopCallbackFn cb)
+{
+    m_int->get_cpu_exec_entry_cb().register_cb(*this, cb);
+}
+
 void Cpu::set_kick_callback(Cpu::CpuKickCallbackFn cb) { m_int->get_cpu_kick_cb().register_cb(*this, cb); }
 
 void Cpu::add_pc_entry_watch(uintptr_t pc) { m_int->exports().add_cpu_pc_entry_watch(pc); }

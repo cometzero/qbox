@@ -746,6 +746,8 @@ public:
     void tlb_flush_all_cpus();
 
     void set_end_of_loop_callback(EndOfLoopCallbackFn cb);
+    // Called on the vCPU thread with BQL held immediately before TCG entry.
+    void set_exec_entry_callback(EndOfLoopCallbackFn cb);
     void set_pc_entry_callback(PcEntryCallbackFn cb);
     void clear_pc_entry_callback();
     void add_pc_entry_watch(uintptr_t pc);

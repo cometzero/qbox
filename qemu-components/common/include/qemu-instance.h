@@ -10,9 +10,11 @@
 #define LIBQBOX_QEMU_INSTANCE_H_
 
 #include <cassert>
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
+#include <limits>
 #include <sstream>
 #include <systemc>
 #include <thread>
@@ -120,6 +122,28 @@ private:
     std::vector<QemuInstance*> m_global_debug_paused_instances;
 
     bool m_running = false;
+    std::atomic<bool> m_freerunning_epoch_ready{false};
+    int64_t m_freerunning_epoch_offset_ns = 0;
+
+    bool uses_freerunning_epoch() const
+    {
+        return !p_icount.get_value() && !m_mcips_plugin &&
+               p_sync_policy.get_value() == "multithread-freerunning";
+    }
+
+    void establish_freerunning_epoch()
+    {
+        // Called under this instance's BQL, on its first VM-running event.
+        // Sample only the affine offset: subsequent pause/resume must keep
+        // using QEMU's paused virtual clock, not elapsed host wall time.
+        if (m_freerunning_epoch_ready.load(std::memory_order_acquire)) return;
+        const int64_t before = gs::freerunning_epoch_time_ns();
+        const int64_t raw = m_inst.get_virtual_clock();
+        const int64_t after = gs::freerunning_epoch_time_ns();
+        m_freerunning_epoch_offset_ns = before + (after - before) / 2 - raw;
+        m_freerunning_epoch_ready.store(true, std::memory_order_release);
+    }
+
     SCP_LOGGER();
 
     static void register_debug_instance(QemuInstance* instance);
@@ -350,6 +374,7 @@ public:
         : QemuInstance(n, get_loader(o), strtotarget(arch))
     {
     }
+    bool uses_icount() const { return p_icount.get_value(); }
     QemuInstance(const sc_core::sc_module_name& n, sc_core::sc_object* o, Target t): QemuInstance(n, get_loader(o), t)
     {
     }
@@ -423,6 +448,31 @@ public:
     bool manages_start_in_reset_release() const
     {
         return p_managed_start_in_reset_release.get_value();
+    }
+
+    // Before the first VM start, and for other timing policies, leave the
+    // original clock unchanged. Normal vCPU execution starts only after the
+    // VM-running callback has published the offset.
+    int64_t normalize_virtual_clock_ns(int64_t raw) const
+    {
+        if (!m_freerunning_epoch_ready.load(std::memory_order_acquire)) return raw;
+        const int64_t offset = m_freerunning_epoch_offset_ns;
+        if (offset > 0 && raw > std::numeric_limits<int64_t>::max() - offset)
+            return std::numeric_limits<int64_t>::max();
+        if (offset < 0 && raw < -offset) return 0;
+        return raw + offset;
+    }
+
+    // Inverse conversion for dedicated native progress timers. Existing
+    // QEMU periodic timers and architectural timer registers remain raw.
+    int64_t denormalize_virtual_clock_ns(int64_t mapped) const
+    {
+        if (!m_freerunning_epoch_ready.load(std::memory_order_acquire)) return mapped;
+        const int64_t offset = m_freerunning_epoch_offset_ns;
+        if (offset > 0 && mapped < offset) return 0;
+        if (offset < 0 && mapped > std::numeric_limits<int64_t>::max() + offset)
+            return std::numeric_limits<int64_t>::max();
+        return mapped - offset;
     }
 
     /**
@@ -620,7 +670,30 @@ private:
             init(); // dlsyms libqemu_init; plugin functions are part of the returned LibQemuExports table.
         }
     }
-    void start_of_simulation(void) override { get().finish_qemu_init(); }
+    void start_of_simulation(void) override
+    {
+        auto& instance = get();
+        if (uses_freerunning_epoch()) {
+            gs::initialize_freerunning_epoch();
+            // finish_qemu_init invokes qmp_cont -> cpu_enable_ticks ->
+            // vm_state_notify before resume_all_vcpus. Publish the mapping
+            // there, rather than racing running CPUs after finish returns.
+            instance.set_vm_state_callback([this](bool running) {
+                if (running) establish_freerunning_epoch();
+                global_debug_vm_state_changed(running);
+            });
+        }
+        instance.finish_qemu_init();
+        if (uses_freerunning_epoch() &&
+            !m_freerunning_epoch_ready.load(std::memory_order_acquire) &&
+            instance.vm_is_running()) {
+            // Defensive fallback for an already-running instance. The normal
+            // path above initializes before any native CPU is resumed.
+            instance.lock_iothread();
+            establish_freerunning_epoch();
+            instance.unlock_iothread();
+        }
+    }
 
     void reset_cb(const bool val)
     {
