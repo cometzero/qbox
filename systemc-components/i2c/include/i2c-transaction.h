@@ -6,6 +6,10 @@
 #include <tlm>
 
 struct dw_i2c_extension : tlm::tlm_extension<dw_i2c_extension> {
+    // Control events carry no data and never modify device registers.
+    enum class event { data, discover, start, restart, address, read_ack, stop, cancel };
+    event phase = event::data;
+    bool ack = true;
     bool restart = false;
     bool stop = false;
 

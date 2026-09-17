@@ -160,6 +160,9 @@ private:
     void drive_irq();
     void drive_dma();
     void reset_controller();
+    void cancel_bus();
+    void read_ack(bool ack);
+    bool m_read_pending = false;
     void transfer_thread();
     void execute_command(uint16_t command);
     void abort_transfer(uint32_t source);
@@ -175,6 +178,8 @@ public:
     cci::cci_param<uint32_t> p_address_width;
     cci::cci_param<uint32_t> p_page_size;
     cci::cci_param<sc_core::sc_time> p_access_latency;
+    cci::cci_param<sc_core::sc_time> p_write_cycle;
+    cci::cci_param<bool> p_write_protect;
 
     tlm_utils::simple_target_socket<dw_i2c_eeprom, DEFAULT_TLM_BUSWIDTH> i2c_socket;
     TargetSignalSocket<bool> reset;
@@ -187,6 +192,11 @@ private:
     uint32_t m_page_base = 0;
     bool m_transaction_active = false;
     bool m_expect_address = true;
+    unsigned m_address_bytes = 0;
+    uint32_t m_address_value = 0;
+    std::vector<std::pair<uint32_t, uint8_t>> m_pending;
+    sc_core::sc_time m_busy_until = sc_core::SC_ZERO_TIME;
+    void finish_write();
 
     void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay);
     void reset_transaction();

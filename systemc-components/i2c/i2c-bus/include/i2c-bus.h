@@ -3,7 +3,10 @@
 #ifndef QBOX_I2C_BUS_H
 #define QBOX_I2C_BUS_H
 
+#include <array>
+#include <cci_configuration>
 #include <systemc>
+#include "i2c-transaction.h"
 #include <tlm>
 #include <tlm_utils/multi_passthrough_initiator_socket.h>
 #include <tlm_utils/simple_target_socket.h>
@@ -14,12 +17,21 @@
 class i2c_bus : public sc_core::sc_module
 {
 public:
+    cci::cci_param<bool> p_trace;
     tlm_utils::simple_target_socket<i2c_bus, DEFAULT_TLM_BUSWIDTH> target_socket;
     tlm_utils::multi_passthrough_initiator_socket<i2c_bus, DEFAULT_TLM_BUSWIDTH> initiator_socket;
 
     explicit i2c_bus(sc_core::sc_module_name name);
 
 private:
+    std::array<int, 128> m_routes;
+    int m_selected = -1;
+    uint64_t m_address = 0;
+    tlm::tlm_command m_direction = tlm::TLM_IGNORE_COMMAND;
+    bool m_active = false;
+    void start_of_simulation() override;
+    void trace(const char* phase, uint64_t address, int value = -1);
+    void broadcast(dw_i2c_extension::event phase);
     void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay);
 };
 

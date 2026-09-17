@@ -78,6 +78,8 @@ tps6594::tps6594(sc_core::sc_module_name name)
 
 void tps6594::before_end_of_elaboration()
 {
+    if (p_address.get_value() < 0x08 || p_address.get_value() > 0x77 - (NUM_PAGES - 1))
+        SC_REPORT_FATAL(this->name(), "Invalid I2C target address/alias range");
     if (!int_n.get_interface()) int_n.bind(m_irq_stub);
     for (unsigned int pin = 0; pin < NUM_GPIOS; ++pin) {
         if (!gpio_out[pin].get_interface()) gpio_out[pin].bind(m_gpio_output_stubs[pin]);
@@ -92,6 +94,23 @@ void tps6594::before_end_of_elaboration()
 void tps6594::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)
 {
     trans.set_dmi_allowed(false);
+    auto* control = trans.get_extension<dw_i2c_extension>();
+    if (control && control->phase != dw_i2c_extension::event::data) {
+        using event = dw_i2c_extension::event;
+        if (control->phase == event::discover || control->phase == event::address) {
+            const bool addressed = trans.get_address() >= p_address.get_value() &&
+                                   trans.get_address() < p_address.get_value() + NUM_PAGES;
+            trans.set_response_status(addressed ? tlm::TLM_OK_RESPONSE : tlm::TLM_ADDRESS_ERROR_RESPONSE);
+        } else {
+            if (control->phase != event::read_ack) {
+                m_transaction_active = false;
+                m_expect_register = true;
+            }
+            trans.set_response_status(tlm::TLM_OK_RESPONSE);
+        }
+        return;
+    }
+
     if (!trans.get_data_ptr()) {
         trans.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);
         return;

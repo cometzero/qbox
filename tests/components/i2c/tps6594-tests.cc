@@ -25,10 +25,8 @@ protected:
     sc_core::sc_signal<bool> int_n;
     sc_core::sc_signal<bool> gpio0_oe;
     sc_core::sc_signal<bool> gpio8_oe;
-    sc_core::sc_signal<bool> buck1_enabled;
-    sc_core::sc_signal<bool> ldo1_enabled;
-    sc_core::sc_signal<uint32_t> buck1_uv;
-    sc_core::sc_signal<uint32_t> ldo1_uv;
+    sc_core::sc_vector<sc_core::sc_signal<bool>> rail_enabled;
+    sc_core::sc_vector<sc_core::sc_signal<uint32_t>> rail_uv;
 
     explicit Tps6594Bench(const sc_core::sc_module_name& name)
         : TestBench(name)
@@ -39,10 +37,8 @@ protected:
         , int_n("int_n")
         , gpio0_oe("gpio0_oe")
         , gpio8_oe("gpio8_oe")
-        , buck1_enabled("buck1_enabled")
-        , ldo1_enabled("ldo1_enabled")
-        , buck1_uv("buck1_uv")
-        , ldo1_uv("ldo1_uv")
+        , rail_enabled("rail_enabled", tps6594::NUM_RAILS)
+        , rail_uv("rail_uv", tps6594::NUM_RAILS)
     {
         master.bind(bus.target_socket);
         bus.initiator_socket.bind(eeprom.i2c_socket);
@@ -52,10 +48,10 @@ protected:
         pmic.gpio_out[8].bind(pmic.gpio_in[9]);
         pmic.gpio_oe[0].bind(gpio0_oe);
         pmic.gpio_oe[8].bind(gpio8_oe);
-        pmic.rail_enabled[0].bind(buck1_enabled);
-        pmic.rail_enabled[5].bind(ldo1_enabled);
-        pmic.rail_voltage_uv[0].bind(buck1_uv);
-        pmic.rail_voltage_uv[5].bind(ldo1_uv);
+        for (unsigned rail = 0; rail < tps6594::NUM_RAILS; ++rail) {
+            pmic.rail_enabled[rail].bind(rail_enabled[rail]);
+            pmic.rail_voltage_uv[rail].bind(rail_uv[rail]);
+        }
     }
 
     tlm::tlm_response_status byte(uint8_t address, tlm::tlm_command command, uint8_t& data, bool restart, bool stop)
@@ -119,22 +115,37 @@ TEST_BENCH(Tps6594Bench, PagesIdentityAndRails)
 
     write_reg(tps6594::BUCK1_VOUT_1, 0x73);
     write_reg(tps6594::BUCK1_CTRL, 0x23);
-    EXPECT_TRUE(buck1_enabled.read());
-    EXPECT_EQ(buck1_uv.read(), 1100000U);
+    EXPECT_TRUE(rail_enabled[0].read());
+    EXPECT_EQ(rail_uv[0].read(), 1100000U);
     write_reg(tps6594::LDO1_CTRL, 0x61);
-    EXPECT_TRUE(ldo1_enabled.read());
-    EXPECT_EQ(ldo1_uv.read(), 600000U);
+    EXPECT_TRUE(rail_enabled[5].read());
+    EXPECT_EQ(rail_uv[5].read(), 600000U);
     write_reg(tps6594::LDO1_VOUT, 0x38);
-    EXPECT_EQ(ldo1_uv.read(), 1800000U);
+    EXPECT_EQ(rail_uv[5].read(), 1800000U);
     write_reg(tps6594::BUCK1_CTRL, 0x22);
     write_reg(tps6594::LDO1_CTRL, 0x60);
-    EXPECT_FALSE(buck1_enabled.read());
-    EXPECT_FALSE(ldo1_enabled.read());
-    EXPECT_EQ(buck1_uv.read(), 0U);
-    EXPECT_EQ(ldo1_uv.read(), 0U);
+    EXPECT_FALSE(rail_enabled[0].read());
+    EXPECT_FALSE(rail_enabled[5].read());
+    EXPECT_EQ(rail_uv[0].read(), 0U);
+    EXPECT_EQ(rail_uv[5].read(), 0U);
 
     uint8_t data = 0;
     EXPECT_EQ(byte(0x4d, tlm::TLM_READ_COMMAND, data, false, true), tlm::TLM_ADDRESS_ERROR_RESPONSE);
+}
+
+TEST_BENCH(Tps6594Bench, AllNineRailEnableAndVoltageOutputs)
+{
+    for (unsigned rail = 0; rail < tps6594::NUM_RAILS; ++rail) {
+        const unsigned control = rail < 5 ? tps6594::BUCK1_CTRL + rail * 2 : tps6594::LDO1_CTRL + rail - 5;
+        const unsigned vout = rail < 5 ? tps6594::BUCK1_VOUT_1 + rail * 2 : tps6594::LDO1_VOUT + rail - 5;
+        write_reg(vout, rail < 5 ? 0x73 : 0x38);
+        write_reg(control, 1);
+        EXPECT_TRUE(rail_enabled[rail].read()) << rail;
+        EXPECT_EQ(rail_uv[rail].read(), rail < 5 ? 1100000U : 1800000U) << rail;
+        write_reg(control, 0);
+        EXPECT_FALSE(rail_enabled[rail].read()) << rail;
+        EXPECT_EQ(rail_uv[rail].read(), 0U) << rail;
+    }
 }
 
 TEST_BENCH(Tps6594Bench, GpioLoopbackAndW1cInterrupt)
@@ -172,6 +183,28 @@ TEST_BENCH(Tps6594Bench, GpioLoopbackAndW1cInterrupt)
     EXPECT_FALSE(int_n.read());
     write_reg(tps6594::INT_GPIO, 0x02);
     EXPECT_TRUE(int_n.read());
+}
+
+TEST_BENCH(Tps6594Bench, AllGpioDirectionsAndOutputReadback)
+{
+    for (unsigned pin = 0; pin < tps6594::NUM_GPIOS; ++pin) {
+        const unsigned bank = pin / 8;
+        const uint8_t mask = 1U << (pin % 8);
+        write_reg(tps6594::GPIO1_CONF + pin, 0x01); // GPIO output, push-pull.
+        write_reg(tps6594::GPIO_OUT_1 + bank, mask);
+        EXPECT_EQ(read_reg(tps6594::GPIO_IN_1 + bank) & mask, mask) << pin;
+        write_reg(tps6594::GPIO_OUT_1 + bank, 0);
+        EXPECT_EQ(read_reg(tps6594::GPIO_IN_1 + bank) & mask, 0) << pin;
+        write_reg(tps6594::GPIO1_CONF + pin, 0x00); // GPIO input.
+        // Pins 1/9 are wired to outputs 0/8; drive those source inputs.
+        const unsigned source = (pin == 1 || pin == 9) ? pin - 1 : pin;
+        pmic.gpio_in[source]->write(true);
+        sc_core::wait(sc_core::SC_ZERO_TIME);
+        EXPECT_EQ(read_reg(tps6594::GPIO_IN_1 + bank) & mask, mask) << pin;
+        pmic.gpio_in[source]->write(false);
+        sc_core::wait(sc_core::SC_ZERO_TIME);
+        EXPECT_EQ(read_reg(tps6594::GPIO_IN_1 + bank) & mask, 0) << pin;
+    }
 }
 
 TEST_BENCH(Tps6594Bench, RtcTicksShadowsAndAlarms)

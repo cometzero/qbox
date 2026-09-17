@@ -278,12 +278,17 @@ void dw_apb_i2c::write_register(uint32_t offset, uint32_t value)
         }
         m_registers[offset / 4] = value & ENABLE;
         if (!(value & ENABLE)) {
+            cancel_bus();
             m_tx_fifo.clear();
             m_rx_fifo.clear();
             m_active = false;
         }
         break;
     case IC_DATA_CMD:
+        // TX_ABRT holds the FIFO flushed until software acknowledges it.
+        // An IRQ handler may still be filling the aborted message: those
+        // writes must not start a new transfer when the target leaves busy.
+        if (m_latched_interrupts & INTR_TX_ABRT) break;
         if (!(m_registers[IC_ENABLE / 4] & ENABLE)) {
             abort_transfer(ABRT_MASTER_DIS);
         } else if (m_tx_fifo.size() == FIFO_DEPTH) {
@@ -326,8 +331,39 @@ void dw_apb_i2c::drive_dma()
                     m_rx_fifo.size() > m_registers[IC_DMA_RDLR / 4]);
 }
 
+void dw_apb_i2c::cancel_bus()
+{
+    ++m_reset_generation;
+    m_read_pending = false;
+    if (!sc_core::sc_is_running()) return;
+    tlm::tlm_generic_payload trans;
+    dw_i2c_extension ext;
+    ext.phase = dw_i2c_extension::event::cancel;
+    trans.set_extension(&ext);
+    trans.set_command(tlm::TLM_IGNORE_COMMAND);
+    sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+    i2c_socket->b_transport(trans, delay);
+    trans.clear_extension(&ext);
+    m_reset_event.notify();
+}
+
+void dw_apb_i2c::read_ack(bool ack)
+{
+    tlm::tlm_generic_payload trans;
+    dw_i2c_extension ext;
+    ext.phase = dw_i2c_extension::event::read_ack;
+    ext.ack = ack;
+    trans.set_extension(&ext);
+    trans.set_command(tlm::TLM_IGNORE_COMMAND);
+    sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+    i2c_socket->b_transport(trans, delay);
+    trans.clear_extension(&ext);
+    m_read_pending = false;
+}
+
 void dw_apb_i2c::reset_controller()
 {
+    cancel_bus();
     m_dma_force_idle = true;
     m_dma_event.notify(sc_core::SC_ZERO_TIME);
     ++m_reset_generation;
@@ -346,6 +382,7 @@ void dw_apb_i2c::reset_controller()
 
 void dw_apb_i2c::abort_transfer(uint32_t source)
 {
+    cancel_bus();
     m_abort_source |= source;
     m_latched_interrupts |= INTR_TX_ABRT;
     m_tx_fifo.clear();
@@ -388,6 +425,9 @@ void dw_apb_i2c::execute_command(uint16_t command)
         return;
     }
 
+    // Hold the previous read response across FIFO starvation: only the next
+    // command establishes whether the controller sends ACK or final NACK.
+    if (m_read_pending) read_ack((command & DATA_CMD_READ) && !(command & DATA_CMD_RESTART));
     uint8_t data = static_cast<uint8_t>(command);
     tlm::tlm_generic_payload trans;
     dw_i2c_extension extension;
@@ -415,6 +455,7 @@ void dw_apb_i2c::execute_command(uint16_t command)
     }
 
     if (command & DATA_CMD_READ) {
+        m_read_pending = !(command & DATA_CMD_STOP);
         if (m_rx_fifo.size() == FIFO_DEPTH) {
             m_latched_interrupts |= INTR_RX_OVER;
         } else {
@@ -435,19 +476,42 @@ dw_i2c_eeprom::dw_i2c_eeprom(sc_core::sc_module_name name)
     , p_address_width("address_width", 8, "EEPROM address width in bits")
     , p_page_size("page_size", 8, "EEPROM write page size")
     , p_access_latency("access_latency", sc_core::sc_time(100, sc_core::SC_NS), "EEPROM transaction latency")
+    , p_write_cycle("write_cycle", sc_core::SC_ZERO_TIME, "EEPROM busy time after a page write")
+    , p_write_protect("write_protect", false, "EEPROM write protection")
     , i2c_socket("i2c_socket")
     , reset("reset")
     , m_storage(p_size.get_value(), 0xff)
 {
+    if (p_address.get_value() < 0x08 || p_address.get_value() > 0x77 || !p_size.get_value() ||
+        (p_address_width.get_value() != 8 && p_address_width.get_value() != 16) ||
+        p_size.get_value() > (1U << p_address_width.get_value()) ||
+        !p_page_size.get_value() || p_page_size.get_value() > p_size.get_value())
+        SC_REPORT_FATAL(this->name(), "Invalid EEPROM address, size, address width or page size");
     i2c_socket.register_b_transport(this, &dw_i2c_eeprom::b_transport);
     reset.register_value_changed_cb([this](bool asserted) {
-        if (asserted) reset_transaction();
+        if (asserted) { m_pending.clear(); reset_transaction(); }
     });
 }
 
 void dw_i2c_eeprom::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)
 {
     trans.set_dmi_allowed(false);
+    auto* control = trans.get_extension<dw_i2c_extension>();
+    if (control && control->phase != dw_i2c_extension::event::data) {
+        using event = dw_i2c_extension::event;
+        if (control->phase == event::discover || control->phase == event::address) {
+            trans.set_response_status(trans.get_address() == p_address.get_value() &&
+                (control->phase == event::discover || sc_core::sc_time_stamp() >= m_busy_until)
+                ? tlm::TLM_OK_RESPONSE : tlm::TLM_ADDRESS_ERROR_RESPONSE);
+        } else {
+            if (control->phase == event::stop) finish_write();
+            if (control->phase == event::cancel) m_pending.clear();
+            if (control->phase != event::read_ack) reset_transaction();
+            trans.set_response_status(tlm::TLM_OK_RESPONSE);
+        }
+        return;
+    }
+
     if (!trans.get_data_ptr()) {
         trans.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);
         return;
@@ -464,8 +528,8 @@ void dw_i2c_eeprom::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_tim
         trans.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
         return;
     }
-    if (m_storage.empty() || p_address_width.get_value() != 8) {
-        trans.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);
+    if (sc_core::sc_time_stamp() < m_busy_until) {
+        trans.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
         return;
     }
 
@@ -474,18 +538,29 @@ void dw_i2c_eeprom::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_tim
     const bool stop = extension && extension->stop;
     if (!m_transaction_active || restart) {
         m_transaction_active = true;
-        if (trans.get_command() == tlm::TLM_WRITE_COMMAND) m_expect_address = true;
+        if (trans.get_command() == tlm::TLM_WRITE_COMMAND) {
+            m_expect_address = true;
+            m_address_bytes = 0;
+            m_address_value = 0;
+        }
     }
 
     switch (trans.get_command()) {
     case tlm::TLM_WRITE_COMMAND:
         if (m_expect_address) {
-            m_pointer = *trans.get_data_ptr() % m_storage.size();
+            m_address_value = (m_address_value << 8) | *trans.get_data_ptr();
+            if (++m_address_bytes != p_address_width.get_value() / 8) break;
+            m_pointer = m_address_value % m_storage.size();
             const uint32_t page_size = std::max<uint32_t>(1, p_page_size.get_value());
             m_page_base = (m_pointer / page_size) * page_size;
             m_expect_address = false;
         } else {
-            m_storage[m_pointer] = *trans.get_data_ptr();
+            if (!p_write_protect.get_value()) {
+                const auto existing = std::find_if(m_pending.begin(), m_pending.end(),
+                    [this](const std::pair<uint32_t, uint8_t>& entry) { return entry.first == m_pointer; });
+                if (existing == m_pending.end()) m_pending.emplace_back(m_pointer, *trans.get_data_ptr());
+                else existing->second = *trans.get_data_ptr();
+            }
             advance_write_pointer();
         }
         break;
@@ -498,7 +573,10 @@ void dw_i2c_eeprom::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_tim
         return;
     }
 
-    if (stop) reset_transaction();
+    if (stop) {
+        finish_write();
+        reset_transaction();
+    }
     delay += p_access_latency.get_value();
     trans.set_response_status(tlm::TLM_OK_RESPONSE);
 }
@@ -507,6 +585,16 @@ void dw_i2c_eeprom::reset_transaction()
 {
     m_transaction_active = false;
     m_expect_address = true;
+    m_address_bytes = 0;
+    m_address_value = 0;
+}
+
+void dw_i2c_eeprom::finish_write()
+{
+    if (m_pending.empty()) return;
+    for (const auto& entry : m_pending) m_storage[entry.first] = entry.second;
+    m_pending.clear();
+    m_busy_until = sc_core::sc_time_stamp() + p_write_cycle.get_value();
 }
 
 void dw_i2c_eeprom::advance_write_pointer()
