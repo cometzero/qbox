@@ -23,7 +23,6 @@
 #include <libqemu-cxx/libqemu-cxx.h>
 
 #include <libgssync.h>
-#include <timed_dispatch.h>
 
 #include <scp/report.h>
 
@@ -45,18 +44,7 @@ public:
     virtual void initiator_customize_tlm_payload(TlmPayload& payload) = 0;
     virtual void initiator_tidy_tlm_payload(TlmPayload& payload) = 0;
     virtual sc_core::sc_time initiator_get_local_time() = 0;
-    virtual sc_core::sc_time initiator_get_request_time()
-    {
-        const auto now = sc_core::sc_time_stamp();
-        return now + initiator_get_local_time();
-    }
     virtual void initiator_set_local_time(const sc_core::sc_time&) = 0;
-    virtual void initiator_transport_begin() {}
-    virtual void initiator_transport_wait_io() {}
-    virtual void initiator_transport_io_acquired() {}
-    virtual void initiator_transport_service(sc_core::sc_time&) {}
-    virtual void initiator_transport_complete(const sc_core::sc_time&) {}
-    virtual void initiator_transport_end(const sc_core::sc_time&) {}
     virtual void initiator_async_run(qemu::Cpu::AsyncJobFn job) = 0;
     virtual void initiator_tlb_flush_all_cpus() = 0;
 };
@@ -674,24 +662,11 @@ protected:
         using sc_core::sc_time;
 
         uint64_t addr = trans.get_address();
-        sc_time completion = sc_core::sc_time_stamp();
-        gs::timed_dispatch(
-            [this](const std::function<void()>& job) {
-                m_inst.get().unlock_iothread();
-                // A target may wait for its annotated delay. Such a wait
-                // must not bypass the time barriers of other initiators.
-                m_on_sysc.run_on_sysc(job, true, gs::runonsysc::Suspension::Respect);
-                m_inst.get().lock_iothread();
-            },
-            [this] { return m_initiator.initiator_get_request_time(); },
-            [this, &trans, &completion](sc_time& delay) {
-                m_initiator.initiator_transport_service(delay);
-                (*this)->b_transport(trans, delay);
-                completion = sc_core::sc_time_stamp() + delay;
-                m_initiator.initiator_transport_complete(completion);
-            },
-            [this](const sc_time& delay) { m_initiator.initiator_set_local_time(delay); });
-        m_initiator.initiator_transport_end(completion);
+        sc_time now = m_initiator.initiator_get_local_time();
+
+        m_inst.get().unlock_iothread();
+        m_on_sysc.run_on_sysc([this, &trans, &now] { (*this)->b_transport(trans, now); });
+        m_inst.get().lock_iothread();
         /*
          * Reset transaction address before dmi check (could be altered by
          * b_transport).
@@ -713,6 +688,8 @@ protected:
                 }
             }
         }
+
+        m_initiator.initiator_set_local_time(now);
     }
 
     void do_debug_access(TlmPayload& trans)
@@ -755,15 +732,8 @@ protected:
             context_ext.set_access_path(RequestAccessPath::DIRECT);
             do_direct_access(trans);
         } else {
-            // Another CPU may own the instance's I/O lock while its target
-            // waits in SystemC. Account for that wait before blocking here;
-            // otherwise this CPU's instruction clock can stall that target.
-            if (!attrs.debug && reentrancy == 0) {
-                m_initiator.initiator_transport_begin();
-            }
             bool qemu_io_locked = m_inst.g_rec_qemu_io_lock.try_lock();
             if (!qemu_io_locked && !is_on_sysc()) {
-                if (!attrs.debug && reentrancy == 0) m_initiator.initiator_transport_wait_io();
                 /* Allow only a single access, but handle re-entrant code,
                  * while allowing side-effects in SystemC (e.g. calling wait)
                  * [NB re-entrant code caused via memory listeners to
@@ -771,7 +741,6 @@ protected:
                  */
                 m_inst.get().unlock_iothread();
                 m_inst.g_rec_qemu_io_lock.lock();
-                if (!attrs.debug && reentrancy == 0) m_initiator.initiator_transport_io_acquired();
                 qemu_io_locked = true;
                 m_inst.get().lock_iothread();
             }

@@ -24,14 +24,9 @@ class tlm_quantumkeeper_multithread : public gs::tlm_quantumkeeper_extended
 {
     SCP_LOGGER();
     std::thread::id m_systemc_thread_id;
-protected:
-    // State transitions and time publication share one lock. Derived policies
-    // may call the normal keeper accessors while holding it.
-    mutable std::recursive_mutex mutex;
-private:
-    std::condition_variable_any cond;
+    std::mutex mutex;
+    std::condition_variable cond;
     std::thread m_worker_thread;
-    std::atomic<sc_dt::uint64> m_absolute_ticks{0};
 
 protected:
     bool m_systemc_waiting;
@@ -39,10 +34,6 @@ protected:
     async_event m_tick;
 
     virtual bool is_sysc_thread() const;
-    virtual void refresh_progress_locked() {}
-    virtual bool awaiting_external_completion_locked() const { return false; }
-    virtual void invalidate_progress_locked() {}
-    void set_absolute_locked(const sc_core::sc_time& time, bool notify = true);
 
 private:
     void timehandler();
@@ -78,7 +69,7 @@ public:
 
     // this function provided only for debug.
     jobstates get_status() { return (jobstates)(status | (m_systemc_waiting << 2) | (m_extern_waiting << 3)); }
-    virtual std::string get_status_json()
+    std::string get_status_json()
     {
         std::string s = "\"name\":\"" + std::string(name()) + "\"";
         s = s + ",\"quantum_time\":\"" + std::string(get_local_time().to_string()) + "\"";

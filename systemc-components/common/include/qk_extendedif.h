@@ -13,7 +13,6 @@
 #endif
 
 #include <systemc>
-#include <cstdint>
 #include <tlm>
 #include <tlm_utils/tlm_quantumkeeper.h>
 
@@ -22,12 +21,6 @@
 #include <libgsutils.h>
 
 namespace gs {
-
-// Defined in the common QBox shared library, not in a per-component DSO.
-// Initialize from the SystemC startup thread before enabling QEMU clocks.
-void initialize_freerunning_epoch();
-int64_t freerunning_epoch_time_ns();
-
 
 /* this quantumkeeper is inteded as an interface for other more
  * sophisticated QKs. However if provides a trivial implementation making it

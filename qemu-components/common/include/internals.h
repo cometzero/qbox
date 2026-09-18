@@ -89,7 +89,6 @@ private:
     LibQemuExports* m_exports = nullptr;
 
     LibQemuObjectCallback<Cpu::EndOfLoopCallbackFn> m_cpu_end_of_loop_cbs;
-    LibQemuObjectCallback<Cpu::EndOfLoopCallbackFn> m_cpu_exec_entry_cbs;
     LibQemuObjectCallback<Cpu::PcEntryCallbackFn> m_cpu_pc_entry_cbs;
     LibQemuObjectCallback<Cpu::CpuKickCallbackFn> m_cpu_kick_cbs;
     LibQemuObjectCallback<IOMMUMemoryRegion::IOMMUTranslateCallbackFn> m_iommu_translate_cbs;
@@ -99,7 +98,6 @@ private:
 
     std::vector<LibQemuObjectCallbackBase*> m_cbs{
         &m_cpu_end_of_loop_cbs,
-        &m_cpu_exec_entry_cbs,
         &m_cpu_pc_entry_cbs,
         &m_cpu_kick_cbs,
         &m_iommu_translate_cbs,
@@ -120,7 +118,6 @@ public:
     }
 
     LibQemuObjectCallback<Cpu::EndOfLoopCallbackFn>& get_cpu_end_of_loop_cb() { return m_cpu_end_of_loop_cbs; }
-    LibQemuObjectCallback<Cpu::EndOfLoopCallbackFn>& get_cpu_exec_entry_cb() { return m_cpu_exec_entry_cbs; }
 
     LibQemuObjectCallback<Cpu::PcEntryCallbackFn>& get_cpu_pc_entry_cb() { return m_cpu_pc_entry_cbs; }
 

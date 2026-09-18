@@ -23,9 +23,6 @@ namespace gs {
 
 class runonsysc : public sc_core::sc_module
 {
-public:
-    enum class Suspension { Ignore, Respect };
-
 private:
     // ============================================================
     // Core: shared lifetime state
@@ -38,15 +35,14 @@ private:
             using Ptr = std::shared_ptr<AsyncJob>;
 
             std::function<void()> job;
-            Suspension suspension;
 
             std::promise<void> done_promise;
             std::shared_future<void> done_future;
 
             std::atomic<bool> cancelled{ false };
 
-            explicit AsyncJob(std::function<void()> j, Suspension policy)
-                : job(std::move(j)), suspension(policy), done_future(done_promise.get_future().share())
+            explicit AsyncJob(std::function<void()> j)
+                : job(std::move(j)), done_future(done_promise.get_future().share())
             {
             }
 
@@ -119,15 +115,12 @@ private:
 
                 lock.unlock();
 
-                // Unsuspendable is global: a timed wait in this job would
-                // otherwise advance devices past other initiators' budgets.
-                const bool bypass_suspension = core->running_job->suspension == Suspension::Ignore;
-                if (bypass_suspension) sc_core::sc_unsuspendable();
+                sc_core::sc_unsuspendable();
                 (*core->running_job)();
                 /* Drain any notify(SC_ZERO_TIME) events the job queued
                  * (e.g. deferred IRQ SC_METHODs) before allowing suspend. */
                 wait(sc_core::SC_ZERO_TIME);
-                if (bypass_suspension) sc_core::sc_suspendable();
+                sc_core::sc_suspendable();
 
                 lock.lock();
                 core->running_job.reset();
@@ -215,15 +208,12 @@ public:
      *
      * @param[in] job_entry The job to run
      * @param[in] wait If true, wait for job completion
-     * @param[in] suspension Respect other initiators' time barriers during a
-     * timed transport; Ignore retains the behavior of control/debug jobs.
      *
      * @return true if the job has been succesfully executed or if `wait`
      *         was false, false if it has been cancelled (see
      *         `RunOnSysC::cancel_all`).
      */
-    bool run_on_sysc(std::function<void()> job_entry, bool wait = true,
-                     Suspension suspension = Suspension::Ignore)
+    bool run_on_sysc(std::function<void()> job_entry, bool wait = true)
     {
         auto core = m_core; // snapshot lifetime
         if (!core) return false;
@@ -235,7 +225,7 @@ public:
             return true;
         }
 
-        auto job = std::make_shared<typename Core::AsyncJob>(std::move(job_entry), suspension);
+        auto job = std::make_shared<typename Core::AsyncJob>(std::move(job_entry));
 
         {
             std::lock_guard<std::mutex> lock(core->async_jobs_mutex);
