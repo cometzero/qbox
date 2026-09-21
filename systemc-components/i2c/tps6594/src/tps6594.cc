@@ -170,16 +170,19 @@ void tps6594::reset_device()
 {
     for (auto& page : m_registers) page.fill(0);
 
-    // QBox baseline: generic Rev. B register-table reset values plus valid
-    // minimum LDO selectors. Production values come from the selected NVM.
+    // QBox power-on profile: all BUCK/LDO rails enabled at their default
+    // minimum voltages. This is a model profile, not a production NVM image.
     m_registers[0][DEV_REV] = p_dev_rev.get_value();
     m_registers[0][NVM_CODE_1] = p_nvm_code_1.get_value();
     m_registers[0][NVM_CODE_2] = p_nvm_code_2.get_value();
     for (unsigned int buck = 0; buck < 5; ++buck) {
-        m_registers[0][BUCK1_CTRL + buck * 2] = 0x22;
+        m_registers[0][BUCK1_CTRL + buck * 2] = 0x22 | RAIL_ENABLE;
         m_registers[0][BUCK1_CTRL + buck * 2 + 1] = 0x22;
+        m_registers[0][BUCK1_VOUT_1 + buck * 2] = 0x00; // VOUT1: 0.3 V
+        m_registers[0][BUCK1_VOUT_1 + buck * 2 + 1] = 0x00; // VOUT2: 0.3 V
     }
-    for (unsigned int ldo = 0; ldo < 4; ++ldo) m_registers[0][LDO1_CTRL + ldo] = 0x60;
+    for (unsigned int ldo = 0; ldo < 4; ++ldo)
+        m_registers[0][LDO1_CTRL + ldo] = 0x60 | RAIL_ENABLE;
     m_registers[0][LDO1_VOUT + 0] = 0x08; // LDO1: 0.6 V
     m_registers[0][LDO1_VOUT + 1] = 0x08; // LDO2: 0.6 V
     m_registers[0][LDO1_VOUT + 2] = 0x08; // LDO3: 0.6 V

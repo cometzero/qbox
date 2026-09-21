@@ -104,6 +104,23 @@ protected:
     }
 };
 
+TEST_BENCH(Tps6594Bench, PowerOnDefaultRailsEnabled)
+{
+    sc_core::wait(sc_core::SC_ZERO_TIME);
+    for (unsigned rail = 0; rail < tps6594::NUM_RAILS; ++rail) {
+        const unsigned control = rail < 5 ? tps6594::BUCK1_CTRL + rail * 2 : tps6594::LDO1_CTRL + rail - 5;
+        const unsigned vout = rail < 5 ? tps6594::BUCK1_VOUT_1 + rail * 2 : tps6594::LDO1_VOUT + rail - 5;
+        EXPECT_EQ(read_reg(control), rail < 5 ? 0x23 : 0x61) << rail;
+        EXPECT_EQ(read_reg(vout), rail < 5 ? 0x00 : (rail < 8 ? 0x08 : 0x20)) << rail;
+        if (rail < 5) {
+            EXPECT_EQ(read_reg(control + 1), 0x22) << rail;
+            EXPECT_EQ(read_reg(vout + 1), 0x00) << rail;
+        }
+        EXPECT_TRUE(rail_enabled[rail].read()) << rail;
+        EXPECT_EQ(rail_uv[rail].read(), rail < 5 ? 300000U : (rail < 8 ? 600000U : 1200000U)) << rail;
+    }
+}
+
 TEST_BENCH(Tps6594Bench, PagesIdentityAndRails)
 {
     sc_core::wait(sc_core::SC_ZERO_TIME);
