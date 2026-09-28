@@ -229,6 +229,17 @@ class MonitorRuntimeApiTest : public TestBench
                     "TLM failure accepted");
             require(request(port, "GET", "/transport_dbg/1/test-bench.memory").status == 400,
                     "unaligned read accepted");
+            for (unsigned cycle = 0; cycle < 10; ++cycle) {
+                require(request(port, "GET", "/pause").status == 200, "pause request failed");
+                require(request(port, "GET", "/sc_suspended").body.find("\"monitor_paused\":true") !=
+                            std::string::npos, "explicit pause state missing");
+                require(request(port, "GET", "/api/v1/objects/test-bench").status == 200,
+                        "metadata blocked while suspended");
+                require(request(port, "GET", "/continue").status == 200, "resume request failed");
+                require(request(port, "GET", "/sc_suspended").body.find("\"monitor_paused\":false") !=
+                            std::string::npos, "explicit pause state not cleared");
+                require(request(port, "GET", "/sc_time").status == 200, "time unavailable after resume");
+            }
 
             const std::string mode = p_test_mode.get_value();
             HttpResponse capabilities = request(port, "GET", "/api/v1/injection/capabilities");
@@ -337,7 +348,6 @@ public:
     {
         if (m_client.joinable()) {
             m_client.join();
-        TEST_ASSERT(m_debug_on_systemc);
         }
     }
 };

@@ -107,6 +107,8 @@ private:
     std::condition_variable m_global_debug_cond;
     std::thread m_global_debug_worker;
     bool m_global_debug_enabled = false;
+    bool m_global_debug_vm_callback = false;
+    std::string m_global_debug_error;
     bool m_global_debug_worker_exit = false;
     bool m_global_debug_desired_paused = false;
     bool m_global_debug_applied_paused = false;
@@ -133,6 +135,7 @@ private:
         std::unique_lock<std::mutex>& lock,
         GlobalDebugSystemcAction action);
     void disable_global_gdb_pause();
+    void enable_global_pause_worker(bool debugger);
 
 public:
     TargetSignalSocket<bool> reset;
@@ -416,6 +419,9 @@ public:
     bool operator!=(const QemuInstance& b) const { return this != &b; }
 
     void enable_global_gdb_pause();
+    static QemuInstance* acquire_monitor_pause_coordinator();
+    bool monitor_pause_transition(bool paused, unsigned timeout_ms);
+    bool monitor_pause_state();
     void request_global_gdb_pause(uint64_t entry_pc = 0);
     void request_global_gdb_resume();
     void set_debug_sync_hold_on_cpus(bool asserted);

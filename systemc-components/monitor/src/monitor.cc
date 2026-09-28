@@ -341,22 +341,48 @@ void monitor<BUSWIDTH>::init_monitor()
         return json_response(200, std::move(r));
     });
     CROW_ROUTE(m_app, "/pause")
-    ([&]() {
+    ([&]() -> crow::response {
+        if (!m_control_ready.load())
+            return error_response(503, "simulation-unavailable", "Monitor control is not ready");
+        if (m_has_qemu_instances) {
+            if (!m_pause_coordinator)
+                return error_response(409, "control-unavailable", "Debugger or another monitor owns global control");
+            if (!m_pause_coordinator->monitor_pause_transition(true, 1500))
+                return error_response(503, "control-unknown", "Global pause completion is unknown; inspect status");
+            crow::json::wvalue ret;
+            ret["monitor_paused"] = true;
+            m_sc.run_on_sysc([&] { ret["sc_time_stamp"] = sc_core::sc_time_stamp().to_seconds(); });
+            return json_response(200, std::move(ret));
+        }
         crow::json::wvalue ret;
-        m_sc.run_on_sysc([&] {
+        if (!m_sc.run_on_sysc([&] {
             sc_core::sc_suspend_all();
+            m_monitor_paused.store(true);
             ret["sc_time_stamp"] = sc_core::sc_time_stamp().to_seconds();
-        });
-        return ret;
+        })) return error_response(503, "simulation-unavailable", "SystemC execution is unavailable");
+        return json_response(200, std::move(ret));
     });
     CROW_ROUTE(m_app, "/continue")
-    ([&]() {
+    ([&]() -> crow::response {
+        if (!m_control_ready.load())
+            return error_response(503, "simulation-unavailable", "Monitor control is not ready");
+        if (m_has_qemu_instances) {
+            if (!m_pause_coordinator)
+                return error_response(409, "control-unavailable", "Debugger or another monitor owns global control");
+            if (!m_pause_coordinator->monitor_pause_transition(false, 1500))
+                return error_response(503, "control-unknown", "Global resume completion is unknown; inspect status");
+            crow::json::wvalue ret;
+            ret["monitor_paused"] = false;
+            m_sc.run_on_sysc([&] { ret["sc_time_stamp"] = sc_core::sc_time_stamp().to_seconds(); });
+            return json_response(200, std::move(ret));
+        }
         crow::json::wvalue ret;
-        m_sc.run_on_sysc([&] {
+        if (!m_sc.run_on_sysc([&] {
             sc_core::sc_unsuspend_all();
+            m_monitor_paused.store(false);
             ret["sc_time_stamp"] = sc_core::sc_time_stamp().to_seconds();
-        });
-        return ret;
+        })) return error_response(503, "simulation-unavailable", "SystemC execution is unavailable");
+        return json_response(200, std::move(ret));
     });
     CROW_ROUTE(m_app, "/object/")
     ([&]() {
@@ -444,6 +470,8 @@ void monitor<BUSWIDTH>::init_monitor()
     ([&]() {
         crow::json::wvalue r;
         r["sc_suspended"] = (sc_core::sc_get_status() == sc_core::SC_SUSPENDED);
+        r["monitor_paused"] = m_control_ready.load() && m_pause_coordinator ?
+                                  m_pause_coordinator->monitor_pause_state() : m_monitor_paused.load();
         return r;
     });
     CROW_ROUTE(m_app, "/refresh_interval")
@@ -631,6 +659,9 @@ void monitor<BUSWIDTH>::end_of_elaboration()
 {
     m_qks = find_sc_objects<gs::tlm_quantumkeeper_multithread>();
     m_mcips_plugins = find_sc_objects<McipsPlugin>();
+    m_has_qemu_instances = !find_sc_objects<QemuInstance>().empty();
+    if (m_has_qemu_instances) m_pause_coordinator = QemuInstance::acquire_monitor_pause_coordinator();
+    m_control_ready.store(true);
 }
 
 template <unsigned int BUSWIDTH>

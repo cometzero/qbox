@@ -48,12 +48,55 @@ void QemuInstance::set_debug_sync_hold_on_cpus(bool asserted)
 
 void QemuInstance::enable_global_gdb_pause()
 {
+    enable_global_pause_worker(true);
+}
+
+QemuInstance* QemuInstance::acquire_monitor_pause_coordinator()
+{
+    // Called during elaboration: register exactly one monitor coordinator and
+    // never compete with a debugger's existing VM-state callback/ownership.
+    auto instances = debug_instances();
+    if (instances.empty()) return nullptr;
+    for (auto* instance : instances) {
+        std::lock_guard<std::mutex> lock(instance->m_global_debug_lock);
+        if (instance->m_global_debug_enabled) return nullptr;
+    }
+    instances.front()->enable_global_pause_worker(false);
+    return instances.front();
+}
+
+bool QemuInstance::monitor_pause_transition(bool paused, unsigned timeout_ms)
+{
+    std::unique_lock<std::mutex> lock(m_global_debug_lock);
+    if (!m_global_debug_enabled || m_global_debug_vm_callback || !m_global_debug_error.empty()) return false;
+    // Serialize opposite transitions; timeout leaves the submitted operation
+    // intact. Callers must observe its completion before submitting recovery.
+    if (m_global_debug_desired_paused != m_global_debug_applied_paused) return false;
+    m_global_debug_desired_paused = paused;
+    m_global_debug_cond.notify_all();
+    const bool completed = m_global_debug_cond.wait_for(lock, std::chrono::milliseconds(timeout_ms), [&] {
+        return m_global_debug_applied_paused == paused || m_global_debug_worker_exit ||
+               !m_global_debug_error.empty();
+    });
+    return completed && !m_global_debug_worker_exit && m_global_debug_error.empty() &&
+           m_global_debug_applied_paused == paused;
+}
+
+bool QemuInstance::monitor_pause_state()
+{
+    std::lock_guard<std::mutex> lock(m_global_debug_lock);
+    return m_global_debug_applied_paused;
+}
+
+void QemuInstance::enable_global_pause_worker(bool debugger)
+{
     {
         std::lock_guard<std::mutex> lock(m_global_debug_lock);
         if (m_global_debug_enabled) {
             return;
         }
         m_global_debug_enabled = true;
+        m_global_debug_vm_callback = debugger;
     }
 
     sc_core::sc_spawn_options options;
@@ -66,8 +109,10 @@ void QemuInstance::enable_global_gdb_pause()
 
     m_global_debug_worker =
         std::thread(&QemuInstance::global_debug_worker_loop, this);
-    m_inst.set_vm_state_callback(
-        [this](bool running) { global_debug_vm_state_changed(running); });
+    if (debugger) {
+        m_inst.set_vm_state_callback(
+            [this](bool running) { global_debug_vm_state_changed(running); });
+    }
 }
 
 void QemuInstance::disable_global_gdb_pause()
@@ -81,7 +126,7 @@ void QemuInstance::disable_global_gdb_pause()
         m_global_debug_worker_exit = true;
     }
     m_global_debug_cond.notify_all();
-    m_inst.set_vm_state_callback(nullptr);
+    if (m_global_debug_vm_callback) m_inst.set_vm_state_callback(nullptr);
     if (m_global_debug_worker.joinable()) {
         m_global_debug_worker.join();
     }
@@ -141,7 +186,7 @@ bool QemuInstance::global_debug_run_systemc_action(
 void QemuInstance::global_debug_worker_loop()
 {
     std::unique_lock<std::mutex> lock(m_global_debug_lock);
-
+    try {
     while (!m_global_debug_worker_exit) {
         m_global_debug_cond.wait(lock, [this] {
             return m_global_debug_worker_exit ||
@@ -186,6 +231,7 @@ void QemuInstance::global_debug_worker_loop()
                 break;
             }
             m_global_debug_applied_paused = true;
+            m_global_debug_cond.notify_all();
         } else {
             std::vector<QemuInstance*> paused_instances =
                 m_global_debug_paused_instances;
@@ -212,7 +258,18 @@ void QemuInstance::global_debug_worker_loop()
 
             m_global_debug_paused_instances.clear();
             m_global_debug_applied_paused = false;
+            m_global_debug_cond.notify_all();
         }
+    }
+    } catch (const std::exception& error) {
+        if (!lock.owns_lock()) lock.lock();
+        m_global_debug_error = error.what();
+        m_global_debug_cond.notify_all();
+        std::cerr << name() << ": global pause transition failed: " << error.what() << std::endl;
+    } catch (...) {
+        if (!lock.owns_lock()) lock.lock();
+        m_global_debug_error = "unknown exception";
+        m_global_debug_cond.notify_all();
     }
 }
 

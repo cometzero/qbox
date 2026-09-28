@@ -23,6 +23,7 @@
 #include <future>
 #include <qkmultithread.h>
 #include <mcips-plugin.h>
+#include <qemu-instance.h>
 #include <chrono>
 #include <atomic>
 #include <ports/biflow-socket.h>
@@ -98,6 +99,10 @@ public:
     ~monitor();
 
 private:
+    std::atomic<bool> m_monitor_paused{ false };
+    std::atomic<bool> m_control_ready{ false };
+    QemuInstance* m_pause_coordinator = nullptr;
+    bool m_has_qemu_instances = false;
     void init_monitor();
 
     RuntimeActionService* runtime_action_service() const;
