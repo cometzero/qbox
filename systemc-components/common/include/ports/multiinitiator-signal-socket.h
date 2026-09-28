@@ -37,7 +37,10 @@ public:
             while (vals_valid == false) {
                 wait(ev);
             }
-            std::vector<T> vs = vals; // No race conditions, we are single threaded. COPY the vector
+            // Drain before invoking callbacks: a callback may enqueue the next
+            // edge (or suspend), and consumed reset edges must never replay.
+            std::vector<T> vs;
+            vs.swap(vals);
             vals_valid = false;
             for (auto v : vs) {
                 for (int i = 0; i < this->size(); i++) {
