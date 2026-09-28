@@ -1084,6 +1084,19 @@ public:
             m_managed_reset_released = false;
             SCP_WARN(())("Start reset");
             m_resetting = start_reset;
+            if (p_start_in_reset.get_value() &&
+                m_inst.manages_start_in_reset_release()) {
+                /*
+                 * A following instance reset resumes all QEMU vCPUs and
+                 * clears their stop/stopped bits. Preserve this externally
+                 * asserted hold independently until the explicit release.
+                 * Do not wait for the async reset here: the asserting MMIO
+                 * transaction may itself originate from this instance.
+                 */
+                m_inst.get().lock_iothread();
+                m_cpu.set_soft_stopped(true);
+                m_inst.get().unlock_iothread();
+            }
             m_cpu.async_safe_run(make_tracked_async_job([this] {
                 m_cpu.reset(true);
                 m_resetting = hold_reset;

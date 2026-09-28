@@ -6,6 +6,7 @@
  */
 
 #include <array>
+#include <atomic>
 #include <cstdio>
 
 #include <systemc>
@@ -44,6 +45,9 @@ class CpuArmStartInResetReleaseTest : public CpuTestBenchBase
     CpuTesterMmio m_tester;
     global_peripheral_initiator m_gpi;
     sc_core::sc_vector<sc_core::sc_out<bool>> m_reset;
+    sc_core::sc_out<bool> m_instance_reset;
+    cci::cci_param<bool> p_instance_reset_while_held;
+    std::atomic<bool> m_held{false};
     std::array<unsigned int, CPU_COUNT> m_writes{};
     gs::async_event m_keepalive;
     gs::async_event m_cpu_write;
@@ -60,6 +64,8 @@ public:
         , m_tester("tester", *this)
         , m_gpi("gpi", m_inst, m_cpus[0])
         , m_reset("reset", CPU_COUNT)
+        , m_instance_reset("instance_reset")
+        , p_instance_reset_while_held("instance_reset_while_held", false)
         , m_keepalive("keepalive")
         , m_cpu_write("cpu_write")
     {
@@ -73,13 +79,15 @@ public:
             cpu.p_mp_affinity = i;
             cpu.p_has_el3 = false;
             cpu.p_has_el2 = false;
-            cpu.p_start_powered_off = i != 0;
+            cpu.p_start_powered_off = i != 0 &&
+                !(p_instance_reset_while_held && i == CPU_COUNT - 1);
             cpu.p_start_in_reset = true;
             cpu.p_reset_power_on = true;
             m_reset[i].bind(cpu.reset);
             m_router.add_initiator(cpu.socket);
         }
         m_router.add_initiator(m_gpi.m_initiator);
+        m_instance_reset.bind(m_inst.reset);
 
         std::snprintf(firmware, sizeof(firmware), FIRMWARE, CpuTesterMmio::MMIO_ADDR);
         set_firmware(firmware);
@@ -94,6 +102,7 @@ public:
         wait(sc_core::SC_ZERO_TIME);
 
         wait(m_cpu_write);
+        std::fprintf(stderr, "RESET-TEST initial CPU0 write\n");
         TEST_ASSERT(m_writes[0] == 1);
         TEST_ASSERT(total_writes() == 1);
 
@@ -108,12 +117,29 @@ public:
         }
 
         for (unsigned int round = 1; round < RELEASE_ROUNDS; ++round) {
-            for (auto& reset : m_reset) {
-                reset.write(true);
+            std::fprintf(stderr, "RESET-TEST round %u hold\n", round);
+            const size_t held_count = p_instance_reset_while_held ? CPU_COUNT - 1 : CPU_COUNT;
+            m_held = p_instance_reset_while_held;
+            for (size_t i = 0; i < held_count; ++i) {
+                m_reset[i].write(true);
             }
             wait(sc_core::SC_ZERO_TIME);
-            for (auto& reset : m_reset) {
-                reset.write(false);
+            if (p_instance_reset_while_held) {
+                // The unheld last CPU proves that this asynchronous instance
+                // reset actually completed; a timed sleep cannot prove that.
+                m_instance_reset.write(true);
+                m_instance_reset.write(false);
+                while (m_writes.back() != round + 1) {
+                    wait(m_cpu_write);
+                }
+                std::fprintf(stderr, "RESET-TEST round %u instance reset witnessed\n", round);
+                for (size_t i = 0; i < held_count; ++i) {
+                    TEST_ASSERT(m_writes[i] == round);
+                }
+                m_held = false;
+            }
+            for (size_t i = 0; i < held_count; ++i) {
+                m_reset[i].write(false);
             }
             while (total_writes() != m_writes.size() * (round + 1)) {
                 wait(m_cpu_write);
@@ -121,6 +147,7 @@ public:
             for (auto writes : m_writes) {
                 TEST_ASSERT(writes == round + 1);
             }
+            std::fprintf(stderr, "RESET-TEST round %u released\n", round);
         }
 
         m_keepalive.async_detach_suspending();
@@ -135,6 +162,7 @@ public:
         const unsigned int cpuid = addr >> 3;
 
         TEST_ASSERT(cpuid < m_writes.size());
+        TEST_ASSERT(!m_held.load() || cpuid == CPU_COUNT - 1);
         TEST_ASSERT(data == 1);
         TEST_ASSERT(m_writes[cpuid] < RELEASE_ROUNDS);
         ++m_writes[cpuid];
