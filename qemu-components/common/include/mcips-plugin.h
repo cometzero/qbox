@@ -242,6 +242,7 @@ public:
      */
     bool set_vcpu_insn_per_second(unsigned int cpu_index, uint64_t insn_per_second)
     {
+        std::lock_guard<std::mutex> lock(m_mcips_mutex);
         if (insn_per_second == 0) {
             SCP_FATAL(()) << "insn_per_second must be > 0 (cpu_" << cpu_index << ")";
             return false;
@@ -485,10 +486,11 @@ public:
         m_inflight_cb.fetch_sub(1, std::memory_order_seq_cst);
     }
 
-    /** @brief Called under BQL before simulation starts; does not hold m_mcips_mutex. */
+    /** @brief Called under BQL; serialize initialization with monitor snapshots. */
     void vcpu_init(unsigned int cpu_index)
     {
         if (m_shutdown.load(std::memory_order_acquire)) return;
+        std::lock_guard<std::mutex> lock(m_mcips_mutex);
 
         const int current = m_inst.plugin_api().qemu_plugin_num_vcpus();
         if (current > m_num_vcpus) m_num_vcpus = current;
@@ -775,10 +777,12 @@ public:
 
     /**
      * @brief Returns a JSON string with the current state of all CPUs (for debugging).
-     * Reads without m_mcips_mutex so values may be slightly out of date.
+     * Serializes shared CPU timing state with vCPU callbacks. In-flight
+     * instruction counts remain approximate as QEMU updates its scoreboard.
      */
     std::string get_mcips_status_json()
     {
+        std::lock_guard<std::mutex> lock(m_mcips_mutex);
         auto active = m_active_vcpu.load(std::memory_order_relaxed);
         std::ostringstream os;
 

@@ -447,7 +447,11 @@ void monitor<BUSWIDTH>::end_of_elaboration()
 
 #### **Diagnostic JSON**
 
-`get_mcips_status_json()` returns a JSON snapshot of the current state (reads without `m_mcips_mutex` so values may be slightly out of date) including: `qemu_time`, `n_cpus`, `active_vcpu_index`, and per-CPU details (`index`, `insn_per_second`, `delta_insn`, `cpu_time_ns`, `cpu_execution_status`).
+`get_mcips_status_json()` returns a diagnostic snapshot under `m_mcips_mutex`,
+including `qemu_time`, `n_cpus`, `active_vcpu_index`, and per-CPU details
+(`index`, `insn_per_second`, `delta_insn`, `cpu_time_ns`,
+`cpu_execution_status`). In-flight QEMU instruction counters remain approximate;
+this is not a coherent register snapshot or physical CPU performance metric.
 
 ***
 

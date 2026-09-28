@@ -394,19 +394,13 @@ void monitor<BUSWIDTH>::init_monitor()
         return json_response(200, std::move(r));
     });
     CROW_ROUTE(m_app, "/mcips_plugin_status")
-    ([&]() {
-        std::ostringstream os;
-        os << "[";
-        bool firstPlugin = true;
-        for (auto* p : m_mcips_plugins) {
-            if (!firstPlugin) os << ",";
-            firstPlugin = false;
-            os << p->get_mcips_status_json(); // returns a JSON string per plugin
-        }
-        os << "]";
-        crow::response res(os.str());
-        res.add_header("Content-Type", "application/json");
-        return res;
+    ([&]() -> crow::response {
+        std::vector<crow::json::wvalue> plugins;
+        if (!m_sc.run_on_sysc([&] {
+                for (auto* plugin : m_mcips_plugins)
+                    plugins.push_back(crow::json::load(plugin->get_mcips_status_json()));
+            })) return error_response(503, "simulation-unavailable", "SystemC execution is unavailable");
+        return json_response(200, crow::json::wvalue::list(plugins));
     });
     CROW_ROUTE(m_app, "/sc_suspended")
     ([&]() {
