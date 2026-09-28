@@ -371,6 +371,44 @@ void monitor<BUSWIDTH>::init_monitor()
         crow::json::wvalue r = cr;
         return r;
     });
+    // Unlike the legacy object explorer, these routes never probe sockets or
+    // invoke CCI value callbacks. Enumerate one level at a time on SystemC.
+    CROW_ROUTE(m_app, "/api/v1/objects")
+    ([&]() -> crow::response {
+        crow::json::wvalue body;
+        if (!m_sc.run_on_sysc([&] {
+                std::vector<crow::json::wvalue> objects;
+                for (auto* object : sc_core::sc_get_top_level_objects()) {
+                    objects.push_back(object_to_json(object));
+                }
+                body["schema_version"] = 1;
+                body["objects"] = std::move(objects);
+            })) {
+            return error_response(503, "simulation-unavailable", "SystemC execution is unavailable");
+        }
+        return json_response(200, std::move(body));
+    });
+    CROW_ROUTE(m_app, "/api/v1/objects/<str>")
+    ([&](const std::string& name) -> crow::response {
+        crow::json::wvalue body;
+        bool found = false;
+        if (!m_sc.run_on_sysc([&] {
+                auto* object = find_sc_obj(nullptr, name, true);
+                if (!object) return;
+                found = true;
+                body["schema_version"] = 1;
+                body["object"] = object_to_json(object);
+                std::vector<crow::json::wvalue> children;
+                for (auto* child : object->get_child_objects()) {
+                    children.push_back(object_to_json(child));
+                }
+                body["children"] = std::move(children);
+            })) {
+            return error_response(503, "simulation-unavailable", "SystemC execution is unavailable");
+        }
+        if (!found) return error_response(404, "object-not-found", "SystemC object does not exist");
+        return json_response(200, std::move(body));
+    });
     CROW_ROUTE(m_app, "/object/<str>")
     ([&](std::string name) {
         crow::json::wvalue r;

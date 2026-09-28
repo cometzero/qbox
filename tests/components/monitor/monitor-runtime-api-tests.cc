@@ -13,6 +13,8 @@
 #include <async_event.h>
 #include <monitor.h>
 #include <runtime-action-service.h>
+#include <tlm_utils/simple_target_socket.h>
+#include <cstring>
 
 #include "test/test.h"
 
@@ -178,6 +180,23 @@ void require(bool condition, const std::string& message)
 
 class MonitorRuntimeApiTest : public TestBench
 {
+    tlm_utils::simple_target_socket_optional<MonitorRuntimeApiTest> m_memory;
+    std::atomic<unsigned> m_debug_reads{ 0 };
+    std::thread::id m_systemc_thread = std::this_thread::get_id();
+    bool m_debug_on_systemc = true;
+    unsigned debug_read(tlm::tlm_generic_payload& txn)
+    {
+        ++m_debug_reads;
+        m_debug_on_systemc &= std::this_thread::get_id() == m_systemc_thread;
+        if (txn.get_address() >= 8) {
+            txn.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
+            return 0;
+        }
+        uint32_t value = txn.get_address() == 0 ? 0x12345678 : 0x87654321;
+        std::memcpy(txn.get_data_ptr(), &value, sizeof(value));
+        txn.set_response_status(tlm::TLM_OK_RESPONSE);
+        return sizeof(value);
+    }
     cci::cci_param<std::string> p_test_mode;
     DummyRuntimeActionService m_service;
     gs::monitor<32> m_monitor;
@@ -192,6 +211,14 @@ class MonitorRuntimeApiTest : public TestBench
             require(port != 0, "monitor did not publish its ephemeral port");
             HttpResponse simulation_time = request(port, "GET", "/sc_time");
             require(simulation_time.status == 200, "existing sc_time endpoint failed");
+            require(request(port, "GET", "/api/v1/objects").status == 200, "metadata roots failed");
+            auto metadata = request(port, "GET", "/api/v1/objects/test-bench");
+            require(metadata.status == 200 && metadata.body.find("test-bench.memory") != std::string::npos,
+                    "metadata children missing");
+            require(request(port, "GET", "/api/v1/objects/test-bench.memory").status == 200,
+                    "socket metadata failed");
+            require(m_debug_reads == 0, "metadata performed a debug read");
+            require(request(port, "GET", "/api/v1/objects/not-present").status == 404, "missing object accepted");
 
             const std::string mode = p_test_mode.get_value();
             HttpResponse capabilities = request(port, "GET", "/api/v1/injection/capabilities");
@@ -284,8 +311,9 @@ class MonitorRuntimeApiTest : public TestBench
 
 public:
     explicit MonitorRuntimeApiTest(const sc_core::sc_module_name& name)
-        : TestBench(name), p_test_mode("test_mode", "full"), m_service("service"), m_monitor("monitor"), m_done(true)
+        : TestBench(name), m_memory("memory"), p_test_mode("test_mode", "full"), m_service("service"), m_monitor("monitor"), m_done(true)
     {
+        m_memory.register_transport_dbg(this, &MonitorRuntimeApiTest::debug_read);
         SC_THREAD(run_test);
     }
 
