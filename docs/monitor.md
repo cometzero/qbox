@@ -59,6 +59,54 @@ implements the typed, platform-independent contract in
 `runtime-action-service.h`. The monitor resolves `injection_service` by its
 exact SystemC object path and invokes it only through `gs::runonsysc`.
 
+## Metadata and dashboard sampling
+
+`GET /api/v1/objects` returns
+`{"schema_version":1,"objects":[{"name":"platform","basename":"platform","kind":"sc_module"}]}`.
+`GET /api/v1/objects/<name>` returns `schema_version`, `object` (the same
+three fields), and `children` (direct children only). These endpoints run on
+SystemC and perform no TLM transactions, router probes, or CCI value callbacks.
+Missing objects return `404 object-not-found`; stopped SystemC execution
+returns `503 simulation-unavailable`. The legacy `/object/` endpoints retain
+their socket-probing behavior and must not be used for automatic polling.
+
+`/transport_dbg/<addr>/<name>` uses an unsigned decimal byte address and reads
+one aligned 32-bit word on SystemC. Unaligned addresses return 400, missing
+target sockets 404, and short or explicit TLM-error responses 502. A target
+may leave TLM status INCOMPLETE when returning all four bytes, as allowed by
+the debug transport byte-count contract. This endpoint is not an MMIO safety
+allowlist; dashboard clients must restrict accessible targets separately.
+
+`/qk_status` now samples on SystemC and uses atomically published timing and
+wait flags. `local_time` is absolute QK simulation time; `quantum_time` is its
+nonnegative offset from SystemC time. Fields are approximate observations,
+not an atomic machine snapshot or Guest CPU utilization. MCIPS snapshots take
+the producer mutex for shared timing state, while QEMU instruction counters
+remain live approximate values.
+
+`runonsysc` does not impose a wall-clock deadline. Its shutdown hook cancels
+pending jobs, but HTTP clients must use bounded timeouts; a client timeout
+does not cancel an already submitted action. `/sc_suspended` reflects kernel
+scheduling suspension, which may also occur during normal quantum keeper
+synchronization. It must not alone be interpreted as a user Pause state.
+Its separate `monitor_paused` boolean records the last successfully executed
+monitor pause/continue request and is independent of transient QK suspension.
+Full-system Pause/Resume remains unqualified until platform traffic and
+repeated resume/reset tests pass.
+
+When QemuInstances exist, monitor control acquires one shared global pause
+worker during elaboration. It reuses the debugger worker's sequencing without
+installing debugger VM-state callbacks: stop all running QEMU instances in
+parallel while SystemC can still service MMIO, assert CPU synchronization
+holds, then suspend SystemC. Resume releases SystemC first, restarts only
+instances stopped by this transition, then releases holds. A debugger-owned
+or second monitor coordinator is rejected (409). The completion wait is
+bounded to 1500 ms; a 503 `control-unknown` leaves the pending operation intact
+and must not trigger automatic replay. `/sc_suspended.monitor_paused` reflects
+completed coordinated state. CPU-free component fixtures retain SystemC-only
+pause. Full-system qualification must verify CPU local times also remain fixed;
+SystemC time alone cannot detect a running freerunning QK CPU.
+
 ## Runtime Action API
 
 | Method | Endpoint | Purpose |
