@@ -17,6 +17,7 @@
 #include <systemc>
 
 #include <ports/initiator-signal-socket.h>
+#include <ports/target-signal-socket.h>
 #include <async_event.h>
 #include <ports/biflow-socket.h>
 #include <module_factory_registery.h>
@@ -96,6 +97,8 @@ public:
     gs::biflow_socket<Pl011> backend_socket;
 
     InitiatorSignalSocket<bool> irq;
+    TargetSignalSocket<bool> reset;
+    bool m_reset_asserted = false;
 
     sc_core::sc_event update_event;
 
@@ -106,6 +109,7 @@ public:
         , socket("target_socket")
         , backend_socket("backend_socket")
         , irq("irq")
+        , reset("reset")
     {
         SCP_TRACE(()) << "Pl011 constructor";
 
@@ -114,14 +118,24 @@ public:
 
         s = new PL011State();
 
-        s->read_trigger = 1;
-        s->ifl = 0x12;
-        s->cr = 0x300;
-        s->flags = 0x90;
-
         m_id[2] = static_cast<unsigned char>(
             ((p_revision.get_value() & 0xfu) << 4) | 0x4u);
-        s->id = m_id.data();
+        reset_registers();
+
+        reset.register_value_changed_cb([this](bool asserted) {
+            m_reset_asserted = asserted;
+            if (asserted) {
+                update_event.cancel();
+                reset_registers();
+                backend_socket.can_receive_set(0);
+                if (irq.size() != 0)
+                    irq->write(false);
+            } else {
+                backend_socket.can_receive_set(16);
+                pl011_update();
+            }
+            // Preserve already queued console output and the host backend.
+        });
 
         SC_METHOD(pl011_update_sysc);
         sensitive << update_event;
@@ -191,15 +205,22 @@ public:
 
     void pl011_update() { update_event.notify(); }
 
+    void reset_registers()
+    {
+        *s = PL011State{};
+        s->read_trigger = 1;
+        s->ifl = 0x12;
+        s->cr = 0x300;
+        s->flags = PL011_FLAG_TXFE | PL011_FLAG_RXFE;
+        s->id = m_id.data();
+    }
+
     void pl011_update_sysc()
     {
-        uint32_t flags;
-        size_t i;
-
-        flags = s->int_level & s->int_enabled;
-        if (irqmask[0] & s->int_enabled) {
-            irq->write((flags & irqmask[0]) != 0);
-        }
+        const uint32_t flags = s->int_level & s->int_enabled;
+        // Masking the last enabled interrupt must also deassert the wire.
+        if (irq.size() != 0)
+            irq->write(!m_reset_asserted && (flags & irqmask[0]) != 0);
     }
 
     uint32_t pl011_read(uint64_t offset)
@@ -294,6 +315,8 @@ public:
 
     void pl011_write(uint64_t offset, uint32_t value)
     {
+        if (m_reset_asserted)
+            return;
         offset &= PL011_REGISTER_BLOCK_MASK;
 
         unsigned char ch;
@@ -375,6 +398,8 @@ public:
     }
     void pl011_receive(tlm::tlm_generic_payload& txn, sc_core::sc_time& t)
     {
+        if (m_reset_asserted)
+            return;
         uint8_t* data = txn.get_data_ptr();
         for (int i = 0; i < txn.get_streaming_width(); i++) {
             pl011_put_fifo(data[i]);
