@@ -219,6 +219,16 @@ class MonitorRuntimeApiTest : public TestBench
                     "socket metadata failed");
             require(m_debug_reads == 0, "metadata performed a debug read");
             require(request(port, "GET", "/api/v1/objects/not-present").status == 404, "missing object accepted");
+            auto first = request(port, "GET", "/transport_dbg/0/test-bench.memory");
+            auto second = request(port, "GET", "/transport_dbg/4/test-bench.memory");
+            require(first.status == 200 && first.body.find("305419896") != std::string::npos,
+                    "first RAM address incorrect");
+            require(second.status == 200 && second.body.find("2271560481") != std::string::npos,
+                    "second RAM address ignored");
+            require(request(port, "GET", "/transport_dbg/8/test-bench.memory").status == 502,
+                    "TLM failure accepted");
+            require(request(port, "GET", "/transport_dbg/1/test-bench.memory").status == 400,
+                    "unaligned read accepted");
 
             const std::string mode = p_test_mode.get_value();
             HttpResponse capabilities = request(port, "GET", "/api/v1/injection/capabilities");
@@ -299,6 +309,7 @@ class MonitorRuntimeApiTest : public TestBench
         TEST_ASSERT(!gs::monitor<32>::is_runtime_configuration_safe(true, "0.0.0.0"));
         wait(m_done);
         m_client.join();
+        TEST_ASSERT(m_debug_on_systemc);
         if (!m_client_error.empty()) {
             throw std::runtime_error(m_client_error);
         }
@@ -326,6 +337,7 @@ public:
     {
         if (m_client.joinable()) {
             m_client.join();
+        TEST_ASSERT(m_debug_on_systemc);
         }
     }
 };

@@ -529,36 +529,45 @@ void monitor<BUSWIDTH>::init_monitor()
             return invoke_runtime_action(
                 [&](RuntimeActionService& service) { return status_reply_response(service.cancel(id)); });
         });
-    CROW_ROUTE(m_app, "/transport_dbg/<int>/<str>")
-    ([&](uint64 addr, std::string name) {
-        crow::json::wvalue r;
-
-        auto sc_obj = gs::find_sc_obj(nullptr, name, true);
-        auto exp = dynamic_cast<tlm::tlm_base_target_socket_b<>*>(sc_obj);
-        if (!exp) {
-            r["error"] = "Object not a tlm base target socket";
-            return r;
+    CROW_ROUTE(m_app, "/transport_dbg/<uint>/<str>")
+    ([&](uint64_t addr, const std::string& name) -> crow::response {
+        if (addr % sizeof(uint32_t) != 0) {
+            return error_response(400, "unaligned-address", "debug reads require four-byte alignment");
         }
-        uint32_t data;
-        tlm::tlm_generic_payload txn;
-        txn.set_command(tlm::TLM_READ_COMMAND);
-        txn.set_address(0);
-        txn.set_data_ptr(reinterpret_cast<unsigned char*>(&data));
-        txn.set_data_length(4);
-        txn.set_streaming_width(4);
-        txn.set_byte_enable_length(0);
-        txn.set_dmi_allowed(false);
-        txn.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
-
-        int size = exp->get_base_export()->transport_dbg(txn);
-        if (size != 4) {
-            r["error"] = "Unable to get data";
-        } else {
-            r["value"] = data;
-
-            r["size"] = size;
+        crow::response response;
+        if (!m_sc.run_on_sysc([&] {
+                auto* object = gs::find_sc_obj(nullptr, name, true);
+                auto* socket = dynamic_cast<tlm::tlm_base_target_socket_b<>*>(object);
+                if (!socket) {
+                    response = error_response(404, "socket-not-found", "Object is not a TLM target socket");
+                    return;
+                }
+                uint32_t data = 0;
+                tlm::tlm_generic_payload txn;
+                txn.set_command(tlm::TLM_READ_COMMAND);
+                txn.set_address(addr);
+                txn.set_data_ptr(reinterpret_cast<unsigned char*>(&data));
+                txn.set_data_length(sizeof(data));
+                txn.set_streaming_width(sizeof(data));
+                txn.set_byte_enable_length(0);
+                txn.set_dmi_allowed(false);
+                txn.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
+                unsigned int size = socket->get_base_export()->transport_dbg(txn);
+                // transport_dbg implementations may leave status INCOMPLETE;
+                // byte count is its success contract. Explicit errors fail.
+                if (size != sizeof(data) || (txn.is_response_error() &&
+                                             txn.get_response_status() != tlm::TLM_INCOMPLETE_RESPONSE)) {
+                    response = error_response(502, "debug-read-failed", "Target did not complete the debug read");
+                    return;
+                }
+                crow::json::wvalue body;
+                body["value"] = data;
+                body["size"] = size;
+                response = json_response(200, std::move(body));
+            })) {
+            return error_response(503, "simulation-unavailable", "SystemC execution is unavailable");
         }
-        return r;
+        return response;
     });
     CROW_ROUTE(m_app, "/biflows")
     ([&]() {
