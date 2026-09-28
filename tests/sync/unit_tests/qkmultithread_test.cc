@@ -94,6 +94,11 @@ TEST(qkmultithread, unfinished_quantum)
         }
     }
     t1.join();
+    auto* monitored = dynamic_cast<gs::tlm_quantumkeeper_multithread*>(qk);
+    const auto snapshot = monitored->get_status_json();
+    EXPECT_NE(snapshot.find("\"local_time\":\"" + qk->get_current_time().to_string() + "\""),
+              std::string::npos);
+    EXPECT_NE(snapshot.find("\"state\":\"IDLE\""), std::string::npos);
 }
 
 TEST(qkmultithread, finished_quantum)

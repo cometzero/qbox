@@ -334,10 +334,11 @@ void monitor<BUSWIDTH>::init_monitor()
         }
     });
     CROW_ROUTE(m_app, "/sc_time")
-    ([&]() {
+    ([&]() -> crow::response {
         crow::json::wvalue r;
-        m_sc.run_on_sysc([&] { r["sc_time_stamp"] = sc_core::sc_time_stamp().to_seconds(); });
-        return r;
+        if (!m_sc.run_on_sysc([&] { r["sc_time_stamp"] = sc_core::sc_time_stamp().to_seconds(); }))
+            return error_response(503, "simulation-unavailable", "SystemC execution is unavailable");
+        return json_response(200, std::move(r));
     });
     CROW_ROUTE(m_app, "/pause")
     ([&]() {
@@ -384,13 +385,13 @@ void monitor<BUSWIDTH>::init_monitor()
         return r;
     });
     CROW_ROUTE(m_app, "/qk_status")
-    ([&]() {
+    ([&]() -> crow::response {
         std::vector<crow::json::wvalue> cr;
-        for (auto q : m_qks) {
-            cr.push_back(crow::json::load(q->get_status_json()));
-        }
+        if (!m_sc.run_on_sysc([&] {
+                for (auto q : m_qks) cr.push_back(crow::json::load(q->get_status_json()));
+            })) return error_response(503, "simulation-unavailable", "SystemC execution is unavailable");
         crow::json::wvalue r = crow::json::wvalue::list(cr);
-        return r;
+        return json_response(200, std::move(r));
     });
     CROW_ROUTE(m_app, "/mcips_plugin_status")
     ([&]() {

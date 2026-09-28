@@ -29,8 +29,10 @@ class tlm_quantumkeeper_multithread : public gs::tlm_quantumkeeper_extended
     std::thread m_worker_thread;
 
 protected:
-    bool m_systemc_waiting;
-    bool m_extern_waiting;
+    std::atomic<bool> m_systemc_waiting{ false };
+    std::atomic<bool> m_extern_waiting{ false };
+    // Published by the timing owner; monitor must not race on sc_time storage.
+    std::atomic<sc_dt::uint64> m_monitor_time_ticks{ 0 };
     async_event m_tick;
 
     virtual bool is_sysc_thread() const;
@@ -71,12 +73,17 @@ public:
     jobstates get_status() { return (jobstates)(status | (m_systemc_waiting << 2) | (m_extern_waiting << 3)); }
     std::string get_status_json()
     {
+        // Called on SystemC by monitor, so sc_time_stamp itself is safe.
+        const auto current = sc_core::sc_time::from_value(m_monitor_time_ticks.load(std::memory_order_relaxed));
+        const auto now = sc_core::sc_time_stamp();
+        const auto offset = current >= now ? current - now : sc_core::SC_ZERO_TIME;
+        const auto state = status.load();
         std::string s = "\"name\":\"" + std::string(name()) + "\"";
-        s = s + ",\"quantum_time\":\"" + std::string(get_local_time().to_string()) + "\"";
-        s = s + ",\"local_time\":\"" + std::string(get_current_time().to_string()) + "\"";
-        if ((status & (RUNNING | STOPPED)) == NONE) s = s + ",\"state\":\"NONE\"";
-        if (status & RUNNING) s = s + ",\"state\":\"RUNNING\"";
-        if (status & STOPPED) s = s + ",\"state\":\"IDLE\"";
+        s = s + ",\"quantum_time\":\"" + std::string(offset.to_string()) + "\"";
+        s = s + ",\"local_time\":\"" + std::string(current.to_string()) + "\"";
+        if ((state & (RUNNING | STOPPED)) == NONE) s = s + ",\"state\":\"NONE\"";
+        if (state & RUNNING) s = s + ",\"state\":\"RUNNING\"";
+        if (state & STOPPED) s = s + ",\"state\":\"IDLE\"";
         if (m_systemc_waiting) s = s + ",\"sc_waiting\":true";
         if (m_extern_waiting) s = s + ",\"extern_waiting\":true";
         return "{" + s + "}";

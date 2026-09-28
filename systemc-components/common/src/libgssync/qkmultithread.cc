@@ -151,7 +151,11 @@ sc_core::sc_time tlm_quantumkeeper_multithread::time_to_sync()
  * Overloaded Functions
  */
 
-void tlm_quantumkeeper_multithread::inc(const sc_core::sc_time& t) { m_local_time += t; }
+void tlm_quantumkeeper_multithread::inc(const sc_core::sc_time& t)
+{
+    m_local_time += t;
+    m_monitor_time_ticks.store(m_local_time.value(), std::memory_order_relaxed);
+}
 
 /* NB, if used outside SystemC, SystemC time may vary */
 void tlm_quantumkeeper_multithread::set(const sc_core::sc_time& t)
@@ -160,6 +164,7 @@ void tlm_quantumkeeper_multithread::set(const sc_core::sc_time& t)
     // quietly refuse to move time backwards
     if (t + sc_core::sc_time_stamp() >= m_local_time) {
         m_local_time = t + sc_core::sc_time_stamp(); // NB, we store the absolute time.
+        m_monitor_time_ticks.store(m_local_time.value(), std::memory_order_relaxed);
     }
     m_tick.notify(sc_core::SC_ZERO_TIME);
 }
@@ -193,6 +198,7 @@ void tlm_quantumkeeper_multithread::reset()
 {
     // As we use absolute time, we reset to the current sc_time
     m_local_time = sc_core::sc_time_stamp();
+    m_monitor_time_ticks.store(m_local_time.value(), std::memory_order_relaxed);
     m_tick.notify(sc_core::SC_ZERO_TIME);
 }
 
