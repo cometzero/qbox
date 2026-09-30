@@ -6,6 +6,7 @@
  */
 
 #include <cstdint>
+#include <vector>
 
 #include <systemc>
 #include <tlm>
@@ -69,6 +70,22 @@ class QemuPl061Test : public TestBench
     void run_test()
     {
         wait(sc_core::SC_ZERO_TIME);
+
+        // Multi-bit DMA handshakes must preserve ACTIVE and request type,
+        // while existing boolean clients still see only logical transitions.
+        std::vector<int> raw_levels;
+        std::vector<bool> boolean_levels;
+        auto proxy = m_inst.get().gpio_new();
+        proxy.set_level_event_callback([&raw_levels](int level) { raw_levels.push_back(level); });
+        proxy.set_event_callback([&boolean_levels](bool level) { boolean_levels.push_back(level); });
+        for (int level : {0, 4, 5, 6, 6, 0}) { proxy.set_level(level); }
+        TEST_ASSERT(raw_levels == std::vector<int>({0, 4, 5, 6, 0}));
+        TEST_ASSERT(boolean_levels == std::vector<bool>({false, true, false}));
+        proxy.set_level_event_callback(nullptr);
+        proxy.set_event_callback(nullptr);
+        proxy.set_level(4);
+        TEST_ASSERT(raw_levels.size() == 5);
+        TEST_ASSERT(boolean_levels.size() == 3);
 
         TEST_ASSERT(read_reg(0xfe0) == 0x61);
         TEST_ASSERT(read_reg(0xff0) == 0x0d);

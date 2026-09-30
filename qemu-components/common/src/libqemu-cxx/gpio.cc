@@ -20,4 +20,10 @@ void Gpio::set(bool lvl)
     m_int->exports().gpio_set(gpio, lvl);
 }
 
+void Gpio::set_level(int level)
+{
+    QemuGpio* gpio = reinterpret_cast<QemuGpio*>(m_obj);
+    m_int->exports().gpio_set(gpio, level);
+}
+
 }; // namespace qemu

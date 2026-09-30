@@ -292,6 +292,7 @@ class Gpio : public Object
 {
 public:
     typedef std::function<void(bool)> GpioEventFn;
+    typedef std::function<void(int)> GpioLevelEventFn;
 
     class GpioProxy
     {
@@ -300,16 +301,36 @@ public:
         bool m_prev;
         GpioEventFn m_cb;
         std::atomic<bool> m_cb_set{ false };
+        int m_prev_level = 0;
+        bool m_prev_level_valid = false;
+        GpioLevelEventFn m_level_cb;
+        std::atomic<bool> m_level_cb_set{ false };
 
     public:
-        void event(bool level)
+        void event(int raw_level)
         {
+            if (!m_prev_level_valid || raw_level != m_prev_level) {
+                if (m_level_cb_set.load(std::memory_order_acquire)) m_level_cb(raw_level);
+            }
+            m_prev_level = raw_level;
+            m_prev_level_valid = true;
+            const bool level = raw_level != 0;
             if (!m_prev_valid || (level != m_prev)) {
                 if (m_cb_set.load(std::memory_order_acquire)) m_cb(level);
             }
 
             m_prev_valid = true;
             m_prev = level;
+        }
+
+        void set_level_callback(GpioLevelEventFn cb)
+        {
+            if (cb) {
+                m_level_cb = std::move(cb);
+                m_level_cb_set.store(true, std::memory_order_release);
+            } else {
+                m_level_cb_set.store(false, std::memory_order_release);
+            }
         }
 
         void set_callback(GpioEventFn cb)
@@ -334,8 +355,15 @@ public:
     Gpio(const Object& o): Object(o) {}
 
     void set(bool lvl);
+    // Preserve multi-bit peripheral handshakes carried by QEMU IRQ lines.
+    void set_level(int level);
 
     void set_proxy(std::shared_ptr<GpioProxy> proxy) { m_proxy = proxy; }
+
+    void set_level_event_callback(GpioLevelEventFn cb)
+    {
+        if (m_proxy) { m_proxy->set_level_callback(std::move(cb)); }
+    }
 
     void set_event_callback(GpioEventFn cb)
     {
