@@ -75,7 +75,12 @@ int gs::LuaFile_Tool::config(cci::cci_broker_handle a_broker, const char* a_conf
     SCP_INFO(()) << "Read lua file '" << a_config_file << "'";
 
     // start Lua
-    lua_State* L = luaL_newstate();
+    std::unique_ptr<lua_State, decltype(&lua_close)> state(luaL_newstate(), &lua_close);
+    lua_State* L = state.get();
+    if (!L) {
+        SCP_ERR(()) << "Error allocating Lua state for config file: " << a_config_file;
+        return 1;
+    }
     luaL_openlibs(L);
 
     // load a script as the function "config_chunk"
@@ -143,7 +148,8 @@ int gs::LuaFile_Tool::config(cci::cci_broker_handle a_broker, const char* a_conf
     // run
     if (luaL_dostring(L, config_loader.get())) {
         SCP_ERR(()) << lua_tostring(L, -1);
-        lua_pop(L, 1); /* pop error message from the stack */
+        // Never publish a partially evaluated configuration into CCI.
+        return 1;
     }
 
     // traverse the environment table setting global variables as parameters
@@ -155,7 +161,6 @@ int gs::LuaFile_Tool::config(cci::cci_broker_handle a_broker, const char* a_conf
         SCP_INFO(()) << "Error loading lua config file: " << a_config_file;
         return error;
     }
-    lua_close(L);
 
     // remove lua builtins
     a_broker.ignore_unconsumed_preset_values([](const std::pair<std::string, cci::cci_value>& iv) -> bool {

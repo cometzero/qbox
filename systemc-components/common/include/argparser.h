@@ -110,7 +110,9 @@ protected:
             {
                 SCP_INFO(()) << "Option --gs_luafile with value " << optarg;
                 SCP_INFO(()) << "Lua file command line parser: parse option --gs_luafile " << optarg << std::endl;
-                lua.config(a_broker, optarg);
+                if (lua.config(a_broker, optarg) != 0) {
+                    SCP_FATAL(()) << "Failed to load Lua configuration: " << optarg;
+                }
                 luafile_found = true;
                 break;
             }
