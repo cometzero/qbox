@@ -174,3 +174,18 @@ if(UNIX)
     endif()
 endif()
 qbox_add_cpu_test(aarch64-smmu-router-stress-test-v2 100 smmu_router_stress_test_v2.cc)
+
+# Cortex-M uses the aarch64 libqemu target, but executes Thumb firmware.
+qbox_add_cpu_test_executable(mprofile-wait-test mprofile-wait-test.cc)
+target_link_libraries(mprofile-wait-test PRIVATE cpu_arm_cortexM55)
+foreach(tcg_mode IN ITEMS SINGLE MULTI)
+    add_test(NAME mprofile-wait-${tcg_mode}
+        COMMAND $<TARGET_FILE:mprofile-wait-test>
+            -p test-bench.inst.managed_start_in_reset_release=true
+            -p test-bench.inst.accel=tcg
+            -p test-bench.inst.tcg_mode=${tcg_mode}
+            -p test-bench.inst.sync_policy=multithread-freerunning
+            -p test-bench.inst.time_sync_strategy=quantum_keeper
+            -p log_level=0)
+    set_tests_properties(mprofile-wait-${tcg_mode} PROPERTIES TIMEOUT 15)
+endforeach()
