@@ -66,19 +66,13 @@ protected:
             return;
         }
 
-        bool iothread_locked = m_proxy.get_inst().iothread_locked();
-        if (iothread_locked) {
-            m_proxy.get_inst().unlock_iothread();
-        }
+        // Keep the source BQL held until its device callback has returned.
+        // Dropping it here lets another vCPU re-enter a MemoryRegion whose
+        // device IO guard is still engaged, producing a spurious bus abort.
+        // Always enqueue, including calls from SystemC: synchronous delivery
+        // can re-enter the source device or lock another QEMU instance.
+        m_on_sysc.run_on_sysc([this, val] { (*this)->write(val); }, false, true);
 
-        // GPIO notifications have no return value.  Waiting here can deadlock
-        // when SystemC is already waiting for this QEMU iothread (for example,
-        // while reset changes an output level).
-        m_on_sysc.run_on_sysc([this, val] { (*this)->write(val); }, false);
-
-        if (iothread_locked) {
-            m_proxy.get_inst().lock_iothread();
-        }
     }
 
     void init_qemu_to_sysc_gpio_proxy(qemu::Device& dev)

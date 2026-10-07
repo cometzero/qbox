@@ -208,19 +208,21 @@ public:
      *
      * @param[in] job_entry The job to run
      * @param[in] wait If true, wait for job completion
+     * @param[in] defer Always enqueue, even on the SystemC thread (requires !wait)
      *
      * @return true if the job has been succesfully executed or if `wait`
      *         was false, false if it has been cancelled (see
      *         `RunOnSysC::cancel_all`).
      */
-    bool run_on_sysc(std::function<void()> job_entry, bool wait = true)
+    bool run_on_sysc(std::function<void()> job_entry, bool wait = true, bool defer = false)
     {
+        sc_assert(!defer || !wait);
         auto core = m_core; // snapshot lifetime
         if (!core) return false;
 
         if (!core->running.load(std::memory_order_relaxed)) return false;
 
-        if (is_on_sysc()) {
+        if (is_on_sysc() && !defer) {
             job_entry();
             return true;
         }

@@ -69,7 +69,7 @@ class QemuPl061Test : public TestBench
 
     void run_test()
     {
-        wait(sc_core::SC_ZERO_TIME);
+        wait(1, sc_core::SC_NS);
 
         // Multi-bit DMA handshakes must preserve ACTIVE and request type,
         // while existing boolean clients still see only logical transitions.
@@ -107,7 +107,7 @@ class QemuPl061Test : public TestBench
         TEST_ASSERT(m_gpio.runtime_set_direction(1, true));
         TEST_ASSERT((read_reg(direction) & 0x02) != 0);
         TEST_ASSERT(m_gpio.runtime_write_output(1, true));
-        wait(sc_core::SC_ZERO_TIME);
+        wait(1, sc_core::SC_NS);
         TEST_ASSERT(m_gpio_out[1].read());
         TEST_ASSERT(m_gpio.runtime_pin_snapshot(1, snapshot));
         TEST_ASSERT(snapshot.direction_output);
@@ -115,7 +115,7 @@ class QemuPl061Test : public TestBench
         TEST_ASSERT(!m_gpio.runtime_drive_input(1, false));
 
         TEST_ASSERT(m_gpio.runtime_write_output(1, false));
-        wait(sc_core::SC_ZERO_TIME);
+        wait(1, sc_core::SC_NS);
         TEST_ASSERT(!m_gpio_out[1].read());
         TEST_ASSERT(!m_gpio.runtime_write_output(0, true));
 
@@ -125,11 +125,11 @@ class QemuPl061Test : public TestBench
         write_reg(interrupt_event, 0x01);
         write_reg(interrupt_mask, 0x01);
         TEST_ASSERT(m_gpio.runtime_drive_input(0, true));
-        wait(sc_core::SC_ZERO_TIME);
+        wait(1, sc_core::SC_NS);
         TEST_ASSERT(m_irq.read());
 
         write_reg(interrupt_clear, 0x01);
-        wait(sc_core::SC_ZERO_TIME);
+        wait(1, sc_core::SC_NS);
         TEST_ASSERT(!m_irq.read());
 
         m_gpio.gpio_in[0]->write(true);
@@ -145,11 +145,31 @@ class QemuPl061Test : public TestBench
 
         m_inst.reset->write(false);
         m_gpio.reset->write(false);
-        wait(sc_core::SC_ZERO_TIME);
+        wait(1, sc_core::SC_NS);
         TEST_ASSERT((read_reg(data_all) & 0x01) != 0);
         TEST_ASSERT(m_gpio_out[1].read());
         TEST_ASSERT(m_gpio.runtime_release_input(0));
         TEST_ASSERT((read_reg(data_all) & 0x01) == 0);
+
+        // A GPIO observer may read the same device. Delivery must occur
+        // after the source MMIO operation releases its reentrancy guard.
+        // Previously the SystemC-originated callback ran inline and this
+        // read returned MEMTX_ACCESS_ERROR (the AP GIC wakeup failure).
+        unsigned callbacks = 0;
+        m_gpio_out[1].register_value_changed_cb([&](bool level) {
+            TEST_ASSERT(read_reg(0xfe0) == 0x61);
+            ++callbacks;
+        });
+        write_reg(direction, 0x02);
+        write_reg(data_all, 0x00);
+        wait(1, sc_core::SC_NS);
+        const unsigned before = callbacks;
+        write_reg(data_all, 0x02);
+        TEST_ASSERT(callbacks == before);
+        wait(1, sc_core::SC_NS);
+        TEST_ASSERT(callbacks == before + 1);
+        TEST_ASSERT(m_gpio_out[1].read());
+        m_gpio_out[1].register_value_changed_cb(nullptr);
 
         sc_core::sc_stop();
     }
