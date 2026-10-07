@@ -62,6 +62,7 @@ public:
     sc_core::sc_vector<QemuInitiatorSignalSocket> fiq_out;
     sc_core::sc_vector<QemuInitiatorSignalSocket> virq_out;
     sc_core::sc_vector<QemuInitiatorSignalSocket> vfiq_out;
+    sc_core::sc_vector<QemuInitiatorSignalSocket> wake_request_out;
 
     bool runtime_set_spi(unsigned int index, bool value)
     {
@@ -153,6 +154,7 @@ public:
         , fiq_out("fiq_out", p_num_cpu)
         , virq_out("virq_out", p_num_cpu)
         , vfiq_out("vfiq_out", p_num_cpu)
+        , wake_request_out("wake_request_out", p_num_cpu)
     {
     }
 
@@ -220,6 +222,9 @@ public:
             fiq_out[cpu].init_sbd(sbd, p_num_cpu * 1 + cpu);
             virq_out[cpu].init_sbd(sbd, p_num_cpu * 2 + cpu);
             vfiq_out[cpu].init_sbd(sbd, p_num_cpu * 3 + cpu);
+            if (!m_inst.is_kvm_enabled() && !m_inst.is_whpx_enabled()) {
+                wake_request_out[cpu].init_sbd(sbd, p_num_cpu * 6 + cpu);
+            }
         }
 
         if (m_inst.is_kvm_enabled() || m_inst.is_whpx_enabled()) {

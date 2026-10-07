@@ -48,6 +48,16 @@ class CpuArmManagedTimerWfiTest : public CpuTestBenchBase
             ldr x12, =0x%08)" PRIx64 R"(
             ldr x13, =0x%08)" PRIx64 R"(
 
+            // Wake the Redistributor before enabling interrupt delivery.
+            sub x14, x12, #0x10000
+            ldr w0, [x14, #0x14]
+            bic w0, w0, #2
+            str w0, [x14, #0x14]
+        wait_children_awake:
+            ldr w0, [x14, #0x14]
+            tst w0, #4
+            b.ne wait_children_awake
+
             msr spsel, #1
             adr x0, vectors
             msr vbar_el1, x0
