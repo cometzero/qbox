@@ -36,8 +36,14 @@ protected:
     cci::cci_param<bool> p_server;
     cci::cci_param<bool> p_nowait;
     cci::cci_param<bool> p_sigquit;
+    cci::cci_param<unsigned> p_write_queue_size;
+    cci::cci_param<unsigned> p_poll_interval_ms;
 
 private:
+    std::mutex m_write_mutex;
+    std::vector<uint8_t> m_pending_write;
+    bool m_write_connected = false;
+    bool m_write_overflow = false;
     asio::io_context m_io_context;
     tcp::acceptor m_acceptor;
     tcp::socket m_asio_socket;
@@ -67,6 +73,8 @@ public:
         , p_server("server", true, "type of socket: true if server - false if client")
         , p_nowait("nowait", true, "setting socket in non-blocking mode")
         , p_sigquit("sigquit", false, "Interpret 0x1c in the data stream as a sigquit")
+        , p_write_queue_size("write_queue_size", 0, "bounded asynchronous write queue; zero keeps legacy writes")
+        , p_poll_interval_ms("poll_interval_ms", 100, "nonblocking receive poll interval")
         , m_biflow_socket("biflow_socket")
         , m_acceptor(m_io_context)
         , m_asio_socket(m_io_context)
@@ -89,9 +97,10 @@ public:
         m_stop_rcv_thread = true;
         asio::error_code ignored_error;
 
+        // Queued mode keeps every socket operation on its receiver thread.
+        if (p_write_queue_size.get_value() && m_rcv_thread.joinable()) m_rcv_thread.join();
         m_asio_socket.close(ignored_error);
         m_acceptor.close(ignored_error);
-
         if (m_rcv_thread.joinable()) m_rcv_thread.join();
     }
 
@@ -187,6 +196,23 @@ public:
 
     void writefn(tlm::tlm_generic_payload& txn, sc_core::sc_time& t)
     {
+        if (p_write_queue_size.get_value()) {
+            std::lock_guard<std::mutex> lock(m_write_mutex);
+            const size_t size = txn.get_data_length();
+            if (!m_write_connected || m_write_overflow) {
+                txn.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);
+                return;
+            }
+            if (size > p_write_queue_size.get_value() - m_pending_write.size()) {
+                // Close on overflow: never leave a silently truncated framed stream.
+                m_write_overflow = true;
+                txn.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);
+                return;
+            }
+            m_pending_write.insert(m_pending_write.end(), txn.get_data_ptr(), txn.get_data_ptr() + size);
+            txn.set_response_status(tlm::TLM_OK_RESPONSE);
+            return;
+        }
         while (!m_asio_socket.is_open()) {
             if (p_nowait) {
                 return;
@@ -219,6 +245,22 @@ public:
         }
     }
 
+    void flush_pending_write()
+    {
+        if (!p_write_queue_size.get_value()) return;
+        std::lock_guard<std::mutex> lock(m_write_mutex);
+        asio::error_code ec;
+        if (!m_write_overflow && !m_pending_write.empty()) {
+            const size_t sent = m_asio_socket.write_some(asio::buffer(m_pending_write), ec);
+            m_pending_write.erase(m_pending_write.begin(), m_pending_write.begin() + sent);
+        }
+        if (m_write_overflow || (ec && ec != asio::error::would_block && ec != asio::error::try_again)) {
+            m_asio_socket.close(ec);
+            m_pending_write.clear();
+            m_write_connected = false;
+        }
+    }
+
     void configure_socket()
     {
         asio::error_code ec;
@@ -228,10 +270,33 @@ public:
             SCP_FATAL(()) << " Failed to set non blocking mode: " << ec.message();
         }
 
+        {
+            std::lock_guard<std::mutex> lock(m_write_mutex);
+            m_pending_write.clear();
+            m_write_overflow = false;
+            m_write_connected = true;
+        }
         // Disable Nagle's Algorithm
         m_asio_socket.set_option(asio::ip::tcp::no_delay(true));
         if (ec) {
             SCP_FATAL(()) << " Failed to disable Nagle's Algorithm: " << ec.message();
+        }
+    }
+
+    void connect_queued(asio::error_code& result)
+    {
+        bool completed = false;
+        m_io_context.restart();
+        m_asio_socket.async_connect(m_local_endpoint, [&](const asio::error_code& error) {
+            result = error;
+            completed = true;
+        });
+        while (!completed && !m_stop_rcv_thread)
+            m_io_context.run_one_for(m_retry_delay);
+        if (!completed) {
+            asio::error_code ignored;
+            m_asio_socket.cancel(ignored);
+            m_io_context.run();
         }
     }
 
@@ -260,7 +325,9 @@ public:
                 }
             } else if (!p_server) {
                 // Client mode
-                m_asio_socket.connect(m_local_endpoint, ec);
+                if (p_write_queue_size.get_value()) connect_queued(ec);
+                else m_asio_socket.connect(m_local_endpoint, ec);
+                if (m_stop_rcv_thread) break;
                 if (!ec) {
                     configure_socket();
                 } else {
@@ -273,6 +340,11 @@ public:
             }
 
             if (m_asio_socket.is_open()) receive_loop();
+            {
+                std::lock_guard<std::mutex> lock(m_write_mutex);
+                m_write_connected = false;
+                m_pending_write.clear();
+            }
         }
 
         SCP_DEBUG(()) << "Leaving receive thread";
@@ -282,7 +354,9 @@ public:
     {
         asio::error_code ec;
 
-        while (m_asio_socket.is_open()) {
+        while (!m_stop_rcv_thread && m_asio_socket.is_open()) {
+            flush_pending_write();
+            if (!m_asio_socket.is_open()) break;
             size_t read_count = m_asio_socket.read_some(asio::buffer(m_buffer), ec);
             switch (ec.value()) {
             case 0: // Success
@@ -290,7 +364,7 @@ public:
                 break;
             case asio::error::would_block:
                 // Retry reading after a short delay
-                std::this_thread::sleep_for(m_retry_delay);
+                std::this_thread::sleep_for(std::chrono::milliseconds(p_poll_interval_ms.get_value()));
                 break;
             case asio::error::eof:
                 SCP_DEBUG(()) << "Remote endpoint disconnected";
