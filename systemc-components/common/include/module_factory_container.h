@@ -315,6 +315,13 @@ public:
             (try_bind<tlm::tlm_base_initiator_socket<BIND_BUSWIDTH, tlm::tlm_fw_transport_if<>,
                                                      tlm::tlm_bw_transport_if<>, 1, sc_core::SC_ZERO_OR_MORE_BOUND>,
                       tlm_utils::multi_target_base<BIND_BUSWIDTH>>(i_obj, t_obj)) ||
+            (try_bind<tlm::tlm_base_initiator_socket<BIND_BUSWIDTH>,
+                      tlm_utils::multi_target_base<BIND_BUSWIDTH, tlm::tlm_base_protocol_types, 0,
+                                                   sc_core::SC_ZERO_OR_MORE_BOUND>>(i_obj, t_obj)) ||
+            (try_bind<tlm::tlm_base_initiator_socket<BIND_BUSWIDTH, tlm::tlm_fw_transport_if<>,
+                                                     tlm::tlm_bw_transport_if<>, 1, sc_core::SC_ZERO_OR_MORE_BOUND>,
+                      tlm_utils::multi_target_base<BIND_BUSWIDTH, tlm::tlm_base_protocol_types, 0,
+                                                   sc_core::SC_ZERO_OR_MORE_BOUND>>(i_obj, t_obj)) ||
             (try_bind<gs::biflow_bindable, gs::biflow_bindable>(i_obj, t_obj)) ||
             (try_bind<tlm::tlm_base_initiator_socket<BIND_BUSWIDTH, tlm::tlm_fw_transport_if<>,
                                                      tlm::tlm_bw_transport_if<>, 1, sc_core::SC_ZERO_OR_MORE_BOUND>,
