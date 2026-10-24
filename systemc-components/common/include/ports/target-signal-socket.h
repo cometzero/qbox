@@ -27,7 +27,7 @@ public:
 protected:
     TargetSignalSocket<T>& m_parent;
 
-    T m_val;
+    T m_val {};
     ValueChangedCallback m_cb;
     gs::async_event m_ev;
 
