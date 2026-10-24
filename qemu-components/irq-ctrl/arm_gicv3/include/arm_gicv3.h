@@ -38,6 +38,7 @@ protected:
     cci::cci_param<unsigned int> p_revision;
     cci::cci_param<std::vector<unsigned int> > p_redist_region;
     cci::cci_param<bool> p_has_security_extensions;
+    cci::cci_param<bool> p_has_multi_view;
     cci::cci_param<bool> p_has_lpi; // Locality specific Peripheral Interrupts
     cci::cci_param<bool> p_has_gicv4_1;
     cci::cci_param<bool> p_has_direct_lpi;
@@ -138,6 +139,7 @@ public:
                               cci::cci_get_broker(), std::string(sc_module::name()) + ".redist_region")),
                           "Redistributor regions configuration")
         , p_has_security_extensions("has_security_extensions", false, "Enable security extensions")
+        , p_has_multi_view("has_multi_view", false, "Enable externally configured GIC-720AE view routing")
         , p_has_lpi("has_lpi", false, "Enable LPI")
         , p_has_gicv4_1("has_gicv4_1", false, "Expose GICv4.1 feature discovery")
         , p_has_direct_lpi("has_direct_lpi", false, "Expose GICv4.1 DirectLPI")
@@ -176,6 +178,10 @@ public:
         bool has_rvpeid = irqchip_in_kernel ? false : p_has_rvpeid.get_value();
         bool has_vpend_valid_dirty = irqchip_in_kernel ? false : p_has_vpend_valid_dirty.get_value();
         m_dev.set_prop_bool("has-security-extensions", has_security_extensions);
+        if (p_has_multi_view.get_value()) {
+            if (irqchip_in_kernel) throw std::runtime_error("GIC multi-view requires the TCG backend");
+            m_dev.set_prop_bool("has-multi-view", true);
+        }
         m_dev.set_prop_bool("has-lpi", has_lpi);
         m_dev.set_prop_bool("has-gicv4-1", has_gicv4_1);
         m_dev.set_prop_bool("has-direct-lpi", has_direct_lpi);
