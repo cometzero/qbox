@@ -46,6 +46,7 @@ protected:
     cci::cci_param<bool> p_has_vpend_valid_dirty;
     cci::cci_param<unsigned int> p_vpeid_bits;
 public:
+    TargetSignalSocket<uint64_t> internal_spi;
     QemuTargetSocket<> dist_iface;
     sc_core::sc_vector<QemuTargetSocket<> > redist_iface;
 
@@ -146,6 +147,7 @@ public:
         , p_has_rvpeid("has_rvpeid", false, "Expose RVPEID support")
         , p_has_vpend_valid_dirty("has_vpend_valid_dirty", false, "Expose VPENDBASER Valid+Dirty support")
         , p_vpeid_bits("vpeid_bits", 16, "Number of VPEID bits")
+        , internal_spi("internal_spi")
         , dist_iface("dist_iface", inst)
         , redist_iface("redist_iface", p_redist_region.get_value().size(),
                        [&inst](const char* n, int i) { return new QemuTargetSocket<>(n, inst); })
@@ -158,6 +160,9 @@ public:
         , vfiq_out("vfiq_out", p_num_cpu)
         , wake_request_out("wake_request_out", p_num_cpu)
     {
+        internal_spi.register_value_changed_cb([this](const uint64_t& command) {
+            runtime_set_spi(static_cast<uint32_t>(command), (command >> 32) & 1);
+        });
     }
 
     void before_end_of_elaboration()
